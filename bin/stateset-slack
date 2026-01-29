@@ -1,0 +1,154 @@
+#!/usr/bin/env node
+
+import { SlackGateway } from '../dist/slack/gateway.js';
+import { configExists, getAnthropicApiKey, getCurrentOrg, resolveModel } from '../dist/config.js';
+
+// ---------------------------------------------------------------------------
+// CLI argument parsing
+// ---------------------------------------------------------------------------
+
+const args = process.argv.slice(2);
+const options = {
+  model: undefined as string | undefined,
+  allow: undefined as string[] | undefined,
+  verbose: false,
+};
+
+for (let i = 0; i < args.length; i++) {
+  switch (args[i]) {
+    case '--model':
+      options.model = args[++i];
+      break;
+    case '--allow':
+      options.allow = args[++i]?.split(',').map(s => s.trim()).filter(Boolean);
+      break;
+    case '--verbose':
+    case '-v':
+      options.verbose = true;
+      break;
+    case '--help':
+    case '-h':
+      console.log(`
+StateSet Response — Slack Gateway
+
+Usage: response-slack [options]
+
+Options:
+  --model <name>      Model to use (sonnet, haiku, opus)       [default: config]
+  --allow <ids>       Comma-separated allowlist of Slack user IDs
+  --verbose, -v       Enable debug logging
+  --help, -h          Show this help message
+
+Setup:
+  1. Create a Slack app at https://api.slack.com/apps
+  2. Enable Socket Mode (Settings > Socket Mode)
+  3. Generate an app-level token (xapp-...) with connections:write scope
+  4. Add Bot Token Scopes: chat:write, app_mentions:read, im:history, channels:history
+  5. Install the app to your workspace
+  6. Copy the Bot User OAuth Token (xoxb-...)
+  7. Set environment variables:
+     export SLACK_BOT_TOKEN=xoxb-...
+     export SLACK_APP_TOKEN=xapp-...
+  8. Run: response-slack
+
+Behavior:
+  - In DMs: responds to all messages
+  - In channels: only responds when @mentioned or in threads with the bot
+
+Environment:
+  SLACK_BOT_TOKEN      Bot User OAuth Token (xoxb-...) (required)
+  SLACK_APP_TOKEN      App-level token for Socket Mode (xapp-...) (required)
+  ANTHROPIC_API_KEY    Anthropic API key (required)
+
+Examples:
+  response-slack                              Start with default settings
+  response-slack --model haiku                Use Claude Haiku
+  response-slack --allow U12345678,U87654321  Only allow specific users
+  response-slack --verbose                    Debug logging
+`);
+      process.exit(0);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Validation
+// ---------------------------------------------------------------------------
+
+if (!configExists()) {
+  console.error('Error: No configuration found.');
+  console.error('Run "response auth login" to set up your credentials first.');
+  process.exit(1);
+}
+
+try {
+  getAnthropicApiKey();
+} catch (err) {
+  console.error(`Error: ${err instanceof Error ? err.message : err}`);
+  process.exit(1);
+}
+
+try {
+  getCurrentOrg();
+} catch (err) {
+  console.error(`Error: ${err instanceof Error ? err.message : err}`);
+  process.exit(1);
+}
+
+if (options.model) {
+  const resolved = resolveModel(options.model);
+  if (!resolved) {
+    console.error(`Error: Unknown model "${options.model}". Valid: sonnet, haiku, opus`);
+    process.exit(1);
+  }
+}
+
+if (!process.env.SLACK_BOT_TOKEN) {
+  console.error('Error: SLACK_BOT_TOKEN environment variable is required.');
+  console.error('Get one from your Slack app settings: https://api.slack.com/apps');
+  process.exit(1);
+}
+
+if (!process.env.SLACK_APP_TOKEN) {
+  console.error('Error: SLACK_APP_TOKEN environment variable is required (starts with xapp-).');
+  console.error('Enable Socket Mode and generate an app-level token in your Slack app settings.');
+  process.exit(1);
+}
+
+// ---------------------------------------------------------------------------
+// Banner
+// ---------------------------------------------------------------------------
+
+const { orgId } = getCurrentOrg();
+
+console.log(`
+╔═══════════════════════════════════════════════════╗
+║        StateSet Response — Slack Gateway          ║
+╠═══════════════════════════════════════════════════╣
+║  Organization: ${orgId.padEnd(34)}║
+║  Model:        ${(options.model ?? 'default').padEnd(34)}║
+${options.allow ? `║  Allowlist:    ${(options.allow.length + ' user(s)').padEnd(34)}║\n` : ''}╚═══════════════════════════════════════════════════╝
+`);
+
+// ---------------------------------------------------------------------------
+// Start gateway
+// ---------------------------------------------------------------------------
+
+const gateway = new SlackGateway({
+  model: options.model,
+  allowList: options.allow,
+  verbose: options.verbose,
+});
+
+const shutdown = async () => {
+  console.log('\nShutting down gracefully...');
+  await gateway.stop();
+  process.exit(0);
+};
+
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
+
+gateway.start().catch(err => {
+  console.error('Failed to start gateway:', err instanceof Error ? err.message : err);
+  process.exit(1);
+});

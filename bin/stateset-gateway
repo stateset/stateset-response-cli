@@ -1,0 +1,158 @@
+#!/usr/bin/env node
+
+import { Orchestrator } from '../dist/gateway/orchestrator.js';
+import { configExists, getAnthropicApiKey, getCurrentOrg, resolveModel } from '../dist/config.js';
+
+// ---------------------------------------------------------------------------
+// CLI argument parsing
+// ---------------------------------------------------------------------------
+
+const args = process.argv.slice(2);
+const options = {
+  model: undefined as string | undefined,
+  slackAllow: undefined as string[] | undefined,
+  whatsappAllow: undefined as string[] | undefined,
+  whatsappGroups: false,
+  whatsappAuthDir: undefined as string | undefined,
+  noSlack: false,
+  noWhatsapp: false,
+  verbose: false,
+};
+
+for (let i = 0; i < args.length; i++) {
+  switch (args[i]) {
+    case '--model':
+      options.model = args[++i];
+      break;
+    case '--slack-allow':
+      options.slackAllow = args[++i]?.split(',').map(s => s.trim()).filter(Boolean);
+      break;
+    case '--whatsapp-allow':
+      options.whatsappAllow = args[++i]?.split(',').map(s => s.trim()).filter(Boolean);
+      break;
+    case '--whatsapp-groups':
+      options.whatsappGroups = true;
+      break;
+    case '--whatsapp-auth-dir':
+      options.whatsappAuthDir = args[++i];
+      break;
+    case '--no-slack':
+      options.noSlack = true;
+      break;
+    case '--no-whatsapp':
+      options.noWhatsapp = true;
+      break;
+    case '--verbose':
+    case '-v':
+      options.verbose = true;
+      break;
+    case '--help':
+    case '-h':
+      console.log(`
+StateSet Response — Multi-Channel Gateway
+
+Runs Slack and WhatsApp gateways simultaneously from a single process.
+Channels auto-detect based on environment variables and installed packages.
+
+Usage: response-gateway [options]
+
+Options:
+  --model <name>             Model to use (sonnet, haiku, opus)     [default: config]
+  --no-slack                 Disable Slack channel
+  --no-whatsapp              Disable WhatsApp channel
+  --slack-allow <ids>        Comma-separated Slack user ID allowlist
+  --whatsapp-allow <phones>  Comma-separated phone number allowlist
+  --whatsapp-groups          Allow WhatsApp group messages          [default: false]
+  --whatsapp-auth-dir <path> WhatsApp auth credential directory
+  --verbose, -v              Enable debug logging
+  --help, -h                 Show this help message
+
+Environment:
+  SLACK_BOT_TOKEN      Bot User OAuth Token (required for Slack)
+  SLACK_APP_TOKEN      App-level token for Socket Mode (required for Slack)
+  ANTHROPIC_API_KEY    Anthropic API key (required)
+
+Channels start automatically when their prerequisites are met:
+  Slack:    SLACK_BOT_TOKEN + SLACK_APP_TOKEN env vars set
+  WhatsApp: @whiskeysockets/baileys package installed
+
+Examples:
+  response-gateway                          Start all available channels
+  response-gateway --no-whatsapp            Slack only
+  response-gateway --model opus --verbose   Use Opus with debug logging
+`);
+      process.exit(0);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Validation
+// ---------------------------------------------------------------------------
+
+if (!configExists()) {
+  console.error('Error: No configuration found.');
+  console.error('Run "response auth login" to set up your credentials first.');
+  process.exit(1);
+}
+
+try { getAnthropicApiKey(); } catch (err) {
+  console.error(`Error: ${err instanceof Error ? err.message : err}`);
+  process.exit(1);
+}
+
+try { getCurrentOrg(); } catch (err) {
+  console.error(`Error: ${err instanceof Error ? err.message : err}`);
+  process.exit(1);
+}
+
+if (options.model) {
+  const resolved = resolveModel(options.model);
+  if (!resolved) {
+    console.error(`Error: Unknown model "${options.model}". Valid: sonnet, haiku, opus`);
+    process.exit(1);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Banner
+// ---------------------------------------------------------------------------
+
+const { orgId } = getCurrentOrg();
+
+console.log(`
+╔═══════════════════════════════════════════════════╗
+║     StateSet Response — Multi-Channel Gateway     ║
+╠═══════════════════════════════════════════════════╣
+║  Organization: ${orgId.padEnd(34)}║
+║  Model:        ${(options.model ?? 'default').padEnd(34)}║
+╚═══════════════════════════════════════════════════╝
+`);
+
+// ---------------------------------------------------------------------------
+// Start orchestrator
+// ---------------------------------------------------------------------------
+
+const orchestrator = new Orchestrator({
+  model: options.model,
+  verbose: options.verbose,
+  slackEnabled: !options.noSlack,
+  slackAllowList: options.slackAllow,
+  whatsappEnabled: !options.noWhatsapp,
+  whatsappAllowList: options.whatsappAllow,
+  whatsappAllowGroups: options.whatsappGroups,
+  whatsappAuthDir: options.whatsappAuthDir,
+});
+
+const shutdown = async () => {
+  console.log('\nShutting down gracefully...');
+  await orchestrator.stop();
+  process.exit(0);
+};
+
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
+
+orchestrator.start().catch(err => {
+  console.error('Failed to start gateway:', err instanceof Error ? err.message : err);
+  process.exit(1);
+});
