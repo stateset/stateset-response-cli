@@ -1,4 +1,4 @@
-# StateSet Response CLI
+# StateSet ResponseCX CLI
 
 AI-powered CLI for managing the [StateSet ResponseCX](https://response.cx) platform. Chat with an AI agent that can manage your agents, rules, skills, knowledge base, channels, messages, and more — all from the terminal.
 
