@@ -497,8 +497,8 @@ export function cleanForWhatsApp(text: string): string {
   result = result.replace(/```\w*\n/g, '```\n');
 
   // Convert inline `code` to plain text (WhatsApp doesn't support inline code well)
-  // Keep backticks as-is since WhatsApp renders ```monospace```
-  result = result.replace(/`([^`]+)`/g, '$1');
+  // Only match single backticks, not triple backtick code fences
+  result = result.replace(/(?<!`)`(?!`)([^`\n]+)`(?!`)/g, '$1');
 
   // Convert markdown links [text](url) to text (url)
   result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)');

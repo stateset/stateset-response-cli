@@ -2,6 +2,14 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { GraphQLClient } from 'graphql-request';
 import { z } from 'zod';
 import { executeQuery } from '../graphql-client.js';
+import {
+  paginationLimit,
+  paginationOffset,
+  metadataSchema,
+  MAX_NAME_LENGTH,
+  MAX_DESCRIPTION_LENGTH,
+  MAX_STRING_LENGTH,
+} from '../../lib/validation.js';
 
 const DATASET_FIELDS = `
   id name description entry_count status
@@ -18,8 +26,8 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
     'list_datasets',
     'List all datasets (knowledge bases) for the current organization',
     {
-      limit: z.number().optional().describe('Max number of datasets to return (default 100)'),
-      offset: z.number().optional().describe('Offset for pagination (default 0)'),
+      limit: paginationLimit,
+      offset: paginationOffset,
     },
     async ({ limit, offset }) => {
       const query = `query ($org_id: String, $limit: Int!, $offset: Int!) {
@@ -41,7 +49,7 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
   server.tool(
     'get_dataset',
     'Get a specific dataset with its entries',
-    { id: z.string().describe('UUID of the dataset') },
+    { id: z.string().uuid().describe('UUID of the dataset') },
     async ({ id }) => {
       const query = `query ($id: uuid!, $org_id: String!) {
         datasets(where: {id: {_eq: $id}, org_id: {_eq: $org_id}}) {
@@ -63,9 +71,9 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
     'create_dataset',
     'Create a new dataset (knowledge base)',
     {
-      name: z.string().describe('Name of the dataset'),
-      description: z.string().optional().describe('Description'),
-      metadata: z.any().optional().describe('Additional metadata'),
+      name: z.string().max(MAX_NAME_LENGTH).describe('Name of the dataset'),
+      description: z.string().max(MAX_DESCRIPTION_LENGTH).optional().describe('Description'),
+      metadata: metadataSchema,
     },
     async (args) => {
       const mutation = `mutation ($object: datasets_insert_input!) {
@@ -92,11 +100,11 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
     'update_dataset',
     'Update an existing dataset',
     {
-      id: z.string().describe('UUID of the dataset to update'),
-      name: z.string().optional().describe('New dataset name'),
-      description: z.string().optional().describe('New description'),
-      status: z.string().optional().describe('New status (e.g. active, archived)'),
-      metadata: z.any().optional().describe('Updated metadata'),
+      id: z.string().uuid().describe('UUID of the dataset to update'),
+      name: z.string().max(MAX_NAME_LENGTH).optional().describe('New dataset name'),
+      description: z.string().max(MAX_DESCRIPTION_LENGTH).optional().describe('New description'),
+      status: z.enum(['active', 'archived', 'draft']).optional().describe('New status'),
+      metadata: metadataSchema,
     },
     async (args) => {
       const { id, ...updates } = args;
@@ -120,7 +128,7 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
   server.tool(
     'delete_dataset',
     'Delete a dataset by ID',
-    { id: z.string().describe('UUID of the dataset to delete') },
+    { id: z.string().uuid().describe('UUID of the dataset to delete') },
     async ({ id }) => {
       const mutation = `mutation ($id: uuid!, $org_id: String!) {
         delete_datasets(where: {id: {_eq: $id}, org_id: {_eq: $org_id}}) {
@@ -139,9 +147,9 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
     'add_dataset_entry',
     'Add an entry to a dataset',
     {
-      dataset_id: z.string().describe('UUID of the dataset'),
-      content: z.string().describe('Content of the entry'),
-      metadata: z.any().optional().describe('Additional metadata for the entry'),
+      dataset_id: z.string().uuid().describe('UUID of the dataset'),
+      content: z.string().max(MAX_STRING_LENGTH).describe('Content of the entry'),
+      metadata: metadataSchema,
     },
     async (args) => {
       const mutation = `mutation ($object: dataset_entries_insert_input!) {
@@ -165,7 +173,7 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
     'delete_dataset_entry',
     'Remove an entry from a dataset',
     {
-      id: z.string().describe('UUID of the dataset entry to delete'),
+      id: z.string().uuid().describe('UUID of the dataset entry to delete'),
     },
     async ({ id }) => {
       const mutation = `mutation ($id: uuid!) {

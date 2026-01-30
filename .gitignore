@@ -2,3 +2,16 @@ node_modules/
 dist/
 *.js.map
 .env
+
+# Test coverage
+coverage/
+test-results.xml
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db

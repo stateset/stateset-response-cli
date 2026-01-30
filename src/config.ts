@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { encryptSecret, decryptSecret, isEncrypted } from './lib/secrets.js';
 
 export interface OrgConfig {
   name: string;
@@ -58,12 +59,49 @@ export function loadConfig(): StateSetConfig {
     );
   }
   const raw = fs.readFileSync(CONFIG_FILE, 'utf-8');
-  return JSON.parse(raw) as StateSetConfig;
+  const config = JSON.parse(raw) as StateSetConfig;
+
+  // Decrypt secrets on load
+  if (config.anthropicApiKey) {
+    config.anthropicApiKey = decryptSecret(config.anthropicApiKey);
+  }
+  for (const orgId of Object.keys(config.organizations)) {
+    const org = config.organizations[orgId];
+    if (org.cliToken) {
+      org.cliToken = decryptSecret(org.cliToken);
+    }
+    if (org.adminSecret) {
+      org.adminSecret = decryptSecret(org.adminSecret);
+    }
+  }
+
+  return config;
 }
 
 export function saveConfig(config: StateSetConfig): void {
   ensureConfigDir();
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), {
+
+  // Deep copy and encrypt secrets before saving
+  const configToSave: StateSetConfig = {
+    ...config,
+    organizations: { ...config.organizations },
+  };
+
+  if (configToSave.anthropicApiKey) {
+    configToSave.anthropicApiKey = encryptSecret(configToSave.anthropicApiKey);
+  }
+  for (const orgId of Object.keys(configToSave.organizations)) {
+    const org = { ...configToSave.organizations[orgId] };
+    if (org.cliToken) {
+      org.cliToken = encryptSecret(org.cliToken);
+    }
+    if (org.adminSecret) {
+      org.adminSecret = encryptSecret(org.adminSecret);
+    }
+    configToSave.organizations[orgId] = org;
+  }
+
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(configToSave, null, 2), {
     encoding: 'utf-8',
     mode: 0o600,
   });
@@ -122,4 +160,41 @@ export function resolveModel(input: string): ModelId | null {
   ];
   if (valid.includes(lower as ModelId)) return lower as ModelId;
   return null;
+}
+
+/**
+ * Migrate existing plaintext config to encrypted format.
+ * This is idempotent - already encrypted values are left unchanged.
+ * Returns true if any values were migrated.
+ */
+export function migrateConfigSecrets(): boolean {
+  if (!configExists()) {
+    return false;
+  }
+
+  const raw = fs.readFileSync(CONFIG_FILE, 'utf-8');
+  const config = JSON.parse(raw) as StateSetConfig;
+  let migrated = false;
+
+  // Check if any secrets need encryption
+  if (config.anthropicApiKey && !isEncrypted(config.anthropicApiKey)) {
+    migrated = true;
+  }
+  for (const orgId of Object.keys(config.organizations)) {
+    const org = config.organizations[orgId];
+    if (org.cliToken && !isEncrypted(org.cliToken)) {
+      migrated = true;
+    }
+    if (org.adminSecret && !isEncrypted(org.adminSecret)) {
+      migrated = true;
+    }
+  }
+
+  if (migrated) {
+    // Load (which decrypts already encrypted values) and save (which encrypts all)
+    const loadedConfig = loadConfig();
+    saveConfig(loadedConfig);
+  }
+
+  return migrated;
 }

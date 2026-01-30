@@ -7,6 +7,7 @@ export type GraphQLAuth =
 const RETRYABLE_STATUS_CODES = new Set([502, 503, 504]);
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
+const DEFAULT_TIMEOUT_MS = 30000; // 30 seconds
 
 function isTransientError(error: unknown): boolean {
   if (error instanceof TypeError) return true; // network failures
@@ -42,19 +43,47 @@ export function createGraphQLClient(
   return new GraphQLClient(endpoint, { headers });
 }
 
+export interface ExecuteQueryOptions {
+  /** Timeout in milliseconds (default: 30000) */
+  timeoutMs?: number;
+}
+
 export async function executeQuery<T = Record<string, unknown>>(
   client: GraphQLClient,
   query: string,
-  variables?: Record<string, unknown>
+  variables?: Record<string, unknown>,
+  options?: ExecuteQueryOptions
 ): Promise<T> {
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   let lastError: unknown;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      return await client.request<T>(query, variables);
+      // Create abort controller for timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+      try {
+        // graphql-request doesn't directly support signal, so we race with timeout
+        const requestPromise = client.request<T>(query, variables);
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          controller.signal.addEventListener('abort', () => {
+            reject(new Error(`Request timed out after ${timeoutMs}ms`));
+          });
+        });
+
+        const result = await Promise.race([requestPromise, timeoutPromise]);
+        return result;
+      } finally {
+        clearTimeout(timeoutId);
+      }
     } catch (error: unknown) {
       lastError = error;
-      if (attempt < MAX_RETRIES && isTransientError(error)) {
+
+      // Check if it was a timeout
+      const isTimeout = error instanceof Error && error.message.includes('timed out');
+
+      if (attempt < MAX_RETRIES && (isTimeout || isTransientError(error))) {
         const backoff = BASE_DELAY_MS * Math.pow(2, attempt);
         await delay(backoff);
         continue;

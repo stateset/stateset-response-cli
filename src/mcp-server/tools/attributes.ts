@@ -2,6 +2,15 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { GraphQLClient } from 'graphql-request';
 import { z } from 'zod';
 import { executeQuery } from '../graphql-client.js';
+import {
+  paginationLimit,
+  paginationOffset,
+  metadataSchema,
+  attributeValueSchema,
+  MAX_NAME_LENGTH,
+  MAX_DESCRIPTION_LENGTH,
+  MAX_ARRAY_LENGTH,
+} from '../../lib/validation.js';
 
 const ATTRIBUTE_FIELDS = `
   id attribute_name attribute_type value max_value min_value
@@ -15,8 +24,8 @@ export function registerAttributeTools(server: McpServer, client: GraphQLClient,
     'list_attributes',
     'List all attributes for the current organization',
     {
-      limit: z.number().optional().describe('Max number of attributes to return (default 100)'),
-      offset: z.number().optional().describe('Offset for pagination (default 0)'),
+      limit: paginationLimit,
+      offset: paginationOffset,
     },
     async ({ limit, offset }) => {
       const query = `query ($org_id: String, $limit: Int!, $offset: Int!) {
@@ -40,18 +49,18 @@ export function registerAttributeTools(server: McpServer, client: GraphQLClient,
     'create_attribute',
     'Create a new attribute for an agent',
     {
-      attribute_name: z.string().describe('Name of the attribute'),
-      attribute_type: z.string().describe('Type (e.g. "string", "number", "boolean", "enum", "scale")'),
-      agent_id: z.string().describe('UUID of the agent this attribute belongs to'),
-      value: z.any().optional().describe('Attribute value'),
-      max_value: z.number().optional().describe('Maximum value (for numeric/scale types)'),
-      min_value: z.number().optional().describe('Minimum value (for numeric/scale types)'),
-      category: z.string().optional().describe('Category of the attribute'),
-      description: z.string().optional().describe('Description'),
+      attribute_name: z.string().max(MAX_NAME_LENGTH).describe('Name of the attribute'),
+      attribute_type: z.enum(['string', 'number', 'boolean', 'enum', 'scale']).describe('Attribute type'),
+      agent_id: z.string().uuid().describe('UUID of the agent this attribute belongs to'),
+      value: attributeValueSchema,
+      max_value: z.number().min(-1000000).max(1000000).optional().describe('Maximum value (for numeric/scale types)'),
+      min_value: z.number().min(-1000000).max(1000000).optional().describe('Minimum value (for numeric/scale types)'),
+      category: z.string().max(100).optional().describe('Category of the attribute'),
+      description: z.string().max(MAX_DESCRIPTION_LENGTH).optional().describe('Description'),
       modifiable: z.boolean().optional().describe('Whether the attribute can be modified'),
-      impact: z.string().optional().describe('Impact description'),
-      enum_values: z.array(z.string()).optional().describe('Possible values for enum type'),
-      metadata: z.any().optional().describe('Additional metadata'),
+      impact: z.string().max(500).optional().describe('Impact description'),
+      enum_values: z.array(z.string().max(100)).max(50).optional().describe('Possible values for enum type'),
+      metadata: metadataSchema,
       activated: z.boolean().optional().describe('Whether the attribute is activated'),
     },
     async (args) => {
@@ -87,18 +96,18 @@ export function registerAttributeTools(server: McpServer, client: GraphQLClient,
     'update_attribute',
     'Update an existing attribute',
     {
-      id: z.string().describe('UUID of the attribute to update'),
-      attribute_name: z.string().optional().describe('New name'),
-      attribute_type: z.string().optional().describe('New type'),
-      value: z.any().optional().describe('New value'),
-      max_value: z.number().optional().describe('New max value'),
-      min_value: z.number().optional().describe('New min value'),
-      category: z.string().optional().describe('New category'),
-      description: z.string().optional().describe('New description'),
+      id: z.string().uuid().describe('UUID of the attribute to update'),
+      attribute_name: z.string().max(MAX_NAME_LENGTH).optional().describe('New name'),
+      attribute_type: z.enum(['string', 'number', 'boolean', 'enum', 'scale']).optional().describe('New type'),
+      value: attributeValueSchema,
+      max_value: z.number().min(-1000000).max(1000000).optional().describe('New max value'),
+      min_value: z.number().min(-1000000).max(1000000).optional().describe('New min value'),
+      category: z.string().max(100).optional().describe('New category'),
+      description: z.string().max(MAX_DESCRIPTION_LENGTH).optional().describe('New description'),
       modifiable: z.boolean().optional().describe('Modifiable status'),
-      impact: z.string().optional().describe('New impact'),
+      impact: z.string().max(500).optional().describe('New impact'),
       activated: z.boolean().optional().describe('Activation status'),
-      metadata: z.any().optional().describe('Updated metadata'),
+      metadata: metadataSchema,
     },
     async (args) => {
       const { id, ...updates } = args;
@@ -122,7 +131,7 @@ export function registerAttributeTools(server: McpServer, client: GraphQLClient,
   server.tool(
     'delete_attribute',
     'Delete an attribute by ID',
-    { id: z.string().describe('UUID of the attribute to delete') },
+    { id: z.string().uuid().describe('UUID of the attribute to delete') },
     async ({ id }) => {
       const mutation = `mutation ($id: uuid!, $org_id: String!) {
         delete_attributes(where: {id: {_eq: $id}, org_id: {_eq: $org_id}}) {
@@ -142,18 +151,18 @@ export function registerAttributeTools(server: McpServer, client: GraphQLClient,
     'Bulk import attributes (upserts on primary key conflict)',
     {
       attributes: z.array(z.object({
-        attribute_name: z.string(),
-        attribute_type: z.string(),
-        agent_id: z.string(),
-        value: z.any().optional(),
-        max_value: z.number().optional(),
-        min_value: z.number().optional(),
-        category: z.string().optional(),
-        description: z.string().optional(),
+        attribute_name: z.string().max(MAX_NAME_LENGTH),
+        attribute_type: z.enum(['string', 'number', 'boolean', 'enum', 'scale']),
+        agent_id: z.string().uuid(),
+        value: attributeValueSchema,
+        max_value: z.number().min(-1000000).max(1000000).optional(),
+        min_value: z.number().min(-1000000).max(1000000).optional(),
+        category: z.string().max(100).optional(),
+        description: z.string().max(MAX_DESCRIPTION_LENGTH).optional(),
         modifiable: z.boolean().optional(),
-        impact: z.string().optional(),
+        impact: z.string().max(500).optional(),
         activated: z.boolean().optional(),
-      })).describe('Array of attributes to import'),
+      })).max(MAX_ARRAY_LENGTH).describe('Array of attributes to import (max 100)'),
     },
     async ({ attributes }) => {
       const mutation = `mutation ($attributes: [attributes_insert_input!]!) {

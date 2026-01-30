@@ -2,6 +2,16 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { GraphQLClient } from 'graphql-request';
 import { z } from 'zod';
 import { executeQuery } from '../graphql-client.js';
+import {
+  paginationLimit,
+  paginationOffset,
+  metadataSchema,
+  ticketContentSchema,
+  responseContentSchema,
+  MAX_NAME_LENGTH,
+  MAX_DESCRIPTION_LENGTH,
+  MAX_ARRAY_LENGTH,
+} from '../../lib/validation.js';
 
 const EXAMPLE_FIELDS = `
   id example_name example_type activated description
@@ -26,9 +36,9 @@ export function registerExampleTools(server: McpServer, client: GraphQLClient, o
     'list_examples',
     'List all examples for the current organization (includes associated messages)',
     {
-      limit: z.number().optional().describe('Max number of examples to return (default 100)'),
-      offset: z.number().optional().describe('Offset for pagination (default 0)'),
-      message_limit: z.number().optional().describe('Max number of messages per example (default 50)'),
+      limit: paginationLimit,
+      offset: paginationOffset,
+      message_limit: z.number().int().min(1).max(200).optional().describe('Max number of messages per example (1-200, default 50)'),
     },
     async ({ limit, offset, message_limit }) => {
       const query = `query ($org_id: String, $limit: Int!, $offset: Int!, $message_limit: Int!) {
@@ -53,15 +63,15 @@ export function registerExampleTools(server: McpServer, client: GraphQLClient, o
     'create_example',
     'Create a new example for training/reference',
     {
-      example_name: z.string().describe('Name of the example'),
-      agent_id: z.string().describe('UUID of the agent this example belongs to'),
-      example_type: z.string().optional().describe('Type of example (default: "general")'),
-      description: z.string().optional().describe('Description'),
+      example_name: z.string().max(MAX_NAME_LENGTH).describe('Name of the example'),
+      agent_id: z.string().uuid().describe('UUID of the agent this example belongs to'),
+      example_type: z.string().max(50).optional().describe('Type of example (default: "general")'),
+      description: z.string().max(MAX_DESCRIPTION_LENGTH).optional().describe('Description'),
       activated: z.boolean().optional().describe('Whether the example is activated'),
-      example_ticket_id: z.string().optional().describe('Associated ticket ID'),
-      ticket_content: z.any().optional().describe('Ticket content object with customer_message, sentiment, priority, tags'),
-      response_content: z.any().optional().describe('Response content object with message, tone, actions_taken, follow_up_required'),
-      metadata: z.any().optional().describe('Additional metadata'),
+      example_ticket_id: z.string().max(100).optional().describe('Associated ticket ID'),
+      ticket_content: ticketContentSchema,
+      response_content: responseContentSchema,
+      metadata: metadataSchema,
     },
     async (args) => {
       const mutation = `mutation ($example: examples_insert_input!) {
@@ -92,14 +102,14 @@ export function registerExampleTools(server: McpServer, client: GraphQLClient, o
     'update_example',
     'Update an existing example',
     {
-      id: z.string().describe('UUID of the example to update'),
-      example_name: z.string().optional().describe('New name'),
-      example_type: z.string().optional().describe('New type'),
-      description: z.string().optional().describe('New description'),
+      id: z.string().uuid().describe('UUID of the example to update'),
+      example_name: z.string().max(MAX_NAME_LENGTH).optional().describe('New name'),
+      example_type: z.string().max(50).optional().describe('New type'),
+      description: z.string().max(MAX_DESCRIPTION_LENGTH).optional().describe('New description'),
       activated: z.boolean().optional().describe('Activation status'),
-      ticket_content: z.any().optional().describe('Updated ticket content'),
-      response_content: z.any().optional().describe('Updated response content'),
-      metadata: z.any().optional().describe('Updated metadata'),
+      ticket_content: ticketContentSchema,
+      response_content: responseContentSchema,
+      metadata: metadataSchema,
     },
     async (args) => {
       const { id, ...updates } = args;
@@ -123,7 +133,7 @@ export function registerExampleTools(server: McpServer, client: GraphQLClient, o
   server.tool(
     'delete_example',
     'Delete an example by ID',
-    { id: z.string().describe('UUID of the example to delete') },
+    { id: z.string().uuid().describe('UUID of the example to delete') },
     async ({ id }) => {
       const mutation = `mutation ($id: uuid!, $org_id: String!) {
         delete_examples(where: {id: {_eq: $id}, org_id: {_eq: $org_id}}) {
@@ -143,16 +153,16 @@ export function registerExampleTools(server: McpServer, client: GraphQLClient, o
     'Bulk import examples (upserts on primary key conflict)',
     {
       examples: z.array(z.object({
-        example_name: z.string(),
-        agent_id: z.string(),
-        example_type: z.string().optional(),
-        description: z.string().optional(),
+        example_name: z.string().max(MAX_NAME_LENGTH),
+        agent_id: z.string().uuid(),
+        example_type: z.string().max(50).optional(),
+        description: z.string().max(MAX_DESCRIPTION_LENGTH).optional(),
         activated: z.boolean().optional(),
-        example_ticket_id: z.string().optional(),
-        ticket_content: z.any().optional(),
-        response_content: z.any().optional(),
-        metadata: z.any().optional(),
-      })).describe('Array of examples to import'),
+        example_ticket_id: z.string().max(100).optional(),
+        ticket_content: ticketContentSchema,
+        response_content: responseContentSchema,
+        metadata: metadataSchema,
+      })).max(MAX_ARRAY_LENGTH).describe('Array of examples to import (max 100)'),
     },
     async ({ examples }) => {
       const mutation = `mutation ($examples: [examples_insert_input!]!) {

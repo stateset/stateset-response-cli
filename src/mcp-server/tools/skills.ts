@@ -2,6 +2,17 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { GraphQLClient } from 'graphql-request';
 import { z } from 'zod';
 import { executeQuery } from '../graphql-client.js';
+import {
+  paginationLimit,
+  paginationOffset,
+  conditionsSchema,
+  actionsSchema,
+  metadataSchema,
+  bulkIdsSchema,
+  MAX_NAME_LENGTH,
+  MAX_DESCRIPTION_LENGTH,
+  MAX_ARRAY_LENGTH,
+} from '../../lib/validation.js';
 
 const SKILL_FIELDS = `
   id skill_name skill_type activated description
@@ -15,8 +26,8 @@ export function registerSkillTools(server: McpServer, client: GraphQLClient, org
     'list_skills',
     'List all skills for the current organization',
     {
-      limit: z.number().optional().describe('Max number of skills to return (default 100)'),
-      offset: z.number().optional().describe('Offset for pagination (default 0)'),
+      limit: paginationLimit,
+      offset: paginationOffset,
     },
     async ({ limit, offset }) => {
       const query = `query ($org_id: String, $limit: Int!, $offset: Int!) {
@@ -40,9 +51,9 @@ export function registerSkillTools(server: McpServer, client: GraphQLClient, org
     'get_agent_skills',
     'Get all skills assigned to a specific agent',
     {
-      agent_id: z.string().describe('UUID of the agent'),
-      limit: z.number().optional().describe('Max number of skills to return (default 100)'),
-      offset: z.number().optional().describe('Offset for pagination (default 0)'),
+      agent_id: z.string().uuid().describe('UUID of the agent'),
+      limit: paginationLimit,
+      offset: paginationOffset,
     },
     async ({ agent_id, limit, offset }) => {
       const query = `query ($org_id: String, $agent_id: uuid, $limit: Int!, $offset: Int!) {
@@ -67,15 +78,15 @@ export function registerSkillTools(server: McpServer, client: GraphQLClient, org
     'create_skill',
     'Create a new skill',
     {
-      skill_name: z.string().describe('Name of the skill'),
-      skill_type: z.string().describe('Type of skill'),
-      description: z.string().optional().describe('Skill description'),
-      agent_id: z.string().optional().describe('UUID of agent to assign skill to'),
+      skill_name: z.string().max(MAX_NAME_LENGTH).describe('Name of the skill'),
+      skill_type: z.string().max(50).describe('Type of skill'),
+      description: z.string().max(MAX_DESCRIPTION_LENGTH).optional().describe('Skill description'),
+      agent_id: z.string().uuid().optional().describe('UUID of agent to assign skill to'),
       activated: z.boolean().optional().describe('Whether the skill is activated'),
       shared: z.boolean().optional().describe('Whether the skill is shared across agents'),
-      conditions: z.any().optional().describe('Skill conditions object with "any" or "all" arrays'),
-      actions: z.array(z.any()).optional().describe('Array of actions'),
-      metadata: z.any().optional().describe('Additional metadata'),
+      conditions: conditionsSchema,
+      actions: actionsSchema,
+      metadata: metadataSchema,
     },
     async (args) => {
       const mutation = `mutation ($skill: skills_insert_input!) {
@@ -106,16 +117,16 @@ export function registerSkillTools(server: McpServer, client: GraphQLClient, org
     'update_skill',
     'Update an existing skill',
     {
-      id: z.string().describe('UUID of the skill to update'),
-      skill_name: z.string().optional().describe('New skill name'),
-      skill_type: z.string().optional().describe('New skill type'),
-      description: z.string().optional().describe('New description'),
+      id: z.string().uuid().describe('UUID of the skill to update'),
+      skill_name: z.string().max(MAX_NAME_LENGTH).optional().describe('New skill name'),
+      skill_type: z.string().max(50).optional().describe('New skill type'),
+      description: z.string().max(MAX_DESCRIPTION_LENGTH).optional().describe('New description'),
       activated: z.boolean().optional().describe('Activation status'),
       shared: z.boolean().optional().describe('Shared status'),
-      agent_id: z.string().optional().describe('UUID of agent to assign to'),
-      conditions: z.any().optional().describe('Updated conditions'),
-      actions: z.array(z.any()).optional().describe('Updated actions'),
-      metadata: z.any().optional().describe('Updated metadata'),
+      agent_id: z.string().uuid().optional().describe('UUID of agent to assign to'),
+      conditions: conditionsSchema,
+      actions: actionsSchema,
+      metadata: metadataSchema,
     },
     async (args) => {
       const { id, ...updates } = args;
@@ -139,7 +150,7 @@ export function registerSkillTools(server: McpServer, client: GraphQLClient, org
   server.tool(
     'delete_skill',
     'Delete a skill by ID',
-    { id: z.string().describe('UUID of the skill to delete') },
+    { id: z.string().uuid().describe('UUID of the skill to delete') },
     async ({ id }) => {
       const mutation = `mutation ($id: uuid!, $org_id: String!) {
         delete_skills(where: {id: {_eq: $id}, org_id: {_eq: $org_id}}) {
@@ -159,16 +170,16 @@ export function registerSkillTools(server: McpServer, client: GraphQLClient, org
     'Bulk import skills (upserts on primary key conflict)',
     {
       skills: z.array(z.object({
-        skill_name: z.string(),
-        skill_type: z.string(),
-        description: z.string().optional(),
-        agent_id: z.string().optional(),
+        skill_name: z.string().max(MAX_NAME_LENGTH),
+        skill_type: z.string().max(50),
+        description: z.string().max(MAX_DESCRIPTION_LENGTH).optional(),
+        agent_id: z.string().uuid().optional(),
         activated: z.boolean().optional(),
         shared: z.boolean().optional(),
-        conditions: z.any().optional(),
-        actions: z.array(z.any()).optional(),
-        metadata: z.any().optional(),
-      })).describe('Array of skills to import'),
+        conditions: conditionsSchema,
+        actions: actionsSchema,
+        metadata: metadataSchema,
+      })).max(MAX_ARRAY_LENGTH).describe('Array of skills to import (max 100)'),
     },
     async ({ skills }) => {
       const mutation = `mutation ($skills: [skills_insert_input!]!) {
@@ -201,7 +212,7 @@ export function registerSkillTools(server: McpServer, client: GraphQLClient, org
     'bulk_update_skill_status',
     'Activate or deactivate multiple skills at once',
     {
-      ids: z.array(z.string()).describe('Array of skill UUIDs'),
+      ids: bulkIdsSchema.describe('Array of skill UUIDs'),
       activated: z.boolean().describe('Whether to activate or deactivate'),
     },
     async ({ ids, activated }) => {
@@ -218,7 +229,7 @@ export function registerSkillTools(server: McpServer, client: GraphQLClient, org
   server.tool(
     'bulk_delete_skills',
     'Delete multiple skills at once',
-    { ids: z.array(z.string()).describe('Array of skill UUIDs to delete') },
+    { ids: bulkIdsSchema.describe('Array of skill UUIDs to delete') },
     async ({ ids }) => {
       const mutation = `mutation ($ids: [uuid!]!, $org_id: String!) {
         delete_skills(where: {id: {_in: $ids}, org_id: {_eq: $org_id}}) { affected_rows }

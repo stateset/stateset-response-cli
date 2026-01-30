@@ -5,6 +5,7 @@ import inquirer from 'inquirer';
 import chalk from 'chalk';
 import ora from 'ora';
 import * as readline from 'node:readline';
+import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import {
   loadConfig,
@@ -30,6 +31,7 @@ import {
   formatElapsed,
   formatToolCall,
 } from './utils/display.js';
+import { exportOrg, importOrg } from './export-import.js';
 const require = createRequire(import.meta.url);
 const pkg = require('../package.json') as { version?: string };
 
@@ -268,6 +270,81 @@ auth
       }
     } catch (e: unknown) {
       console.error(formatError(e instanceof Error ? e.message : String(e)));
+    }
+  });
+
+// Export command
+program
+  .command('export')
+  .description('Export entire org configuration to a JSON file')
+  .argument('[file]', 'Output file path', 'stateset-export.json')
+  .action(async (file: string) => {
+    if (!configExists()) {
+      printAuthHelp();
+      process.exit(1);
+    }
+    const { orgId } = getCurrentOrg();
+    const spinner = ora(`Exporting organization ${orgId}...`).start();
+    try {
+      const data = await exportOrg(file);
+      const counts = [
+        `${data.agents.length} agents`,
+        `${data.rules.length} rules`,
+        `${data.skills.length} skills`,
+        `${data.attributes.length} attributes`,
+        `${data.functions.length} functions`,
+        `${data.examples.length} examples`,
+        `${data.evals.length} evals`,
+        `${data.datasets.length} datasets`,
+        `${data.agentSettings.length} agent settings`,
+      ];
+      spinner.succeed(`Exported to ${file}`);
+      console.log(chalk.gray(`  ${counts.join(', ')}`));
+    } catch (e: unknown) {
+      spinner.fail('Export failed');
+      console.error(formatError(e instanceof Error ? e.message : String(e)));
+      process.exit(1);
+    }
+  });
+
+// Import command
+program
+  .command('import')
+  .description('Import org configuration from a JSON export file')
+  .argument('<file>', 'Input file path')
+  .action(async (file: string) => {
+    if (!configExists()) {
+      printAuthHelp();
+      process.exit(1);
+    }
+    if (!fs.existsSync(file)) {
+      console.error(formatError(`File not found: ${file}`));
+      process.exit(1);
+    }
+    const { orgId } = getCurrentOrg();
+    const { confirm } = await inquirer.prompt([{
+      type: 'confirm',
+      name: 'confirm',
+      message: `Import into organization "${orgId}"? This will create new resources.`,
+      default: false,
+    }]);
+    if (!confirm) {
+      console.log(chalk.gray('  Import cancelled.'));
+      process.exit(0);
+    }
+    const spinner = ora('Importing...').start();
+    try {
+      const result = await importOrg(file);
+      spinner.succeed('Import complete');
+      const counts = Object.entries(result)
+        .filter(([, v]) => v > 0)
+        .map(([k, v]) => `${v} ${k}`)
+        .join(', ');
+      console.log(chalk.gray(`  Imported: ${counts || 'nothing (all resources may already exist)'}`));
+    } catch (e: unknown) {
+      spinner.fail('Import failed');
+      console.error(formatError(e instanceof Error ? e.message : String(e)));
+      process.exit(1);
     }
   });
 

@@ -2,6 +2,17 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { GraphQLClient } from 'graphql-request';
 import { z } from 'zod';
 import { executeQuery } from '../graphql-client.js';
+import {
+  paginationLimit,
+  paginationOffset,
+  conditionsSchema,
+  actionsSchema,
+  metadataSchema,
+  bulkIdsSchema,
+  MAX_NAME_LENGTH,
+  MAX_DESCRIPTION_LENGTH,
+  MAX_ARRAY_LENGTH,
+} from '../../lib/validation.js';
 
 const RULE_FIELDS = `
   id rule_name rule_type activated description
@@ -15,8 +26,8 @@ export function registerRuleTools(server: McpServer, client: GraphQLClient, orgI
     'list_rules',
     'List all rules for the current organization',
     {
-      limit: z.number().optional().describe('Max number of rules to return (default 100)'),
-      offset: z.number().optional().describe('Offset for pagination (default 0)'),
+      limit: paginationLimit,
+      offset: paginationOffset,
     },
     async ({ limit, offset }) => {
       const query = `query ($org_id: String, $limit: Int!, $offset: Int!) {
@@ -40,9 +51,9 @@ export function registerRuleTools(server: McpServer, client: GraphQLClient, orgI
     'get_agent_rules',
     'Get all rules assigned to a specific agent',
     {
-      agent_id: z.string().describe('UUID of the agent'),
-      limit: z.number().optional().describe('Max number of rules to return (default 100)'),
-      offset: z.number().optional().describe('Offset for pagination (default 0)'),
+      agent_id: z.string().uuid().describe('UUID of the agent'),
+      limit: paginationLimit,
+      offset: paginationOffset,
     },
     async ({ agent_id, limit, offset }) => {
       const query = `query ($org_id: String, $agent_id: uuid, $limit: Int!, $offset: Int!) {
@@ -67,15 +78,15 @@ export function registerRuleTools(server: McpServer, client: GraphQLClient, orgI
     'create_rule',
     'Create a new rule',
     {
-      rule_name: z.string().describe('Name of the rule'),
-      rule_type: z.string().describe('Type of rule'),
-      description: z.string().optional().describe('Rule description'),
-      agent_id: z.string().optional().describe('UUID of agent to assign rule to'),
+      rule_name: z.string().max(MAX_NAME_LENGTH).describe('Name of the rule'),
+      rule_type: z.string().max(50).describe('Type of rule'),
+      description: z.string().max(MAX_DESCRIPTION_LENGTH).optional().describe('Rule description'),
+      agent_id: z.string().uuid().optional().describe('UUID of agent to assign rule to'),
       activated: z.boolean().optional().describe('Whether the rule is activated'),
       shared: z.boolean().optional().describe('Whether the rule is shared across agents'),
-      conditions: z.any().optional().describe('Rule conditions object with "any" or "all" arrays'),
-      actions: z.array(z.any()).optional().describe('Array of actions to execute'),
-      metadata: z.any().optional().describe('Additional metadata'),
+      conditions: conditionsSchema,
+      actions: actionsSchema,
+      metadata: metadataSchema,
     },
     async (args) => {
       const mutation = `mutation ($rule: rules_insert_input!) {
@@ -106,16 +117,16 @@ export function registerRuleTools(server: McpServer, client: GraphQLClient, orgI
     'update_rule',
     'Update an existing rule',
     {
-      id: z.string().describe('UUID of the rule to update'),
-      rule_name: z.string().optional().describe('New rule name'),
-      rule_type: z.string().optional().describe('New rule type'),
-      description: z.string().optional().describe('New description'),
+      id: z.string().uuid().describe('UUID of the rule to update'),
+      rule_name: z.string().max(MAX_NAME_LENGTH).optional().describe('New rule name'),
+      rule_type: z.string().max(50).optional().describe('New rule type'),
+      description: z.string().max(MAX_DESCRIPTION_LENGTH).optional().describe('New description'),
       activated: z.boolean().optional().describe('Activation status'),
       shared: z.boolean().optional().describe('Shared status'),
-      agent_id: z.string().optional().describe('UUID of agent to assign to'),
-      conditions: z.any().optional().describe('Updated conditions'),
-      actions: z.array(z.any()).optional().describe('Updated actions'),
-      metadata: z.any().optional().describe('Updated metadata'),
+      agent_id: z.string().uuid().optional().describe('UUID of agent to assign to'),
+      conditions: conditionsSchema,
+      actions: actionsSchema,
+      metadata: metadataSchema,
     },
     async (args) => {
       const { id, ...updates } = args;
@@ -139,7 +150,7 @@ export function registerRuleTools(server: McpServer, client: GraphQLClient, orgI
   server.tool(
     'delete_rule',
     'Delete a rule by ID',
-    { id: z.string().describe('UUID of the rule to delete') },
+    { id: z.string().uuid().describe('UUID of the rule to delete') },
     async ({ id }) => {
       const mutation = `mutation ($id: uuid!, $org_id: String!) {
         delete_rules(where: {id: {_eq: $id}, org_id: {_eq: $org_id}}) {
@@ -159,16 +170,16 @@ export function registerRuleTools(server: McpServer, client: GraphQLClient, orgI
     'Bulk import rules (upserts on primary key conflict)',
     {
       rules: z.array(z.object({
-        rule_name: z.string(),
-        rule_type: z.string(),
-        description: z.string().optional(),
-        agent_id: z.string().optional(),
+        rule_name: z.string().max(MAX_NAME_LENGTH),
+        rule_type: z.string().max(50),
+        description: z.string().max(MAX_DESCRIPTION_LENGTH).optional(),
+        agent_id: z.string().uuid().optional(),
         activated: z.boolean().optional(),
         shared: z.boolean().optional(),
-        conditions: z.any().optional(),
-        actions: z.array(z.any()).optional(),
-        metadata: z.any().optional(),
-      })).describe('Array of rules to import'),
+        conditions: conditionsSchema,
+        actions: actionsSchema,
+        metadata: metadataSchema,
+      })).max(MAX_ARRAY_LENGTH).describe('Array of rules to import (max 100)'),
     },
     async ({ rules }) => {
       const mutation = `mutation ($rules: [rules_insert_input!]!) {
@@ -201,7 +212,7 @@ export function registerRuleTools(server: McpServer, client: GraphQLClient, orgI
     'bulk_update_rule_status',
     'Activate or deactivate multiple rules at once',
     {
-      ids: z.array(z.string()).describe('Array of rule UUIDs'),
+      ids: bulkIdsSchema.describe('Array of rule UUIDs'),
       activated: z.boolean().describe('Whether to activate (true) or deactivate (false)'),
     },
     async ({ ids, activated }) => {
@@ -219,8 +230,8 @@ export function registerRuleTools(server: McpServer, client: GraphQLClient, orgI
     'bulk_assign_rules_to_agent',
     'Assign multiple rules to a specific agent',
     {
-      ids: z.array(z.string()).describe('Array of rule UUIDs'),
-      agent_id: z.string().describe('UUID of the agent to assign rules to'),
+      ids: bulkIdsSchema.describe('Array of rule UUIDs'),
+      agent_id: z.string().uuid().describe('UUID of the agent to assign rules to'),
     },
     async ({ ids, agent_id }) => {
       const mutation = `mutation ($ids: [uuid!]!, $org_id: String!, $agent_id: uuid!) {
@@ -236,7 +247,7 @@ export function registerRuleTools(server: McpServer, client: GraphQLClient, orgI
   server.tool(
     'bulk_delete_rules',
     'Delete multiple rules at once',
-    { ids: z.array(z.string()).describe('Array of rule UUIDs to delete') },
+    { ids: bulkIdsSchema.describe('Array of rule UUIDs to delete') },
     async ({ ids }) => {
       const mutation = `mutation ($ids: [uuid!]!, $org_id: String!) {
         delete_rules(where: {id: {_in: $ids}, org_id: {_eq: $org_id}}) { affected_rows }
