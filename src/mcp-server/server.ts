@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { createGraphQLClient, type GraphQLAuth } from './graphql-client.js';
 import { getCurrentOrg } from '../config.js';
+import { getGorgiasConfigFromEnv, getIntegrationFlagsFromEnv, getKlaviyoConfigFromEnv, getLoopConfigFromEnv, getRechargeConfigFromEnv, getShipFusionConfigFromEnv, getShipHawkConfigFromEnv, getShipHeroConfigFromEnv, getShipStationConfigFromEnv, getShopifyConfigFromEnv, getZendeskConfigFromEnv } from '../integrations/config.js';
 import { registerAgentTools } from './tools/agents.js';
 import { registerRuleTools } from './tools/rules.js';
 import { registerSkillTools } from './tools/skills.js';
@@ -15,6 +16,18 @@ import { registerChannelTools } from './tools/channels.js';
 import { registerMessageTools } from './tools/messages.js';
 import { registerSettingsTools } from './tools/settings.js';
 import { registerOrganizationTools } from './tools/organizations.js';
+import { registerShopifyHoldsTools } from './tools/shopify-holds.js';
+import { registerShopifyRefundTools } from './tools/shopify-refunds.js';
+import { registerShopifyAdvancedTools } from './tools/shopify-advanced.js';
+import { registerGorgiasTools } from './tools/gorgias.js';
+import { registerRechargeTools } from './tools/recharge.js';
+import { registerKlaviyoTools } from './tools/klaviyo.js';
+import { registerLoopTools } from './tools/loop.js';
+import { registerShipStationTools } from './tools/shipstation.js';
+import { registerShipHeroTools } from './tools/shiphero.js';
+import { registerShipFusionTools } from './tools/shipfusion.js';
+import { registerShipHawkTools } from './tools/shiphawk.js';
+import { registerZendeskTools } from './tools/zendesk.js';
 
 export function createServer(): McpServer {
   const { orgId, config: orgConfig } = getCurrentOrg();
@@ -44,6 +57,120 @@ export function createServer(): McpServer {
   registerMessageTools(server, graphqlClient, orgId);
   registerSettingsTools(server, graphqlClient, orgId);
   registerOrganizationTools(server, graphqlClient, orgId);
+
+  const integrationFlags = getIntegrationFlagsFromEnv();
+
+  try {
+    const shopify = getShopifyConfigFromEnv();
+    if (shopify) {
+      registerShopifyHoldsTools(server, shopify, integrationFlags);
+      registerShopifyRefundTools(server, shopify, integrationFlags);
+      registerShopifyAdvancedTools(server, shopify, integrationFlags);
+    }
+  } catch (error) {
+    console.error(
+      `Shopify tools disabled: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  try {
+    const gorgias = getGorgiasConfigFromEnv();
+    if (gorgias) {
+      registerGorgiasTools(server, gorgias, integrationFlags);
+    }
+  } catch (error) {
+    console.error(
+      `Gorgias tools disabled: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  try {
+    const recharge = getRechargeConfigFromEnv();
+    if (recharge) {
+      registerRechargeTools(server, recharge, integrationFlags);
+    }
+  } catch (error) {
+    console.error(
+      `Recharge tools disabled: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  try {
+    const klaviyo = getKlaviyoConfigFromEnv();
+    if (klaviyo) {
+      registerKlaviyoTools(server, klaviyo, integrationFlags);
+    }
+  } catch (error) {
+    console.error(
+      `Klaviyo tools disabled: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  try {
+    const loop = getLoopConfigFromEnv();
+    if (loop) {
+      registerLoopTools(server, loop, integrationFlags);
+    }
+  } catch (error) {
+    console.error(
+      `Loop Returns tools disabled: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  try {
+    const shipstation = getShipStationConfigFromEnv();
+    if (shipstation) {
+      registerShipStationTools(server, shipstation, integrationFlags);
+    }
+  } catch (error) {
+    console.error(
+      `ShipStation tools disabled: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  try {
+    const shiphero = getShipHeroConfigFromEnv();
+    if (shiphero) {
+      registerShipHeroTools(server, shiphero, integrationFlags);
+    }
+  } catch (error) {
+    console.error(
+      `ShipHero tools disabled: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  try {
+    const shipfusion = getShipFusionConfigFromEnv();
+    if (shipfusion) {
+      registerShipFusionTools(server, shipfusion, integrationFlags);
+    }
+  } catch (error) {
+    console.error(
+      `ShipFusion tools disabled: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  try {
+    const shiphawk = getShipHawkConfigFromEnv();
+    if (shiphawk) {
+      registerShipHawkTools(server, shiphawk, integrationFlags);
+    }
+  } catch (error) {
+    console.error(
+      `ShipHawk tools disabled: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  try {
+    const zendesk = getZendeskConfigFromEnv();
+    if (zendesk) {
+      registerZendeskTools(server, zendesk, integrationFlags);
+    }
+  } catch (error) {
+    console.error(
+      `Zendesk tools disabled: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
 
   return server;
 }

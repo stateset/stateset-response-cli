@@ -4,6 +4,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { formatToolCall } from './utils/display.js';
+import { SessionStore } from './session.js';
 import { type ModelId, DEFAULT_MODEL } from './config.js';
 
 const THIS_FILE = fileURLToPath(import.meta.url);
@@ -11,9 +12,22 @@ const __dirname = path.dirname(THIS_FILE);
 const IS_TS = THIS_FILE.endsWith('.ts');
 const MAX_HISTORY_MESSAGES = 40;
 
-const SYSTEM_PROMPT = `You are an AI assistant for managing the StateSet Response platform.
+export const BASE_SYSTEM_PROMPT = `You are an AI assistant for managing the StateSet Response platform.
 You have tools to manage agents, rules, skills, attributes, examples, evals, datasets, functions,
 responses, channels, messages, knowledge base (semantic search and vector storage), and agent/channel settings.
+
+You also have optional commerce/support tools (if configured):
+- Shopify: fulfillment hold previews/releases, order tagging, and partial refunds
+- Gorgias: ticket search, review, macros, and bulk actions
+- Recharge: customers, subscriptions, charges, orders, and raw API requests
+- Klaviyo: profiles (including bulk import/merge), lists, segments, tags, campaigns, flows, templates, forms, images, catalogs, coupons, subscriptions, push tokens, reporting, data privacy, and events
+- Loop Returns: returns lifecycle, exchanges, refunds, labels, and notes
+- ShipStation: orders, labels, rates, shipments, and tagging
+- ShipHero: warehouse orders, inventory, routing, and shipments
+- ShipFusion: 3PL orders, inventory, shipments, returns, and ASNs
+- ShipHawk: rates, bookings, shipments, pickups, and BOLs
+- Zendesk: ticket search, updates, macros, merges, and batch operations
+- Advanced: raw Shopify GraphQL/REST and raw Gorgias API requests for full coverage
 
 Guidelines:
 - Be concise and action-oriented
@@ -24,11 +38,34 @@ Guidelines:
 - For bulk operations, confirm the count before proceeding
 - When showing IDs, include the first 8 characters for brevity unless the user asks for the full ID
 - For knowledge base searches, present the top matches with their similarity scores
-- For channel threads, include message counts and most recent activity when relevant`;
+- For channel threads, include message counts and most recent activity when relevant
+
+Commerce/support safety:
+- Always preview first before any write operation (e.g., release holds, refunds, ticket updates)
+- Never proceed without explicit user confirmation
+- If a tool reports writes are disabled, explain how to enable them`;
 
 export interface ChatCallbacks {
   onText?: (delta: string) => void;
   onToolCall?: (name: string, args: Record<string, unknown>) => void;
+  onToolCallStart?: (name: string, args: Record<string, unknown>) => Promise<ToolCallDecision | void> | ToolCallDecision | void;
+  onToolCallEnd?: (result: ToolCallResult) => void;
+  onUsage?: (usage: Anthropic.Usage) => void;
+}
+
+export interface ToolCallDecision {
+  action: 'allow' | 'deny' | 'respond';
+  args?: Record<string, unknown>;
+  reason?: string;
+  content?: string;
+}
+
+export interface ToolCallResult {
+  name: string;
+  args: Record<string, unknown>;
+  resultText: string;
+  isError: boolean;
+  durationMs: number;
 }
 
 export class StateSetAgent {
@@ -39,6 +76,8 @@ export class StateSetAgent {
   private conversationHistory: Anthropic.MessageParam[] = [];
   private model: ModelId;
   private abortController: AbortController | null = null;
+  private systemPrompt: string = BASE_SYSTEM_PROMPT;
+  private sessionStore: SessionStore | null = null;
 
   constructor(anthropicApiKey: string, model?: ModelId) {
     this.anthropic = new Anthropic({ apiKey: anthropicApiKey });
@@ -51,6 +90,16 @@ export class StateSetAgent {
 
   setModel(model: ModelId): void {
     this.model = model;
+  }
+
+  setSystemPrompt(prompt: string): void {
+    this.systemPrompt = prompt;
+  }
+
+  useSessionStore(store: SessionStore): void {
+    this.sessionStore = store;
+    const loaded = store.loadMessages();
+    this.conversationHistory = loaded.slice(-MAX_HISTORY_MESSAGES);
   }
 
   getModel(): ModelId {
@@ -93,9 +142,8 @@ export class StateSetAgent {
     }));
   }
 
-  async chat(userMessage: string, callbacks?: ChatCallbacks): Promise<string> {
-    this.conversationHistory.push({ role: 'user', content: userMessage });
-    this.trimHistory();
+  async chat(userMessage: Anthropic.MessageParam['content'], callbacks?: ChatCallbacks): Promise<string> {
+    this.addMessage({ role: 'user', content: userMessage });
 
     const textParts: string[] = [];
 
@@ -107,7 +155,7 @@ export class StateSetAgent {
         {
           model: this.model,
           max_tokens: 4096,
-          system: SYSTEM_PROMPT,
+          system: this.systemPrompt,
           tools: this.tools,
           messages: this.conversationHistory,
         },
@@ -134,12 +182,15 @@ export class StateSetAgent {
       this.abortController = null;
 
       // Add assistant response to history
-      this.conversationHistory.push({ role: 'assistant', content: finalMessage.content });
-      this.trimHistory();
+      this.addMessage({ role: 'assistant', content: finalMessage.content });
 
       // Collect text blocks
       if (currentText) {
         textParts.push(currentText);
+      }
+
+      if (finalMessage.usage) {
+        callbacks?.onUsage?.(finalMessage.usage);
       }
 
       // If no more tool calls, we're done
@@ -152,12 +203,55 @@ export class StateSetAgent {
 
       for (const block of finalMessage.content) {
         if (block.type === 'tool_use') {
-          callbacks?.onToolCall?.(block.name, block.input as Record<string, unknown>);
+          const originalArgs = block.input as Record<string, unknown>;
+          callbacks?.onToolCall?.(block.name, originalArgs);
 
+          let args = originalArgs;
+          if (callbacks?.onToolCallStart) {
+            const decision = await callbacks.onToolCallStart(block.name, originalArgs);
+            if (decision?.action === 'deny') {
+              const reason = decision.reason || 'Tool call denied by hook.';
+              toolResults.push({
+                type: 'tool_result',
+                tool_use_id: block.id,
+                content: `Error: ${reason}`,
+                is_error: true,
+              });
+              callbacks?.onToolCallEnd?.({
+                name: block.name,
+                args,
+                resultText: `Error: ${reason}`,
+                isError: true,
+                durationMs: 0,
+              });
+              continue;
+            }
+            if (decision?.action === 'respond') {
+              const content = decision.content || '';
+              toolResults.push({
+                type: 'tool_result',
+                tool_use_id: block.id,
+                content,
+              });
+              callbacks?.onToolCallEnd?.({
+                name: block.name,
+                args,
+                resultText: content,
+                isError: false,
+                durationMs: 0,
+              });
+              continue;
+            }
+            if (decision?.action === 'allow' && decision.args) {
+              args = decision.args;
+            }
+          }
+
+          const startTime = Date.now();
           try {
             const result = await this.mcpClient.callTool({
               name: block.name,
-              arguments: block.input as Record<string, unknown>,
+              arguments: args,
             });
 
             const resultText = (result.content as Array<{ type: string; text?: string }>)
@@ -169,21 +263,36 @@ export class StateSetAgent {
               tool_use_id: block.id,
               content: resultText,
             });
+
+            callbacks?.onToolCallEnd?.({
+              name: block.name,
+              args,
+              resultText,
+              isError: false,
+              durationMs: Date.now() - startTime,
+            });
           } catch (error: unknown) {
             const errMsg = error instanceof Error ? error.message : String(error);
+            const resultText = `Error: ${errMsg}`;
             toolResults.push({
               type: 'tool_result',
               tool_use_id: block.id,
-              content: `Error: ${errMsg}`,
+              content: resultText,
               is_error: true,
+            });
+            callbacks?.onToolCallEnd?.({
+              name: block.name,
+              args,
+              resultText,
+              isError: true,
+              durationMs: Date.now() - startTime,
             });
           }
         }
       }
 
       // Feed tool results back
-      this.conversationHistory.push({ role: 'user', content: toolResults });
-      this.trimHistory();
+      this.addMessage({ role: 'user', content: toolResults });
     }
 
     return textParts.join('\n');
@@ -199,5 +308,45 @@ export class StateSetAgent {
     if (this.conversationHistory.length > MAX_HISTORY_MESSAGES) {
       this.conversationHistory = this.conversationHistory.slice(-MAX_HISTORY_MESSAGES);
     }
+  }
+
+  private addMessage(message: Anthropic.MessageParam): void {
+    this.conversationHistory.push(message);
+    this.trimHistory();
+
+    if (this.sessionStore) {
+      this.sessionStore.appendMessage(message);
+      const text = this.extractText(message);
+      if (text) {
+        this.sessionStore.appendLog({
+          ts: new Date().toISOString(),
+          role: message.role as 'user' | 'assistant',
+          text,
+        });
+      }
+    }
+  }
+
+  private extractText(message: Anthropic.MessageParam): string | null {
+    if (message.role !== 'user' && message.role !== 'assistant') return null;
+    const content = message.content;
+
+    if (Array.isArray(content)) {
+      if (content.length > 0 && content.every((part) => part.type === 'tool_result')) {
+        return null;
+      }
+      const textParts = content
+        .filter((part) => part.type === 'text' && typeof (part as { text?: string }).text === 'string')
+        .map((part) => (part as { text: string }).text.trim())
+        .filter(Boolean);
+      if (textParts.length === 0) return null;
+      return textParts.join('\n');
+    }
+
+    if (typeof content === 'string') {
+      return content.trim() || null;
+    }
+
+    return null;
   }
 }
