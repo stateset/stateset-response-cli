@@ -1,3 +1,5 @@
+import { getIntegrationConfigFromStore } from './store.js';
+
 export interface ShopifyConfig {
   shop: string;
   accessToken: string;
@@ -106,14 +108,33 @@ export function getShopifyConfigFromEnv(): ShopifyConfig | null {
       'STATESET_SHOPIFY_ACCESS_TOKEN',
     ]);
 
-  if (!rawShop && !rawToken) return null;
-  if (!rawShop) throw new Error('Missing Shopify shop domain. Set SHOPIFY_SHOP_DOMAIN.');
-  if (!rawToken) throw new Error('Missing Shopify access token. Set SHOPIFY_ACCESS_TOKEN.');
+  if (rawShop || rawToken) {
+    if (!rawShop) throw new Error('Missing Shopify shop domain. Set SHOPIFY_SHOP_DOMAIN.');
+    if (!rawToken) throw new Error('Missing Shopify access token. Set SHOPIFY_ACCESS_TOKEN.');
 
-  const shop = normalizeShopDomain(rawShop);
-  const accessToken = validateAccessToken(rawToken);
+    const shop = normalizeShopDomain(rawShop);
+    const accessToken = validateAccessToken(rawToken);
 
-  return { shop, accessToken, apiVersion };
+    return { shop, accessToken, apiVersion };
+  }
+
+  const stored = getIntegrationConfigFromStore('shopify');
+  if (!stored) return null;
+  const storedShop = stored.shop;
+  const storedToken = stored.accessToken;
+  const storedVersion = stored.apiVersion || apiVersion;
+  if (!storedShop) {
+    throw new Error('Missing Shopify shop domain in integrations config. Run "response integrations setup".');
+  }
+  if (!storedToken) {
+    throw new Error('Missing Shopify access token in integrations config. Run "response integrations setup".');
+  }
+
+  return {
+    shop: normalizeShopDomain(storedShop),
+    accessToken: validateAccessToken(storedToken),
+    apiVersion: storedVersion,
+  };
 }
 
 function normalizeGorgiasDomain(domain: string): string {
@@ -129,15 +150,37 @@ export function getGorgiasConfigFromEnv(): GorgiasConfig | null {
   const apiKey = readFirstEnvVar(['GORGIAS_API_KEY', 'STATESET_GORGIAS_API_KEY']);
   const email = readFirstEnvVar(['GORGIAS_EMAIL', 'STATESET_GORGIAS_EMAIL']);
 
-  if (!rawDomain && !apiKey && !email) return null;
-  if (!rawDomain) throw new Error('Missing Gorgias domain. Set GORGIAS_DOMAIN.');
-  if (!apiKey) throw new Error('Missing Gorgias API key. Set GORGIAS_API_KEY.');
-  if (!email) throw new Error('Missing Gorgias email. Set GORGIAS_EMAIL.');
+  if (rawDomain || apiKey || email) {
+    if (!rawDomain) throw new Error('Missing Gorgias domain. Set GORGIAS_DOMAIN.');
+    if (!apiKey) throw new Error('Missing Gorgias API key. Set GORGIAS_API_KEY.');
+    if (!email) throw new Error('Missing Gorgias email. Set GORGIAS_EMAIL.');
+
+    return {
+      domain: normalizeGorgiasDomain(rawDomain),
+      apiKey,
+      email,
+    };
+  }
+
+  const stored = getIntegrationConfigFromStore('gorgias');
+  if (!stored) return null;
+  const storedDomain = stored.domain;
+  const storedKey = stored.apiKey;
+  const storedEmail = stored.email;
+  if (!storedDomain) {
+    throw new Error('Missing Gorgias domain in integrations config. Run "response integrations setup".');
+  }
+  if (!storedKey) {
+    throw new Error('Missing Gorgias API key in integrations config. Run "response integrations setup".');
+  }
+  if (!storedEmail) {
+    throw new Error('Missing Gorgias email in integrations config. Run "response integrations setup".');
+  }
 
   return {
-    domain: normalizeGorgiasDomain(rawDomain),
-    apiKey,
-    email,
+    domain: normalizeGorgiasDomain(storedDomain),
+    apiKey: storedKey,
+    email: storedEmail,
   };
 }
 
@@ -162,11 +205,19 @@ export function getRechargeConfigFromEnv(): RechargeConfig | null {
       'STATESET_RECHARGE_ACCESS_TOKEN',
     ]);
 
-  if (!rawToken) return null;
+  if (rawToken) {
+    const accessToken = validateRechargeToken(rawToken);
+    return { accessToken, apiVersion };
+  }
 
-  const accessToken = validateRechargeToken(rawToken);
-
-  return { accessToken, apiVersion };
+  const stored = getIntegrationConfigFromStore('recharge');
+  if (!stored) return null;
+  const storedToken = stored.accessToken;
+  if (!storedToken) {
+    throw new Error('Missing Recharge access token in integrations config. Run "response integrations setup".');
+  }
+  const storedVersion = stored.apiVersion || apiVersion;
+  return { accessToken: validateRechargeToken(storedToken), apiVersion: storedVersion };
 }
 
 function validateKlaviyoKey(key: string): string {
@@ -209,56 +260,123 @@ export function getKlaviyoConfigFromEnv(): KlaviyoConfig | null {
       'STATESET_KLAVIYO_API_KEY',
     ]);
 
-  if (!rawKey) return null;
+  if (rawKey) {
+    const apiKey = validateKlaviyoKey(rawKey);
+    return { apiKey, revision };
+  }
 
-  const apiKey = validateKlaviyoKey(rawKey);
-
-  return { apiKey, revision };
+  const stored = getIntegrationConfigFromStore('klaviyo');
+  if (!stored) return null;
+  const storedKey = stored.apiKey;
+  if (!storedKey) {
+    throw new Error('Missing Klaviyo API key in integrations config. Run "response integrations setup".');
+  }
+  const storedRevision = stored.revision || revision;
+  return { apiKey: validateKlaviyoKey(storedKey), revision: storedRevision };
 }
 
 export function getLoopConfigFromEnv(): LoopConfig | null {
   const rawKey = readFirstEnvVar(['LOOP_API_KEY', 'STATESET_LOOP_API_KEY']);
-  if (!rawKey) return null;
-  const apiKey = validateGenericKey(rawKey, 'Loop API key', 'LOOP_API_KEY');
-  return { apiKey };
+  if (rawKey) {
+    const apiKey = validateGenericKey(rawKey, 'Loop API key', 'LOOP_API_KEY');
+    return { apiKey };
+  }
+
+  const stored = getIntegrationConfigFromStore('loop');
+  if (!stored) return null;
+  const storedKey = stored.apiKey;
+  if (!storedKey) {
+    throw new Error('Missing Loop API key in integrations config. Run "response integrations setup".');
+  }
+  return { apiKey: validateGenericKey(storedKey, 'Loop API key', 'LOOP_API_KEY') };
 }
 
 export function getShipStationConfigFromEnv(): ShipStationConfig | null {
   const apiKey = readFirstEnvVar(['SHIPSTATION_API_KEY', 'STATESET_SHIPSTATION_API_KEY']);
   const apiSecret = readFirstEnvVar(['SHIPSTATION_API_SECRET', 'STATESET_SHIPSTATION_API_SECRET']);
-  if (!apiKey && !apiSecret) return null;
-  if (!apiKey) throw new Error('Missing ShipStation API key. Set SHIPSTATION_API_KEY.');
-  if (!apiSecret) throw new Error('Missing ShipStation API secret. Set SHIPSTATION_API_SECRET.');
+  if (apiKey || apiSecret) {
+    if (!apiKey) throw new Error('Missing ShipStation API key. Set SHIPSTATION_API_KEY.');
+    if (!apiSecret) throw new Error('Missing ShipStation API secret. Set SHIPSTATION_API_SECRET.');
+    return {
+      apiKey: validateGenericKey(apiKey, 'ShipStation API key', 'SHIPSTATION_API_KEY'),
+      apiSecret: validateGenericKey(apiSecret, 'ShipStation API secret', 'SHIPSTATION_API_SECRET'),
+    };
+  }
+
+  const stored = getIntegrationConfigFromStore('shipstation');
+  if (!stored) return null;
+  const storedKey = stored.apiKey;
+  const storedSecret = stored.apiSecret;
+  if (!storedKey) {
+    throw new Error('Missing ShipStation API key in integrations config. Run "response integrations setup".');
+  }
+  if (!storedSecret) {
+    throw new Error('Missing ShipStation API secret in integrations config. Run "response integrations setup".');
+  }
   return {
-    apiKey: validateGenericKey(apiKey, 'ShipStation API key', 'SHIPSTATION_API_KEY'),
-    apiSecret: validateGenericKey(apiSecret, 'ShipStation API secret', 'SHIPSTATION_API_SECRET'),
+    apiKey: validateGenericKey(storedKey, 'ShipStation API key', 'SHIPSTATION_API_KEY'),
+    apiSecret: validateGenericKey(storedSecret, 'ShipStation API secret', 'SHIPSTATION_API_SECRET'),
   };
 }
 
 export function getShipHeroConfigFromEnv(): ShipHeroConfig | null {
   const rawToken = readFirstEnvVar(['SHIPHERO_ACCESS_TOKEN', 'STATESET_SHIPHERO_ACCESS_TOKEN']);
-  if (!rawToken) return null;
-  const accessToken = validateGenericKey(rawToken, 'ShipHero access token', 'SHIPHERO_ACCESS_TOKEN');
-  return { accessToken };
+  if (rawToken) {
+    const accessToken = validateGenericKey(rawToken, 'ShipHero access token', 'SHIPHERO_ACCESS_TOKEN');
+    return { accessToken };
+  }
+
+  const stored = getIntegrationConfigFromStore('shiphero');
+  if (!stored) return null;
+  const storedToken = stored.accessToken;
+  if (!storedToken) {
+    throw new Error('Missing ShipHero access token in integrations config. Run "response integrations setup".');
+  }
+  return { accessToken: validateGenericKey(storedToken, 'ShipHero access token', 'SHIPHERO_ACCESS_TOKEN') };
 }
 
 export function getShipFusionConfigFromEnv(): ShipFusionConfig | null {
   const apiKey = readFirstEnvVar(['SHIPFUSION_API_KEY', 'STATESET_SHIPFUSION_API_KEY']);
   const clientId = readFirstEnvVar(['SHIPFUSION_CLIENT_ID', 'STATESET_SHIPFUSION_CLIENT_ID']);
-  if (!apiKey && !clientId) return null;
-  if (!apiKey) throw new Error('Missing ShipFusion API key. Set SHIPFUSION_API_KEY.');
-  if (!clientId) throw new Error('Missing ShipFusion client ID. Set SHIPFUSION_CLIENT_ID.');
+  if (apiKey || clientId) {
+    if (!apiKey) throw new Error('Missing ShipFusion API key. Set SHIPFUSION_API_KEY.');
+    if (!clientId) throw new Error('Missing ShipFusion client ID. Set SHIPFUSION_CLIENT_ID.');
+    return {
+      apiKey: validateGenericKey(apiKey, 'ShipFusion API key', 'SHIPFUSION_API_KEY'),
+      clientId: validateGenericKey(clientId, 'ShipFusion client ID', 'SHIPFUSION_CLIENT_ID'),
+    };
+  }
+
+  const stored = getIntegrationConfigFromStore('shipfusion');
+  if (!stored) return null;
+  const storedKey = stored.apiKey;
+  const storedClientId = stored.clientId;
+  if (!storedKey) {
+    throw new Error('Missing ShipFusion API key in integrations config. Run "response integrations setup".');
+  }
+  if (!storedClientId) {
+    throw new Error('Missing ShipFusion client ID in integrations config. Run "response integrations setup".');
+  }
   return {
-    apiKey: validateGenericKey(apiKey, 'ShipFusion API key', 'SHIPFUSION_API_KEY'),
-    clientId: validateGenericKey(clientId, 'ShipFusion client ID', 'SHIPFUSION_CLIENT_ID'),
+    apiKey: validateGenericKey(storedKey, 'ShipFusion API key', 'SHIPFUSION_API_KEY'),
+    clientId: validateGenericKey(storedClientId, 'ShipFusion client ID', 'SHIPFUSION_CLIENT_ID'),
   };
 }
 
 export function getShipHawkConfigFromEnv(): ShipHawkConfig | null {
   const rawKey = readFirstEnvVar(['SHIPHAWK_API_KEY', 'STATESET_SHIPHAWK_API_KEY']);
-  if (!rawKey) return null;
-  const apiKey = validateGenericKey(rawKey, 'ShipHawk API key', 'SHIPHAWK_API_KEY');
-  return { apiKey };
+  if (rawKey) {
+    const apiKey = validateGenericKey(rawKey, 'ShipHawk API key', 'SHIPHAWK_API_KEY');
+    return { apiKey };
+  }
+
+  const stored = getIntegrationConfigFromStore('shiphawk');
+  if (!stored) return null;
+  const storedKey = stored.apiKey;
+  if (!storedKey) {
+    throw new Error('Missing ShipHawk API key in integrations config. Run "response integrations setup".');
+  }
+  return { apiKey: validateGenericKey(storedKey, 'ShipHawk API key', 'SHIPHAWK_API_KEY') };
 }
 
 export function getZendeskConfigFromEnv(): ZendeskConfig | null {
@@ -266,15 +384,36 @@ export function getZendeskConfigFromEnv(): ZendeskConfig | null {
   const email = readFirstEnvVar(['ZENDESK_EMAIL', 'STATESET_ZENDESK_EMAIL']);
   const apiToken = readFirstEnvVar(['ZENDESK_API_TOKEN', 'STATESET_ZENDESK_API_TOKEN']);
 
-  if (!rawSubdomain && !email && !apiToken) return null;
-  if (!rawSubdomain) throw new Error('Missing Zendesk subdomain. Set ZENDESK_SUBDOMAIN.');
-  if (!email) throw new Error('Missing Zendesk email. Set ZENDESK_EMAIL.');
-  if (!apiToken) throw new Error('Missing Zendesk API token. Set ZENDESK_API_TOKEN.');
+  if (rawSubdomain || email || apiToken) {
+    if (!rawSubdomain) throw new Error('Missing Zendesk subdomain. Set ZENDESK_SUBDOMAIN.');
+    if (!email) throw new Error('Missing Zendesk email. Set ZENDESK_EMAIL.');
+    if (!apiToken) throw new Error('Missing Zendesk API token. Set ZENDESK_API_TOKEN.');
 
+    return {
+      subdomain: normalizeZendeskSubdomain(rawSubdomain),
+      email,
+      apiToken: validateGenericKey(apiToken, 'Zendesk API token', 'ZENDESK_API_TOKEN'),
+    };
+  }
+
+  const stored = getIntegrationConfigFromStore('zendesk');
+  if (!stored) return null;
+  const storedSubdomain = stored.subdomain;
+  const storedEmail = stored.email;
+  const storedToken = stored.apiToken;
+  if (!storedSubdomain) {
+    throw new Error('Missing Zendesk subdomain in integrations config. Run "response integrations setup".');
+  }
+  if (!storedEmail) {
+    throw new Error('Missing Zendesk email in integrations config. Run "response integrations setup".');
+  }
+  if (!storedToken) {
+    throw new Error('Missing Zendesk API token in integrations config. Run "response integrations setup".');
+  }
   return {
-    subdomain: normalizeZendeskSubdomain(rawSubdomain),
-    email,
-    apiToken: validateGenericKey(apiToken, 'Zendesk API token', 'ZENDESK_API_TOKEN'),
+    subdomain: normalizeZendeskSubdomain(storedSubdomain),
+    email: storedEmail,
+    apiToken: validateGenericKey(storedToken, 'Zendesk API token', 'ZENDESK_API_TOKEN'),
   };
 }
 
