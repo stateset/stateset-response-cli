@@ -83,6 +83,28 @@ function parseToggleValue(value: string | undefined | null): boolean | undefined
   return undefined;
 }
 
+type InlineFlags = {
+  apply?: boolean;
+  redact?: boolean;
+};
+
+function extractInlineFlags(input: string): { text: string; flags: InlineFlags } {
+  let text = input.trimEnd();
+  const flags: InlineFlags = {};
+  const pattern = /(?:^|\s)(--apply|--redact)\s*$/;
+
+  let match = pattern.exec(text);
+  while (match) {
+    const flag = match[1];
+    if (flag === '--apply') flags.apply = true;
+    if (flag === '--redact') flags.redact = true;
+    text = text.slice(0, match.index).trimEnd();
+    match = pattern.exec(text);
+  }
+
+  return { text, flags };
+}
+
 function readBooleanEnv(name: string): boolean {
   return parseToggleValue(process.env[name]) ?? false;
 }
@@ -1293,7 +1315,7 @@ program
 
     rl.prompt();
 
-    rl.on('line', async (line: string) => {
+    const handleLine = async (line: string) => {
       // Multi-line support: trailing backslash continues input
       if (line.endsWith('\\')) {
         multiLineBuffer += line.slice(0, -1) + '\n';
@@ -1310,6 +1332,50 @@ program
       }
 
       let finalInput = input;
+
+      if (!input.startsWith('/')) {
+        const inline = extractInlineFlags(input);
+        finalInput = inline.text;
+
+        const currentApply = process.env.STATESET_ALLOW_APPLY === 'true';
+        const currentRedact = process.env.STATESET_REDACT === 'true';
+        const nextApply = inline.flags.apply ? true : currentApply;
+        const nextRedact = inline.flags.redact ? true : currentRedact;
+
+        if (nextApply !== currentApply || nextRedact !== currentRedact) {
+          process.env.STATESET_ALLOW_APPLY = nextApply ? 'true' : 'false';
+          process.env.STATESET_REDACT = nextRedact ? 'true' : 'false';
+          try {
+            await reconnectAgent();
+          } catch (err) {
+            process.env.STATESET_ALLOW_APPLY = currentApply ? 'true' : 'false';
+            process.env.STATESET_REDACT = currentRedact ? 'true' : 'false';
+            console.error(formatError(err instanceof Error ? err.message : String(err)));
+            console.log('');
+            rl.prompt();
+            return;
+          }
+          const memory = loadMemory(sessionId);
+          agent.setSystemPrompt(buildSystemPrompt({ sessionId, memory, cwd, activeSkills }));
+          if (nextApply !== currentApply) {
+            console.log(formatSuccess(`Writes ${nextApply ? 'enabled' : 'disabled'} (inline --apply).`));
+          }
+          if (nextRedact !== currentRedact) {
+            console.log(formatSuccess(`Redaction ${nextRedact ? 'enabled' : 'disabled'} (inline --redact).`));
+          }
+          console.log('');
+        }
+
+        if (!finalInput) {
+          rl.prompt();
+          return;
+        }
+
+        if (finalInput === 'exit' || finalInput === 'quit') {
+          await shutdown();
+          return;
+        }
+      }
 
       // Slash commands
       if (input === '/help') {
@@ -1783,11 +1849,15 @@ program
         const action = tokens[0];
         if (action === 'setup') {
           rl.pause();
+          rl.removeListener('line', handleLine);
           try {
             await runIntegrationsSetup(cwd);
           } catch (err) {
             console.error(formatError(err instanceof Error ? err.message : String(err)));
           } finally {
+            if (!rl.listeners('line').includes(handleLine)) {
+              rl.on('line', handleLine);
+            }
             rl.resume();
           }
           console.log('');
@@ -3277,7 +3347,9 @@ program
       processing = false;
       console.log('');
       rl.prompt();
-    });
+    };
+
+    rl.on('line', handleLine);
 
     rl.on('close', async () => {
       await shutdown();

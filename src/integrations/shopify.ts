@@ -26,6 +26,21 @@ export interface ShopifyOrder {
   fulfillmentOrders: ShopifyFulfillmentOrder[];
 }
 
+export interface ShopifyOrderSummary {
+  id: string;
+  name: string;
+  email: string | null;
+  tags: string[];
+  cancelledAt: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  displayFinancialStatus: string | null;
+  displayFulfillmentStatus: string | null;
+  totalPrice: ShopifyMoney | null;
+}
+
+export type ShopifyOrderSortKey = 'CREATED_AT' | 'UPDATED_AT';
+
 export interface ShopifyOrderLineItem {
   id: string;
   gid: string;
@@ -298,6 +313,98 @@ export async function fetchOrdersWithHoldInfo({
   }
 
   return { orders };
+}
+
+export async function fetchOrders({
+  shopify,
+  orderQuery,
+  limit,
+  sortKey = 'CREATED_AT',
+  reverse = true,
+}: {
+  shopify: ShopifyConfig;
+  orderQuery: string;
+  limit: number;
+  sortKey?: ShopifyOrderSortKey;
+  reverse?: boolean;
+}): Promise<{ orders: ShopifyOrderSummary[]; hasMore: boolean }> {
+  const safeLimit = Math.min(500, Math.max(1, Number(limit) || 50));
+  const pageSize = Math.min(250, safeLimit);
+  const queryDoc = `
+    query Orders($first: Int!, $after: String, $query: String!, $sortKey: OrderSortKeys, $reverse: Boolean) {
+      orders(first: $first, after: $after, query: $query, sortKey: $sortKey, reverse: $reverse) {
+        pageInfo { hasNextPage endCursor }
+        edges {
+          node {
+            id
+            name
+            email
+            tags
+            cancelledAt
+            createdAt
+            updatedAt
+            displayFinancialStatus
+            displayFulfillmentStatus
+            totalPriceSet { shopMoney { amount currencyCode } }
+          }
+        }
+      }
+    }
+  `;
+
+  const orders: ShopifyOrderSummary[] = [];
+  let after: string | null = null;
+  let hasNextPage = true;
+  let hitLimit = false;
+
+  while (hasNextPage && orders.length < safeLimit) {
+    const first = Math.min(pageSize, safeLimit - orders.length);
+    const data = await shopifyGraphql({
+      shopify,
+      query: queryDoc,
+      variables: { first, after, query: orderQuery, sortKey, reverse },
+    });
+
+    const connection = (data as { orders?: any }).orders;
+    const edges = Array.isArray(connection?.edges) ? connection.edges : [];
+
+    for (const edge of edges) {
+      const node = edge?.node;
+      if (!node) continue;
+
+      orders.push({
+        id: shopifyGidToNumericId(String(node.id || '')),
+        name: node.name,
+        email: node.email ?? null,
+        tags: Array.isArray(node.tags) ? node.tags : [],
+        cancelledAt: node.cancelledAt ?? null,
+        createdAt: node.createdAt ?? null,
+        updatedAt: node.updatedAt ?? null,
+        displayFinancialStatus: node.displayFinancialStatus
+          ? String(node.displayFinancialStatus).toLowerCase()
+          : null,
+        displayFulfillmentStatus: node.displayFulfillmentStatus
+          ? String(node.displayFulfillmentStatus).toLowerCase()
+          : null,
+        totalPrice: node.totalPriceSet?.shopMoney
+          ? {
+              amount: node.totalPriceSet.shopMoney.amount,
+              currencyCode: node.totalPriceSet.shopMoney.currencyCode,
+            }
+          : null,
+      });
+
+      if (orders.length >= safeLimit) {
+        hitLimit = true;
+        break;
+      }
+    }
+
+    hasNextPage = Boolean(connection?.pageInfo?.hasNextPage);
+    after = connection?.pageInfo?.endCursor || null;
+  }
+
+  return { orders, hasMore: hasNextPage || hitLimit };
 }
 
 async function releaseHoldForFulfillmentOrder({

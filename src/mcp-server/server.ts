@@ -17,6 +17,7 @@ import { registerMessageTools } from './tools/messages.js';
 import { registerSettingsTools } from './tools/settings.js';
 import { registerOrganizationTools } from './tools/organizations.js';
 import { registerShopifyHoldsTools } from './tools/shopify-holds.js';
+import { registerShopifyOrderTools } from './tools/shopify-orders.js';
 import { registerShopifyRefundTools } from './tools/shopify-refunds.js';
 import { registerShopifyAdvancedTools } from './tools/shopify-advanced.js';
 import { registerGorgiasTools } from './tools/gorgias.js';
@@ -63,6 +64,7 @@ export function createServer(): McpServer {
   try {
     const shopify = getShopifyConfigFromEnv();
     if (shopify) {
+      registerShopifyOrderTools(server, shopify, integrationFlags);
       registerShopifyHoldsTools(server, shopify, integrationFlags);
       registerShopifyRefundTools(server, shopify, integrationFlags);
       registerShopifyAdvancedTools(server, shopify, integrationFlags);

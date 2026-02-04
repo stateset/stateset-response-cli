@@ -370,7 +370,7 @@ The AI agent has access to 100+ tools organized by resource type:
 `list_agent_settings` `get_agent_settings` `update_agent_settings` `get_channel_settings`
 
 ### Shopify
-`shopify_preview_orders` `shopify_release_holds` `shopify_add_tags` `shopify_lookup_order` `shopify_preview_refund` `shopify_process_refund` `shopify_batch_preview_refunds` `shopify_batch_process_refunds` `shopify_graphql` `shopify_rest`
+`shopify_list_orders` `shopify_preview_orders` `shopify_release_holds` `shopify_add_tags` `shopify_lookup_order` `shopify_preview_refund` `shopify_process_refund` `shopify_batch_preview_refunds` `shopify_batch_process_refunds` `shopify_graphql` `shopify_rest`
 
 ### Gorgias
 `gorgias_list_tickets` `gorgias_get_ticket` `gorgias_close_ticket` `gorgias_escalate_ticket` `gorgias_respond_with_macro` `gorgias_add_tags` `gorgias_merge_tickets` `gorgias_batch_close_tickets` `gorgias_batch_tag_tickets` `gorgias_list_macros` `gorgias_get_macro` `gorgias_list_users` `gorgias_list_teams` `gorgias_request`

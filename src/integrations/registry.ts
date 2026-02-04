@@ -32,7 +32,7 @@ export const INTEGRATION_DEFINITIONS: IntegrationDefinition[] = [
   {
     id: 'shopify',
     label: 'Shopify',
-    description: 'Order holds, refunds, and tagging',
+    description: 'Order listing, holds, refunds, and tagging',
     fields: [
       {
         key: 'shop',

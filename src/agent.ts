@@ -6,18 +6,47 @@ import { fileURLToPath } from 'node:url';
 import { formatToolCall } from './utils/display.js';
 import { SessionStore } from './session.js';
 import { type ModelId, DEFAULT_MODEL } from './config.js';
+import { INTEGRATION_DEFINITIONS } from './integrations/registry.js';
 
 const THIS_FILE = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(THIS_FILE);
 const IS_TS = THIS_FILE.endsWith('.ts');
 const MAX_HISTORY_MESSAGES = 40;
 
+const INTEGRATION_ENV_KEYS = new Set<string>([
+  'STATESET_ALLOW_APPLY',
+  'RESPONSE_ALLOW_APPLY',
+  'ALLOW_APPLY',
+  'STATESET_REDACT',
+  'RESPONSE_REDACT',
+  'REDACT_PII',
+]);
+
+for (const def of INTEGRATION_DEFINITIONS) {
+  for (const field of def.fields) {
+    for (const envVar of field.envVars) {
+      INTEGRATION_ENV_KEYS.add(envVar);
+    }
+  }
+}
+
+function buildMcpEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const key of INTEGRATION_ENV_KEYS) {
+    const value = process.env[key];
+    if (typeof value === 'string' && value.trim()) {
+      env[key] = value;
+    }
+  }
+  return env;
+}
+
 export const BASE_SYSTEM_PROMPT = `You are an AI assistant for managing the StateSet Response platform.
 You have tools to manage agents, rules, skills, attributes, examples, evals, datasets, functions,
 responses, channels, messages, knowledge base (semantic search and vector storage), and agent/channel settings.
 
 You also have optional commerce/support tools (if configured):
-- Shopify: fulfillment hold previews/releases, order tagging, and partial refunds
+- Shopify: order listings, fulfillment hold previews/releases, order tagging, and partial refunds
 - Gorgias: ticket search, review, macros, and bulk actions
 - Recharge: customers, subscriptions, charges, orders, and raw API requests
 - Klaviyo: profiles (including bulk import/merge), lists, segments, tags, campaigns, flows, templates, forms, images, catalogs, coupons, subscriptions, push tokens, reporting, data privacy, and events
@@ -43,7 +72,7 @@ Guidelines:
 Commerce/support safety:
 - Always preview first before any write operation (e.g., release holds, refunds, ticket updates)
 - Never proceed without explicit user confirmation
-- If a tool reports writes are disabled, explain how to enable them`;
+- If a tool reports writes are disabled, explain how to enable them (use /apply on in chat, start a session with --apply, or set STATESET_ALLOW_APPLY=true for non-interactive runs)`;
 
 export interface ChatCallbacks {
   onText?: (delta: string) => void;
@@ -130,6 +159,8 @@ export class StateSetAgent {
       command,
       args,
       stderr: 'inherit',
+      cwd: process.cwd(),
+      env: buildMcpEnv(),
     });
 
     await this.mcpClient.connect(this.transport);
