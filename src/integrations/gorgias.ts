@@ -90,7 +90,11 @@ export function createGorgiasApi({ domain, apiKey, email }: GorgiasConfig): Gorg
     },
 
     async addMessage(ticketId: number, message: Record<string, unknown>) {
-      return request({ method: 'POST', endpoint: `/tickets/${ticketId}/messages`, body: message });
+      const payload: Record<string, unknown> = { ...message };
+      if (!('via' in payload) || !payload.via) {
+        payload.via = 'api';
+      }
+      return request({ method: 'POST', endpoint: `/tickets/${ticketId}/messages`, body: payload });
     },
 
     async getTicketMessages(ticketId: number) {

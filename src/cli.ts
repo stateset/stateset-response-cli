@@ -1848,10 +1848,12 @@ program
         const tokens = input.split(/\s+/).slice(1);
         const action = tokens[0];
         if (action === 'setup') {
+          let setupSucceeded = false;
           rl.pause();
           rl.removeListener('line', handleLine);
           try {
             await runIntegrationsSetup(cwd);
+            setupSucceeded = true;
           } catch (err) {
             console.error(formatError(err instanceof Error ? err.message : String(err)));
           } finally {
@@ -1859,6 +1861,17 @@ program
               rl.on('line', handleLine);
             }
             rl.resume();
+          }
+          if (setupSucceeded) {
+            try {
+              await reconnectAgent();
+              const memory = loadMemory(sessionId);
+              agent.setSystemPrompt(buildSystemPrompt({ sessionId, memory, cwd, activeSkills }));
+              console.log(formatSuccess('Integration tools refreshed.'));
+            } catch (err) {
+              console.error(formatError(err instanceof Error ? err.message : String(err)));
+              console.log(formatWarning('Restart the chat session if tools appear missing.'));
+            }
           }
           console.log('');
           rl.prompt();
