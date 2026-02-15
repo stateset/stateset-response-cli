@@ -1,5 +1,6 @@
-import { requestJsonWithRetry } from './http.js';
+import { requestJsonWithRetry, normalizePath, applyQueryParams, throwOnHttpError } from './http.js';
 import type { LoopConfig } from './config.js';
+import { ValidationError } from '../lib/errors.js';
 
 const BASE_URL = 'https://api.loopreturns.com/api/v1';
 
@@ -11,49 +12,29 @@ export interface LoopRequestOptions {
   body?: Record<string, unknown> | null;
 }
 
-function normalizePath(rawPath: string): string {
-  let path = String(rawPath || '').trim();
-  if (!path) {
-    throw new Error('Path is required');
-  }
-  if (path.startsWith('http://') || path.startsWith('https://')) {
-    throw new Error('Path must be relative (e.g., /returns, /returns/123)');
-  }
-  if (!path.startsWith('/')) {
-    path = `/${path}`;
-  }
-  return path;
-}
-
-export async function loopRequest(options: LoopRequestOptions): Promise<{ status: number; data: unknown }> {
+export async function loopRequest(
+  options: LoopRequestOptions,
+): Promise<{ status: number; data: unknown }> {
   const method = String(options.method || '').toUpperCase();
-  if (!method) throw new Error('Method is required');
+  if (!method) throw new ValidationError('Method is required');
 
-  const path = normalizePath(options.path);
+  const path = normalizePath(options.path, '/returns, /returns/123');
   const url = new URL(`${BASE_URL}${path}`);
 
-  if (options.query) {
-    for (const [key, value] of Object.entries(options.query)) {
-      if (value === undefined || value === null) continue;
-      url.searchParams.set(key, String(value));
-    }
-  }
+  applyQueryParams(url, options.query);
 
   const { status, data } = await requestJsonWithRetry(url.toString(), {
     method,
     headers: {
       'X-Authorization': options.loop.apiKey,
       'Content-Type': 'application/json',
-      'Accept': 'application/json',
+      Accept: 'application/json',
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
     timeoutMs: 30_000,
   });
 
-  if (status >= 400) {
-    const msg = typeof data === 'string' ? data : JSON.stringify(data);
-    throw new Error(`Loop API error (${status}): ${msg}`);
-  }
+  throwOnHttpError(status, data, 'Loop');
 
   return { status, data };
 }

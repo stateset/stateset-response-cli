@@ -1,4 +1,5 @@
 import { getIntegrationConfigFromStore } from './store.js';
+import { KLAVIYO_DEFAULT_REVISION } from './registry.js';
 
 export interface ShopifyConfig {
   shop: string;
@@ -92,21 +93,19 @@ export function getShopifyConfigFromEnv(): ShopifyConfig | null {
     readFirstEnvVar(['SHOPIFY_API_VERSION', 'SHOPIFY_API_VER', 'STATESET_SHOPIFY_API_VERSION']) ||
     '2025-04';
 
-  const rawShop =
-    readFirstEnvVar([
-      'SHOPIFY_SHOP_DOMAIN',
-      'SHOPIFY_SHOP',
-      'SHOPIFY_DOMAIN',
-      'STATESET_SHOPIFY_SHOP_DOMAIN',
-    ]);
+  const rawShop = readFirstEnvVar([
+    'SHOPIFY_SHOP_DOMAIN',
+    'SHOPIFY_SHOP',
+    'SHOPIFY_DOMAIN',
+    'STATESET_SHOPIFY_SHOP_DOMAIN',
+  ]);
 
-  const rawToken =
-    readFirstEnvVar([
-      'SHOPIFY_ACCESS_TOKEN',
-      'SHOPIFY_TOKEN',
-      'SHOPIFY_ADMIN_ACCESS_TOKEN',
-      'STATESET_SHOPIFY_ACCESS_TOKEN',
-    ]);
+  const rawToken = readFirstEnvVar([
+    'SHOPIFY_ACCESS_TOKEN',
+    'SHOPIFY_TOKEN',
+    'SHOPIFY_ADMIN_ACCESS_TOKEN',
+    'STATESET_SHOPIFY_ACCESS_TOKEN',
+  ]);
 
   if (rawShop || rawToken) {
     if (!rawShop) throw new Error('Missing Shopify shop domain. Set SHOPIFY_SHOP_DOMAIN.');
@@ -124,10 +123,14 @@ export function getShopifyConfigFromEnv(): ShopifyConfig | null {
   const storedToken = stored.accessToken;
   const storedVersion = stored.apiVersion || apiVersion;
   if (!storedShop) {
-    throw new Error('Missing Shopify shop domain in integrations config. Run "response integrations setup".');
+    throw new Error(
+      'Missing Shopify shop domain in integrations config. Run "response integrations setup".',
+    );
   }
   if (!storedToken) {
-    throw new Error('Missing Shopify access token in integrations config. Run "response integrations setup".');
+    throw new Error(
+      'Missing Shopify access token in integrations config. Run "response integrations setup".',
+    );
   }
 
   return {
@@ -168,13 +171,19 @@ export function getGorgiasConfigFromEnv(): GorgiasConfig | null {
   const storedKey = stored.apiKey;
   const storedEmail = stored.email;
   if (!storedDomain) {
-    throw new Error('Missing Gorgias domain in integrations config. Run "response integrations setup".');
+    throw new Error(
+      'Missing Gorgias domain in integrations config. Run "response integrations setup".',
+    );
   }
   if (!storedKey) {
-    throw new Error('Missing Gorgias API key in integrations config. Run "response integrations setup".');
+    throw new Error(
+      'Missing Gorgias API key in integrations config. Run "response integrations setup".',
+    );
   }
   if (!storedEmail) {
-    throw new Error('Missing Gorgias email in integrations config. Run "response integrations setup".');
+    throw new Error(
+      'Missing Gorgias email in integrations config. Run "response integrations setup".',
+    );
   }
 
   return {
@@ -194,16 +203,18 @@ function validateRechargeToken(token: string): string {
 
 export function getRechargeConfigFromEnv(): RechargeConfig | null {
   const apiVersion =
-    readFirstEnvVar(['RECHARGE_API_VERSION', 'RECHARGE_API_VER', 'STATESET_RECHARGE_API_VERSION']) ||
-    '2021-01';
-
-  const rawToken =
     readFirstEnvVar([
-      'RECHARGE_ACCESS_TOKEN',
-      'RECHARGE_API_TOKEN',
-      'RECHARGE_API_KEY',
-      'STATESET_RECHARGE_ACCESS_TOKEN',
-    ]);
+      'RECHARGE_API_VERSION',
+      'RECHARGE_API_VER',
+      'STATESET_RECHARGE_API_VERSION',
+    ]) || '2021-01';
+
+  const rawToken = readFirstEnvVar([
+    'RECHARGE_ACCESS_TOKEN',
+    'RECHARGE_API_TOKEN',
+    'RECHARGE_API_KEY',
+    'STATESET_RECHARGE_ACCESS_TOKEN',
+  ]);
 
   if (rawToken) {
     const accessToken = validateRechargeToken(rawToken);
@@ -214,7 +225,9 @@ export function getRechargeConfigFromEnv(): RechargeConfig | null {
   if (!stored) return null;
   const storedToken = stored.accessToken;
   if (!storedToken) {
-    throw new Error('Missing Recharge access token in integrations config. Run "response integrations setup".');
+    throw new Error(
+      'Missing Recharge access token in integrations config. Run "response integrations setup".',
+    );
   }
   const storedVersion = stored.apiVersion || apiVersion;
   return { accessToken: validateRechargeToken(storedToken), apiVersion: storedVersion };
@@ -250,15 +263,14 @@ function normalizeZendeskSubdomain(input: string): string {
 export function getKlaviyoConfigFromEnv(): KlaviyoConfig | null {
   const revision =
     readFirstEnvVar(['KLAVIYO_REVISION', 'KLAVIYO_API_REVISION', 'STATESET_KLAVIYO_REVISION']) ||
-    '2026-01-15';
+    KLAVIYO_DEFAULT_REVISION;
 
-  const rawKey =
-    readFirstEnvVar([
-      'KLAVIYO_PRIVATE_API_KEY',
-      'KLAVIYO_API_KEY',
-      'KLAVIYO_PRIVATE_KEY',
-      'STATESET_KLAVIYO_API_KEY',
-    ]);
+  const rawKey = readFirstEnvVar([
+    'KLAVIYO_PRIVATE_API_KEY',
+    'KLAVIYO_API_KEY',
+    'KLAVIYO_PRIVATE_KEY',
+    'STATESET_KLAVIYO_API_KEY',
+  ]);
 
   if (rawKey) {
     const apiKey = validateKlaviyoKey(rawKey);
@@ -269,7 +281,9 @@ export function getKlaviyoConfigFromEnv(): KlaviyoConfig | null {
   if (!stored) return null;
   const storedKey = stored.apiKey;
   if (!storedKey) {
-    throw new Error('Missing Klaviyo API key in integrations config. Run "response integrations setup".');
+    throw new Error(
+      'Missing Klaviyo API key in integrations config. Run "response integrations setup".',
+    );
   }
   const storedRevision = stored.revision || revision;
   return { apiKey: validateKlaviyoKey(storedKey), revision: storedRevision };
@@ -286,7 +300,9 @@ export function getLoopConfigFromEnv(): LoopConfig | null {
   if (!stored) return null;
   const storedKey = stored.apiKey;
   if (!storedKey) {
-    throw new Error('Missing Loop API key in integrations config. Run "response integrations setup".');
+    throw new Error(
+      'Missing Loop API key in integrations config. Run "response integrations setup".',
+    );
   }
   return { apiKey: validateGenericKey(storedKey, 'Loop API key', 'LOOP_API_KEY') };
 }
@@ -308,10 +324,14 @@ export function getShipStationConfigFromEnv(): ShipStationConfig | null {
   const storedKey = stored.apiKey;
   const storedSecret = stored.apiSecret;
   if (!storedKey) {
-    throw new Error('Missing ShipStation API key in integrations config. Run "response integrations setup".');
+    throw new Error(
+      'Missing ShipStation API key in integrations config. Run "response integrations setup".',
+    );
   }
   if (!storedSecret) {
-    throw new Error('Missing ShipStation API secret in integrations config. Run "response integrations setup".');
+    throw new Error(
+      'Missing ShipStation API secret in integrations config. Run "response integrations setup".',
+    );
   }
   return {
     apiKey: validateGenericKey(storedKey, 'ShipStation API key', 'SHIPSTATION_API_KEY'),
@@ -322,7 +342,11 @@ export function getShipStationConfigFromEnv(): ShipStationConfig | null {
 export function getShipHeroConfigFromEnv(): ShipHeroConfig | null {
   const rawToken = readFirstEnvVar(['SHIPHERO_ACCESS_TOKEN', 'STATESET_SHIPHERO_ACCESS_TOKEN']);
   if (rawToken) {
-    const accessToken = validateGenericKey(rawToken, 'ShipHero access token', 'SHIPHERO_ACCESS_TOKEN');
+    const accessToken = validateGenericKey(
+      rawToken,
+      'ShipHero access token',
+      'SHIPHERO_ACCESS_TOKEN',
+    );
     return { accessToken };
   }
 
@@ -330,9 +354,13 @@ export function getShipHeroConfigFromEnv(): ShipHeroConfig | null {
   if (!stored) return null;
   const storedToken = stored.accessToken;
   if (!storedToken) {
-    throw new Error('Missing ShipHero access token in integrations config. Run "response integrations setup".');
+    throw new Error(
+      'Missing ShipHero access token in integrations config. Run "response integrations setup".',
+    );
   }
-  return { accessToken: validateGenericKey(storedToken, 'ShipHero access token', 'SHIPHERO_ACCESS_TOKEN') };
+  return {
+    accessToken: validateGenericKey(storedToken, 'ShipHero access token', 'SHIPHERO_ACCESS_TOKEN'),
+  };
 }
 
 export function getShipFusionConfigFromEnv(): ShipFusionConfig | null {
@@ -352,10 +380,14 @@ export function getShipFusionConfigFromEnv(): ShipFusionConfig | null {
   const storedKey = stored.apiKey;
   const storedClientId = stored.clientId;
   if (!storedKey) {
-    throw new Error('Missing ShipFusion API key in integrations config. Run "response integrations setup".');
+    throw new Error(
+      'Missing ShipFusion API key in integrations config. Run "response integrations setup".',
+    );
   }
   if (!storedClientId) {
-    throw new Error('Missing ShipFusion client ID in integrations config. Run "response integrations setup".');
+    throw new Error(
+      'Missing ShipFusion client ID in integrations config. Run "response integrations setup".',
+    );
   }
   return {
     apiKey: validateGenericKey(storedKey, 'ShipFusion API key', 'SHIPFUSION_API_KEY'),
@@ -374,7 +406,9 @@ export function getShipHawkConfigFromEnv(): ShipHawkConfig | null {
   if (!stored) return null;
   const storedKey = stored.apiKey;
   if (!storedKey) {
-    throw new Error('Missing ShipHawk API key in integrations config. Run "response integrations setup".');
+    throw new Error(
+      'Missing ShipHawk API key in integrations config. Run "response integrations setup".',
+    );
   }
   return { apiKey: validateGenericKey(storedKey, 'ShipHawk API key', 'SHIPHAWK_API_KEY') };
 }
@@ -402,13 +436,19 @@ export function getZendeskConfigFromEnv(): ZendeskConfig | null {
   const storedEmail = stored.email;
   const storedToken = stored.apiToken;
   if (!storedSubdomain) {
-    throw new Error('Missing Zendesk subdomain in integrations config. Run "response integrations setup".');
+    throw new Error(
+      'Missing Zendesk subdomain in integrations config. Run "response integrations setup".',
+    );
   }
   if (!storedEmail) {
-    throw new Error('Missing Zendesk email in integrations config. Run "response integrations setup".');
+    throw new Error(
+      'Missing Zendesk email in integrations config. Run "response integrations setup".',
+    );
   }
   if (!storedToken) {
-    throw new Error('Missing Zendesk API token in integrations config. Run "response integrations setup".');
+    throw new Error(
+      'Missing Zendesk API token in integrations config. Run "response integrations setup".',
+    );
   }
   return {
     subdomain: normalizeZendeskSubdomain(storedSubdomain),
@@ -419,10 +459,10 @@ export function getZendeskConfigFromEnv(): ZendeskConfig | null {
 
 export function getIntegrationFlagsFromEnv(): IntegrationFlags {
   const allowApply = parseBooleanEnv(
-    readFirstEnvVar(['STATESET_ALLOW_APPLY', 'RESPONSE_ALLOW_APPLY', 'ALLOW_APPLY'])
+    readFirstEnvVar(['STATESET_ALLOW_APPLY', 'RESPONSE_ALLOW_APPLY', 'ALLOW_APPLY']),
   );
   const redact = parseBooleanEnv(
-    readFirstEnvVar(['STATESET_REDACT', 'RESPONSE_REDACT', 'REDACT_PII'])
+    readFirstEnvVar(['STATESET_REDACT', 'RESPONSE_REDACT', 'REDACT_PII']),
   );
 
   return { allowApply, redact };

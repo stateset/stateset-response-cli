@@ -18,14 +18,16 @@ const CHANNEL_WITH_AGENT = `
 `;
 
 export function registerChannelTools(server: McpServer, client: GraphQLClient, orgId: string) {
-
   server.tool(
     'list_channels',
     'List channel threads for the current organization, most recent first',
     {
       limit: z.number().optional().describe('Max number of channels to return (default 50)'),
       offset: z.number().optional().describe('Offset for pagination (default 0)'),
-      status: z.string().optional().describe('Filter by status (open, closed, in_progress, needs_attention)'),
+      status: z
+        .string()
+        .optional()
+        .describe('Filter by status (open, closed, in_progress, needs_attention)'),
       agent_id: z.string().optional().describe('Filter by agent ID'),
       escalated: z.boolean().optional().describe('Filter by escalation status'),
     },
@@ -54,9 +56,8 @@ export function registerChannelTools(server: McpServer, client: GraphQLClient, o
         params.push(', $escalated: Boolean!');
       }
 
-      const whereClause = conditions.length === 1
-        ? conditions[0]
-        : `{ _and: [${conditions.join(', ')}] }`;
+      const whereClause =
+        conditions.length === 1 ? conditions[0] : `{ _and: [${conditions.join(', ')}] }`;
 
       const query = `query ($org_id: String!, $limit: Int!, $offset: Int!${params.join('')}) {
         channel_thread(
@@ -67,8 +68,10 @@ export function registerChannelTools(server: McpServer, client: GraphQLClient, o
       }`;
 
       const data = await executeQuery<{ channel_thread: unknown[] }>(client, query, variables);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.channel_thread, null, 2) }] };
-    }
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(data.channel_thread, null, 2) }],
+      };
+    },
   );
 
   server.tool(
@@ -81,12 +84,20 @@ export function registerChannelTools(server: McpServer, client: GraphQLClient, o
           ${CHANNEL_WITH_AGENT}
         }
       }`;
-      const data = await executeQuery<{ channel_thread: unknown[] }>(client, query, { uuid, org_id: orgId });
+      const data = await executeQuery<{ channel_thread: unknown[] }>(client, query, {
+        uuid,
+        org_id: orgId,
+      });
       if (!data.channel_thread.length) {
-        return { content: [{ type: 'text' as const, text: 'Channel thread not found' }], isError: true };
+        return {
+          content: [{ type: 'text' as const, text: 'Channel thread not found' }],
+          isError: true,
+        };
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.channel_thread[0], null, 2) }] };
-    }
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(data.channel_thread[0], null, 2) }],
+      };
+    },
   );
 
   server.tool(
@@ -113,10 +124,15 @@ export function registerChannelTools(server: McpServer, client: GraphQLClient, o
         msg_limit: message_limit ?? 100,
       });
       if (!data.channel_thread.length) {
-        return { content: [{ type: 'text' as const, text: 'Channel thread not found' }], isError: true };
+        return {
+          content: [{ type: 'text' as const, text: 'Channel thread not found' }],
+          isError: true,
+        };
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.channel_thread[0], null, 2) }] };
-    }
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(data.channel_thread[0], null, 2) }],
+      };
+    },
   );
 
   server.tool(
@@ -128,7 +144,10 @@ export function registerChannelTools(server: McpServer, client: GraphQLClient, o
       model: z.string().optional().describe('Model to use (default gpt-4o-2024-11-20)'),
       user_id: z.string().optional().describe('User ID that owns the thread'),
       channel: z.string().optional().describe('Channel type (e.g. chat, email, whatsapp)'),
-      response_system_prompt: z.string().optional().describe('Custom system prompt for this thread'),
+      response_system_prompt: z
+        .string()
+        .optional()
+        .describe('Custom system prompt for this thread'),
     },
     async (args) => {
       const mutation = `mutation ($object: channel_thread_insert_input!) {
@@ -149,10 +168,19 @@ export function registerChannelTools(server: McpServer, client: GraphQLClient, o
       if (args.response_system_prompt) object.response_system_prompt = args.response_system_prompt;
 
       const data = await executeQuery<{ insert_channel_thread: { returning: unknown[] } }>(
-        client, mutation, { object }
+        client,
+        mutation,
+        { object },
       );
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.insert_channel_thread.returning[0], null, 2) }] };
-    }
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(data.insert_channel_thread.returning[0], null, 2),
+          },
+        ],
+      };
+    },
   );
 
   server.tool(
@@ -163,7 +191,10 @@ export function registerChannelTools(server: McpServer, client: GraphQLClient, o
       name: z.string().optional().describe('New name'),
       agent_id: z.string().optional().describe('New agent ID'),
       model: z.string().optional().describe('New model'),
-      status: z.string().optional().describe('New status (open, closed, in_progress, needs_attention)'),
+      status: z
+        .string()
+        .optional()
+        .describe('New status (open, closed, in_progress, needs_attention)'),
       escalated: z.boolean().optional().describe('Set escalation flag'),
       tags: z.array(z.string()).optional().describe('Set tags'),
       response_system_prompt: z.string().optional().describe('New system prompt'),
@@ -187,14 +218,24 @@ export function registerChannelTools(server: McpServer, client: GraphQLClient, o
           returning { ${CHANNEL_FIELDS} }
         }
       }`;
-      const data = await executeQuery<{ update_channel_thread: { affected_rows: number; returning: unknown[] } }>(
-        client, mutation, { uuid, org_id: orgId, set: setFields }
-      );
+      const data = await executeQuery<{
+        update_channel_thread: { affected_rows: number; returning: unknown[] };
+      }>(client, mutation, { uuid, org_id: orgId, set: setFields });
       if (!data.update_channel_thread.returning.length) {
-        return { content: [{ type: 'text' as const, text: 'Channel thread not found' }], isError: true };
+        return {
+          content: [{ type: 'text' as const, text: 'Channel thread not found' }],
+          isError: true,
+        };
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.update_channel_thread.returning[0], null, 2) }] };
-    }
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(data.update_channel_thread.returning[0], null, 2),
+          },
+        ],
+      };
+    },
   );
 
   server.tool(
@@ -208,13 +249,22 @@ export function registerChannelTools(server: McpServer, client: GraphQLClient, o
         }
       }`;
       const data = await executeQuery<{ delete_channel_thread: { affected_rows: number } }>(
-        client, mutation, { uuid, org_id: orgId }
+        client,
+        mutation,
+        { uuid, org_id: orgId },
       );
       if (data.delete_channel_thread.affected_rows === 0) {
-        return { content: [{ type: 'text' as const, text: 'Channel thread not found' }], isError: true };
+        return {
+          content: [{ type: 'text' as const, text: 'Channel thread not found' }],
+          isError: true,
+        };
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ deleted: true, uuid }, null, 2) }] };
-    }
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify({ deleted: true, uuid }, null, 2) },
+        ],
+      };
+    },
   );
 
   server.tool(
@@ -227,10 +277,14 @@ export function registerChannelTools(server: McpServer, client: GraphQLClient, o
           aggregate { count }
         }
       }`;
-      const data = await executeQuery<{ channel_thread_aggregate: { aggregate: { count: number } } }>(
-        client, query, { org_id: orgId }
-      );
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.channel_thread_aggregate, null, 2) }] };
-    }
+      const data = await executeQuery<{
+        channel_thread_aggregate: { aggregate: { count: number } };
+      }>(client, query, { org_id: orgId });
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(data.channel_thread_aggregate, null, 2) },
+        ],
+      };
+    },
   );
 }

@@ -31,14 +31,19 @@ const EXAMPLE_FIELDS_WITH_MESSAGES = `
 `;
 
 export function registerExampleTools(server: McpServer, client: GraphQLClient, orgId: string) {
-
   server.tool(
     'list_examples',
     'List all examples for the current organization (includes associated messages)',
     {
       limit: paginationLimit,
       offset: paginationOffset,
-      message_limit: z.number().int().min(1).max(200).optional().describe('Max number of messages per example (1-200, default 50)'),
+      message_limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(200)
+        .optional()
+        .describe('Max number of messages per example (1-200, default 50)'),
     },
     async ({ limit, offset, message_limit }) => {
       const query = `query ($org_id: String, $limit: Int!, $offset: Int!, $message_limit: Int!) {
@@ -56,7 +61,7 @@ export function registerExampleTools(server: McpServer, client: GraphQLClient, o
         message_limit: message_limit ?? 50,
       });
       return { content: [{ type: 'text' as const, text: JSON.stringify(data.examples, null, 2) }] };
-    }
+    },
   );
 
   server.tool(
@@ -87,15 +92,36 @@ export function registerExampleTools(server: McpServer, client: GraphQLClient, o
         description: args.description || '',
         activated: args.activated !== undefined ? args.activated : true,
         example_ticket_id: args.example_ticket_id || null,
-        ticket_content: args.ticket_content || { customer_message: '', sentiment: '', priority: '', tags: [] },
-        response_content: args.response_content || { message: '', tone: '', actions_taken: [], follow_up_required: false },
+        ticket_content: args.ticket_content || {
+          customer_message: '',
+          sentiment: '',
+          priority: '',
+          tags: [],
+        },
+        response_content: args.response_content || {
+          message: '',
+          tone: '',
+          actions_taken: [],
+          follow_up_required: false,
+        },
         metadata: args.metadata || {},
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
-      const data = await executeQuery<{ insert_examples: { returning: unknown[] } }>(client, mutation, { example });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.insert_examples.returning[0], null, 2) }] };
-    }
+      const data = await executeQuery<{ insert_examples: { returning: unknown[] } }>(
+        client,
+        mutation,
+        { example },
+      );
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(data.insert_examples.returning[0], null, 2),
+          },
+        ],
+      };
+    },
   );
 
   server.tool(
@@ -113,7 +139,10 @@ export function registerExampleTools(server: McpServer, client: GraphQLClient, o
     },
     async (args) => {
       const { id, ...updates } = args;
-      const setFields: Record<string, unknown> = { ...updates, updated_at: new Date().toISOString() };
+      const setFields: Record<string, unknown> = {
+        ...updates,
+        updated_at: new Date().toISOString(),
+      };
       for (const key of Object.keys(setFields)) {
         if (setFields[key] === undefined) delete setFields[key];
       }
@@ -122,12 +151,23 @@ export function registerExampleTools(server: McpServer, client: GraphQLClient, o
           returning { ${EXAMPLE_FIELDS} }
         }
       }`;
-      const data = await executeQuery<{ update_examples: { returning: unknown[] } }>(client, mutation, { id, org_id: orgId, set: setFields });
+      const data = await executeQuery<{ update_examples: { returning: unknown[] } }>(
+        client,
+        mutation,
+        { id, org_id: orgId, set: setFields },
+      );
       if (!data.update_examples.returning.length) {
         return { content: [{ type: 'text' as const, text: 'Example not found' }], isError: true };
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.update_examples.returning[0], null, 2) }] };
-    }
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(data.update_examples.returning[0], null, 2),
+          },
+        ],
+      };
+    },
   );
 
   server.tool(
@@ -140,29 +180,45 @@ export function registerExampleTools(server: McpServer, client: GraphQLClient, o
           returning { id example_name }
         }
       }`;
-      const data = await executeQuery<{ delete_examples: { returning: unknown[] } }>(client, mutation, { id, org_id: orgId });
+      const data = await executeQuery<{ delete_examples: { returning: unknown[] } }>(
+        client,
+        mutation,
+        { id, org_id: orgId },
+      );
       if (!data.delete_examples.returning.length) {
         return { content: [{ type: 'text' as const, text: 'Example not found' }], isError: true };
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ deleted: data.delete_examples.returning[0] }, null, 2) }] };
-    }
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({ deleted: data.delete_examples.returning[0] }, null, 2),
+          },
+        ],
+      };
+    },
   );
 
   server.tool(
     'import_examples',
     'Bulk import examples (upserts on primary key conflict)',
     {
-      examples: z.array(z.object({
-        example_name: z.string().max(MAX_NAME_LENGTH),
-        agent_id: z.string().uuid(),
-        example_type: z.string().max(50).optional(),
-        description: z.string().max(MAX_DESCRIPTION_LENGTH).optional(),
-        activated: z.boolean().optional(),
-        example_ticket_id: z.string().max(100).optional(),
-        ticket_content: ticketContentSchema,
-        response_content: responseContentSchema,
-        metadata: metadataSchema,
-      })).max(MAX_ARRAY_LENGTH).describe('Array of examples to import (max 100)'),
+      examples: z
+        .array(
+          z.object({
+            example_name: z.string().max(MAX_NAME_LENGTH),
+            agent_id: z.string().uuid(),
+            example_type: z.string().max(50).optional(),
+            description: z.string().max(MAX_DESCRIPTION_LENGTH).optional(),
+            activated: z.boolean().optional(),
+            example_ticket_id: z.string().max(100).optional(),
+            ticket_content: ticketContentSchema,
+            response_content: responseContentSchema,
+            metadata: metadataSchema,
+          }),
+        )
+        .max(MAX_ARRAY_LENGTH)
+        .describe('Array of examples to import (max 100)'),
     },
     async ({ examples }) => {
       const mutation = `mutation ($examples: [examples_insert_input!]!) {
@@ -175,19 +231,45 @@ export function registerExampleTools(server: McpServer, client: GraphQLClient, o
         }
       }`;
       const timestamp = new Date().toISOString();
-      const prepared = examples.map(e => ({
+      const prepared = examples.map((e) => ({
         ...e,
         org_id: orgId,
         example_type: e.example_type || 'general',
         activated: e.activated !== undefined ? e.activated : true,
-        ticket_content: e.ticket_content || { customer_message: '', sentiment: '', priority: '', tags: [] },
-        response_content: e.response_content || { message: '', tone: '', actions_taken: [], follow_up_required: false },
+        ticket_content: e.ticket_content || {
+          customer_message: '',
+          sentiment: '',
+          priority: '',
+          tags: [],
+        },
+        response_content: e.response_content || {
+          message: '',
+          tone: '',
+          actions_taken: [],
+          follow_up_required: false,
+        },
         metadata: e.metadata || {},
         created_at: timestamp,
         updated_at: timestamp,
       }));
-      const data = await executeQuery<{ insert_examples: { returning: unknown[]; affected_rows: number } }>(client, mutation, { examples: prepared });
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ affected_rows: data.insert_examples.affected_rows, examples: data.insert_examples.returning }, null, 2) }] };
-    }
+      const data = await executeQuery<{
+        insert_examples: { returning: unknown[]; affected_rows: number };
+      }>(client, mutation, { examples: prepared });
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(
+              {
+                affected_rows: data.insert_examples.affected_rows,
+                examples: data.insert_examples.returning,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    },
   );
 }

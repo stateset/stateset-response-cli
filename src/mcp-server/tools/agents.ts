@@ -12,7 +12,6 @@ const AGENT_FIELDS = `
 `;
 
 export function registerAgentTools(server: McpServer, client: GraphQLClient, orgId: string) {
-
   server.tool(
     'list_agents',
     'List all agents for the current organization',
@@ -35,7 +34,7 @@ export function registerAgentTools(server: McpServer, client: GraphQLClient, org
         offset: offset ?? 0,
       });
       return { content: [{ type: 'text' as const, text: JSON.stringify(data.agents, null, 2) }] };
-    }
+    },
   );
 
   server.tool(
@@ -46,12 +45,17 @@ export function registerAgentTools(server: McpServer, client: GraphQLClient, org
       const query = `query ($agent_id: uuid!, $org_id: String!) {
         agents(where: {id: {_eq: $agent_id}, org_id: {_eq: $org_id}}) { ${AGENT_FIELDS} }
       }`;
-      const data = await executeQuery<{ agents: unknown[] }>(client, query, { agent_id, org_id: orgId });
+      const data = await executeQuery<{ agents: unknown[] }>(client, query, {
+        agent_id,
+        org_id: orgId,
+      });
       if (!data.agents.length) {
         return { content: [{ type: 'text' as const, text: 'Agent not found' }], isError: true };
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.agents[0], null, 2) }] };
-    }
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(data.agents[0], null, 2) }],
+      };
+    },
   );
 
   server.tool(
@@ -94,9 +98,17 @@ export function registerAgentTools(server: McpServer, client: GraphQLClient, org
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
-      const data = await executeQuery<{ insert_agents: { returning: unknown[] } }>(client, mutation, { agent });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.insert_agents.returning[0], null, 2) }] };
-    }
+      const data = await executeQuery<{ insert_agents: { returning: unknown[] } }>(
+        client,
+        mutation,
+        { agent },
+      );
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(data.insert_agents.returning[0], null, 2) },
+        ],
+      };
+    },
   );
 
   server.tool(
@@ -117,7 +129,10 @@ export function registerAgentTools(server: McpServer, client: GraphQLClient, org
     },
     async (args) => {
       const { id, ...updates } = args;
-      const setFields: Record<string, unknown> = { ...updates, updated_at: new Date().toISOString() };
+      const setFields: Record<string, unknown> = {
+        ...updates,
+        updated_at: new Date().toISOString(),
+      };
       // Remove undefined fields
       for (const key of Object.keys(setFields)) {
         if (setFields[key] === undefined) delete setFields[key];
@@ -127,12 +142,20 @@ export function registerAgentTools(server: McpServer, client: GraphQLClient, org
           returning { ${AGENT_FIELDS} }
         }
       }`;
-      const data = await executeQuery<{ update_agents: { returning: unknown[] } }>(client, mutation, { id, org_id: orgId, set: setFields });
+      const data = await executeQuery<{ update_agents: { returning: unknown[] } }>(
+        client,
+        mutation,
+        { id, org_id: orgId, set: setFields },
+      );
       if (!data.update_agents.returning.length) {
         return { content: [{ type: 'text' as const, text: 'Agent not found' }], isError: true };
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.update_agents.returning[0], null, 2) }] };
-    }
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(data.update_agents.returning[0], null, 2) },
+        ],
+      };
+    },
   );
 
   server.tool(
@@ -145,12 +168,23 @@ export function registerAgentTools(server: McpServer, client: GraphQLClient, org
           returning { id agent_name }
         }
       }`;
-      const data = await executeQuery<{ delete_agents: { returning: unknown[] } }>(client, mutation, { id, org_id: orgId });
+      const data = await executeQuery<{ delete_agents: { returning: unknown[] } }>(
+        client,
+        mutation,
+        { id, org_id: orgId },
+      );
       if (!data.delete_agents.returning.length) {
         return { content: [{ type: 'text' as const, text: 'Agent not found' }], isError: true };
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ deleted: data.delete_agents.returning[0] }, null, 2) }] };
-    }
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({ deleted: data.delete_agents.returning[0] }, null, 2),
+          },
+        ],
+      };
+    },
   );
 
   server.tool(
@@ -184,7 +218,7 @@ export function registerAgentTools(server: McpServer, client: GraphQLClient, org
         attributes: attrsData.attributes || [],
       };
       return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
-    }
+    },
   );
 
   server.tool(
@@ -241,6 +275,6 @@ export function registerAgentTools(server: McpServer, client: GraphQLClient, org
         functions: functionsData.functions || [],
       };
       return { content: [{ type: 'text' as const, text: JSON.stringify(exportData, null, 2) }] };
-    }
+    },
   );
 }

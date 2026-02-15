@@ -21,55 +21,46 @@ describe('createGraphQLClient', () => {
     createGraphQLClient(
       'https://api.example.com/graphql',
       { type: 'admin_secret', adminSecret: 'my-secret' },
-      'org-123'
+      'org-123',
     );
 
-    expect(GraphQLClient).toHaveBeenCalledWith(
-      'https://api.example.com/graphql',
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'x-hasura-admin-secret': 'my-secret',
-          'x-stateset-org-id': 'org-123',
-        },
-      }
-    );
+    expect(GraphQLClient).toHaveBeenCalledWith('https://api.example.com/graphql', {
+      headers: {
+        'Content-Type': 'application/json',
+        'x-hasura-admin-secret': 'my-secret',
+        'x-stateset-org-id': 'org-123',
+      },
+    });
   });
 
   it('creates client with CLI token auth', () => {
     createGraphQLClient(
       'https://api.example.com/graphql',
       { type: 'cli_token', token: 'my-token' },
-      'org-456'
+      'org-456',
     );
 
-    expect(GraphQLClient).toHaveBeenCalledWith(
-      'https://api.example.com/graphql',
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer my-token',
-          'x-stateset-org-id': 'org-456',
-        },
-      }
-    );
+    expect(GraphQLClient).toHaveBeenCalledWith('https://api.example.com/graphql', {
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer my-token',
+        'x-stateset-org-id': 'org-456',
+      },
+    });
   });
 
   it('creates client without org ID', () => {
-    createGraphQLClient(
-      'https://api.example.com/graphql',
-      { type: 'cli_token', token: 'my-token' }
-    );
+    createGraphQLClient('https://api.example.com/graphql', {
+      type: 'cli_token',
+      token: 'my-token',
+    });
 
-    expect(GraphQLClient).toHaveBeenCalledWith(
-      'https://api.example.com/graphql',
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer my-token',
-        },
-      }
-    );
+    expect(GraphQLClient).toHaveBeenCalledWith('https://api.example.com/graphql', {
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer my-token',
+      },
+    });
   });
 });
 
@@ -93,7 +84,7 @@ describe('executeQuery', () => {
     const result = await executeQuery(
       mockClient as unknown as GraphQLClient,
       'query { users { id name } }',
-      {}
+      {},
     );
 
     expect(result).toEqual(expectedData);
@@ -106,27 +97,21 @@ describe('executeQuery', () => {
     await executeQuery(
       mockClient as unknown as GraphQLClient,
       'query ($id: ID!) { user(id: $id) { id } }',
-      { id: '123' }
+      { id: '123' },
     );
 
-    expect(mockClient.request).toHaveBeenCalledWith(
-      'query ($id: ID!) { user(id: $id) { id } }',
-      { id: '123' }
-    );
+    expect(mockClient.request).toHaveBeenCalledWith('query ($id: ID!) { user(id: $id) { id } }', {
+      id: '123',
+    });
   });
 
   it('retries on 502 status', async () => {
     const error502 = new Error('Bad Gateway');
     (error502 as unknown as { response: { status: number } }).response = { status: 502 };
 
-    mockClient.request
-      .mockRejectedValueOnce(error502)
-      .mockResolvedValueOnce({ data: 'success' });
+    mockClient.request.mockRejectedValueOnce(error502).mockResolvedValueOnce({ data: 'success' });
 
-    const resultPromise = executeQuery(
-      mockClient as unknown as GraphQLClient,
-      'query { data }'
-    );
+    const resultPromise = executeQuery(mockClient as unknown as GraphQLClient, 'query { data }');
 
     // Fast-forward past the delay
     await vi.advanceTimersByTimeAsync(1000);
@@ -140,14 +125,9 @@ describe('executeQuery', () => {
     const error503 = new Error('Service Unavailable');
     (error503 as unknown as { response: { status: number } }).response = { status: 503 };
 
-    mockClient.request
-      .mockRejectedValueOnce(error503)
-      .mockResolvedValueOnce({ data: 'success' });
+    mockClient.request.mockRejectedValueOnce(error503).mockResolvedValueOnce({ data: 'success' });
 
-    const resultPromise = executeQuery(
-      mockClient as unknown as GraphQLClient,
-      'query { data }'
-    );
+    const resultPromise = executeQuery(mockClient as unknown as GraphQLClient, 'query { data }');
 
     await vi.advanceTimersByTimeAsync(1000);
 
@@ -160,14 +140,9 @@ describe('executeQuery', () => {
     const error504 = new Error('Gateway Timeout');
     (error504 as unknown as { response: { status: number } }).response = { status: 504 };
 
-    mockClient.request
-      .mockRejectedValueOnce(error504)
-      .mockResolvedValueOnce({ data: 'success' });
+    mockClient.request.mockRejectedValueOnce(error504).mockResolvedValueOnce({ data: 'success' });
 
-    const resultPromise = executeQuery(
-      mockClient as unknown as GraphQLClient,
-      'query { data }'
-    );
+    const resultPromise = executeQuery(mockClient as unknown as GraphQLClient, 'query { data }');
 
     await vi.advanceTimersByTimeAsync(1000);
 
@@ -181,10 +156,7 @@ describe('executeQuery', () => {
       .mockRejectedValueOnce(new TypeError('fetch failed'))
       .mockResolvedValueOnce({ data: 'success' });
 
-    const resultPromise = executeQuery(
-      mockClient as unknown as GraphQLClient,
-      'query { data }'
-    );
+    const resultPromise = executeQuery(mockClient as unknown as GraphQLClient, 'query { data }');
 
     await vi.advanceTimersByTimeAsync(1000);
 
@@ -197,14 +169,9 @@ describe('executeQuery', () => {
     const errorReset = new Error('Connection reset');
     (errorReset as unknown as { code: string }).code = 'ECONNRESET';
 
-    mockClient.request
-      .mockRejectedValueOnce(errorReset)
-      .mockResolvedValueOnce({ data: 'success' });
+    mockClient.request.mockRejectedValueOnce(errorReset).mockResolvedValueOnce({ data: 'success' });
 
-    const resultPromise = executeQuery(
-      mockClient as unknown as GraphQLClient,
-      'query { data }'
-    );
+    const resultPromise = executeQuery(mockClient as unknown as GraphQLClient, 'query { data }');
 
     await vi.advanceTimersByTimeAsync(1000);
 
@@ -220,10 +187,7 @@ describe('executeQuery', () => {
       .mockRejectedValueOnce(errorRefused)
       .mockResolvedValueOnce({ data: 'success' });
 
-    const resultPromise = executeQuery(
-      mockClient as unknown as GraphQLClient,
-      'query { data }'
-    );
+    const resultPromise = executeQuery(mockClient as unknown as GraphQLClient, 'query { data }');
 
     await vi.advanceTimersByTimeAsync(1000);
 
@@ -239,10 +203,7 @@ describe('executeQuery', () => {
       .mockRejectedValueOnce(errorTimeout)
       .mockResolvedValueOnce({ data: 'success' });
 
-    const resultPromise = executeQuery(
-      mockClient as unknown as GraphQLClient,
-      'query { data }'
-    );
+    const resultPromise = executeQuery(mockClient as unknown as GraphQLClient, 'query { data }');
 
     await vi.advanceTimersByTimeAsync(1000);
 
@@ -257,7 +218,7 @@ describe('executeQuery', () => {
     mockClient.request.mockRejectedValue(error400);
 
     await expect(
-      executeQuery(mockClient as unknown as GraphQLClient, 'query { data }')
+      executeQuery(mockClient as unknown as GraphQLClient, 'query { data }'),
     ).rejects.toThrow();
 
     expect(mockClient.request).toHaveBeenCalledTimes(1);
@@ -270,7 +231,7 @@ describe('executeQuery', () => {
     mockClient.request.mockRejectedValue(error401);
 
     await expect(
-      executeQuery(mockClient as unknown as GraphQLClient, 'query { data }')
+      executeQuery(mockClient as unknown as GraphQLClient, 'query { data }'),
     ).rejects.toThrow();
 
     expect(mockClient.request).toHaveBeenCalledTimes(1);
@@ -286,10 +247,7 @@ describe('executeQuery', () => {
       .mockRejectedValueOnce(error502)
       .mockResolvedValueOnce({ data: 'success' });
 
-    const resultPromise = executeQuery(
-      mockClient as unknown as GraphQLClient,
-      'query { data }'
-    );
+    const resultPromise = executeQuery(mockClient as unknown as GraphQLClient, 'query { data }');
 
     // First retry after 1000ms (1s * 2^0)
     await vi.advanceTimersByTimeAsync(1000);
@@ -313,10 +271,9 @@ describe('executeQuery', () => {
 
     mockClient.request.mockRejectedValue(error502);
 
-    const resultPromise = executeQuery(
-      mockClient as unknown as GraphQLClient,
-      'query { data }'
-    );
+    const resultPromise = executeQuery(mockClient as unknown as GraphQLClient, 'query { data }');
+    // Prevent PromiseRejectionHandledWarning — handler is attached after rejection occurs during timer advancement
+    resultPromise.catch(() => {});
 
     // Advance through all retries
     await vi.advanceTimersByTimeAsync(1000); // retry 1
@@ -336,7 +293,7 @@ describe('executeQuery', () => {
     mockClient.request.mockRejectedValue(gqlError);
 
     await expect(
-      executeQuery(mockClient as unknown as GraphQLClient, 'query { foo }')
+      executeQuery(mockClient as unknown as GraphQLClient, 'query { foo }'),
     ).rejects.toThrow('Field "foo" is not defined');
   });
 
@@ -345,7 +302,7 @@ describe('executeQuery', () => {
     mockClient.request.mockRejectedValue(error);
 
     await expect(
-      executeQuery(mockClient as unknown as GraphQLClient, 'query { data }')
+      executeQuery(mockClient as unknown as GraphQLClient, 'query { data }'),
     ).rejects.toThrow('Something went wrong');
   });
 
@@ -353,7 +310,7 @@ describe('executeQuery', () => {
     mockClient.request.mockRejectedValue('string error');
 
     await expect(
-      executeQuery(mockClient as unknown as GraphQLClient, 'query { data }')
+      executeQuery(mockClient as unknown as GraphQLClient, 'query { data }'),
     ).rejects.toThrow('Unknown GraphQL error');
   });
 });

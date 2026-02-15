@@ -15,6 +15,7 @@ export interface StoredMessage {
   ts?: string;
 }
 
+/** Returns the path to ~/.stateset, the root directory for all CLI state. */
 export function getStateSetDir(): string {
   return path.join(os.homedir(), '.stateset');
 }
@@ -23,6 +24,7 @@ export function getSessionsDir(): string {
   return path.join(getStateSetDir(), 'sessions');
 }
 
+/** Strips unsafe characters and prevents directory traversal. Falls back to "default" if empty. */
 export function sanitizeSessionId(input: string): string {
   const trimmed = input.trim() || 'default';
   const sanitized = trimmed.replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -40,6 +42,10 @@ function ensureDir(dir: string): void {
   }
 }
 
+/**
+ * Manages per-session conversation history (context.jsonl) and human-readable
+ * logs (log.jsonl) under ~/.stateset/sessions/<sessionId>/.
+ */
 export class SessionStore {
   private sessionId: string;
   private sessionDir: string;
@@ -72,7 +78,12 @@ export class SessionStore {
 
   loadMessages(): Anthropic.MessageParam[] {
     if (!fs.existsSync(this.contextPath)) return [];
-    const content = fs.readFileSync(this.contextPath, 'utf-8');
+    let content: string;
+    try {
+      content = fs.readFileSync(this.contextPath, 'utf-8');
+    } catch {
+      return [];
+    }
     const lines = content.split(/\n/).filter(Boolean);
     const messages: Anthropic.MessageParam[] = [];
 
@@ -96,7 +107,11 @@ export class SessionStore {
       content: message.content,
       ts: new Date().toISOString(),
     };
-    fs.appendFileSync(this.contextPath, JSON.stringify(entry) + '\n', 'utf-8');
+    try {
+      fs.appendFileSync(this.contextPath, JSON.stringify(entry) + '\n', 'utf-8');
+    } catch {
+      // Non-fatal: session persistence failure shouldn't crash the CLI
+    }
   }
 
   appendMessages(messages: Anthropic.MessageParam[]): void {
@@ -109,7 +124,11 @@ export class SessionStore {
       };
       return JSON.stringify(entry);
     });
-    fs.appendFileSync(this.contextPath, lines.join('\n') + '\n', 'utf-8');
+    try {
+      fs.appendFileSync(this.contextPath, lines.join('\n') + '\n', 'utf-8');
+    } catch {
+      // Non-fatal: session persistence failure shouldn't crash the CLI
+    }
   }
 
   appendLog(entry: LogEntry): void {
@@ -118,7 +137,11 @@ export class SessionStore {
       role: entry.role,
       text: entry.text,
     };
-    fs.appendFileSync(this.logPath, JSON.stringify(payload) + '\n', 'utf-8');
+    try {
+      fs.appendFileSync(this.logPath, JSON.stringify(payload) + '\n', 'utf-8');
+    } catch {
+      // Non-fatal: log persistence failure shouldn't crash the CLI
+    }
   }
 
   clear(): void {

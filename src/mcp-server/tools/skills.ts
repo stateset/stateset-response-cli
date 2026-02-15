@@ -21,7 +21,6 @@ const SKILL_FIELDS = `
 `;
 
 export function registerSkillTools(server: McpServer, client: GraphQLClient, orgId: string) {
-
   server.tool(
     'list_skills',
     'List all skills for the current organization',
@@ -44,7 +43,7 @@ export function registerSkillTools(server: McpServer, client: GraphQLClient, org
         offset: offset ?? 0,
       });
       return { content: [{ type: 'text' as const, text: JSON.stringify(data.skills, null, 2) }] };
-    }
+    },
   );
 
   server.tool(
@@ -71,7 +70,7 @@ export function registerSkillTools(server: McpServer, client: GraphQLClient, org
         offset: offset ?? 0,
       });
       return { content: [{ type: 'text' as const, text: JSON.stringify(data.skills, null, 2) }] };
-    }
+    },
   );
 
   server.tool(
@@ -104,13 +103,25 @@ export function registerSkillTools(server: McpServer, client: GraphQLClient, org
         shared: args.shared || false,
         conditions: args.conditions || { any: [] },
         actions: args.actions || [],
-        metadata: args.metadata || { category: '', compliance: '', last_reviewed: new Date().toISOString() },
+        metadata: args.metadata || {
+          category: '',
+          compliance: '',
+          last_reviewed: new Date().toISOString(),
+        },
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
-      const data = await executeQuery<{ insert_skills: { returning: unknown[] } }>(client, mutation, { skill });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.insert_skills.returning[0], null, 2) }] };
-    }
+      const data = await executeQuery<{ insert_skills: { returning: unknown[] } }>(
+        client,
+        mutation,
+        { skill },
+      );
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(data.insert_skills.returning[0], null, 2) },
+        ],
+      };
+    },
   );
 
   server.tool(
@@ -130,7 +141,10 @@ export function registerSkillTools(server: McpServer, client: GraphQLClient, org
     },
     async (args) => {
       const { id, ...updates } = args;
-      const setFields: Record<string, unknown> = { ...updates, updated_at: new Date().toISOString() };
+      const setFields: Record<string, unknown> = {
+        ...updates,
+        updated_at: new Date().toISOString(),
+      };
       for (const key of Object.keys(setFields)) {
         if (setFields[key] === undefined) delete setFields[key];
       }
@@ -139,12 +153,20 @@ export function registerSkillTools(server: McpServer, client: GraphQLClient, org
           returning { ${SKILL_FIELDS} }
         }
       }`;
-      const data = await executeQuery<{ update_skills: { returning: unknown[] } }>(client, mutation, { id, org_id: orgId, set: setFields });
+      const data = await executeQuery<{ update_skills: { returning: unknown[] } }>(
+        client,
+        mutation,
+        { id, org_id: orgId, set: setFields },
+      );
       if (!data.update_skills.returning.length) {
         return { content: [{ type: 'text' as const, text: 'Skill not found' }], isError: true };
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.update_skills.returning[0], null, 2) }] };
-    }
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(data.update_skills.returning[0], null, 2) },
+        ],
+      };
+    },
   );
 
   server.tool(
@@ -157,29 +179,45 @@ export function registerSkillTools(server: McpServer, client: GraphQLClient, org
           returning { id skill_name }
         }
       }`;
-      const data = await executeQuery<{ delete_skills: { returning: unknown[] } }>(client, mutation, { id, org_id: orgId });
+      const data = await executeQuery<{ delete_skills: { returning: unknown[] } }>(
+        client,
+        mutation,
+        { id, org_id: orgId },
+      );
       if (!data.delete_skills.returning.length) {
         return { content: [{ type: 'text' as const, text: 'Skill not found' }], isError: true };
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ deleted: data.delete_skills.returning[0] }, null, 2) }] };
-    }
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({ deleted: data.delete_skills.returning[0] }, null, 2),
+          },
+        ],
+      };
+    },
   );
 
   server.tool(
     'import_skills',
     'Bulk import skills (upserts on primary key conflict)',
     {
-      skills: z.array(z.object({
-        skill_name: z.string().max(MAX_NAME_LENGTH),
-        skill_type: z.string().max(50),
-        description: z.string().max(MAX_DESCRIPTION_LENGTH).optional(),
-        agent_id: z.string().uuid().optional(),
-        activated: z.boolean().optional(),
-        shared: z.boolean().optional(),
-        conditions: conditionsSchema,
-        actions: actionsSchema,
-        metadata: metadataSchema,
-      })).max(MAX_ARRAY_LENGTH).describe('Array of skills to import (max 100)'),
+      skills: z
+        .array(
+          z.object({
+            skill_name: z.string().max(MAX_NAME_LENGTH),
+            skill_type: z.string().max(50),
+            description: z.string().max(MAX_DESCRIPTION_LENGTH).optional(),
+            agent_id: z.string().uuid().optional(),
+            activated: z.boolean().optional(),
+            shared: z.boolean().optional(),
+            conditions: conditionsSchema,
+            actions: actionsSchema,
+            metadata: metadataSchema,
+          }),
+        )
+        .max(MAX_ARRAY_LENGTH)
+        .describe('Array of skills to import (max 100)'),
     },
     async ({ skills }) => {
       const mutation = `mutation ($skills: [skills_insert_input!]!) {
@@ -192,7 +230,7 @@ export function registerSkillTools(server: McpServer, client: GraphQLClient, org
         }
       }`;
       const timestamp = new Date().toISOString();
-      const prepared = skills.map(s => ({
+      const prepared = skills.map((s) => ({
         ...s,
         org_id: orgId,
         activated: s.activated !== undefined ? s.activated : true,
@@ -203,9 +241,25 @@ export function registerSkillTools(server: McpServer, client: GraphQLClient, org
         created_at: timestamp,
         updated_at: timestamp,
       }));
-      const data = await executeQuery<{ insert_skills: { returning: unknown[]; affected_rows: number } }>(client, mutation, { skills: prepared });
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ affected_rows: data.insert_skills.affected_rows, skills: data.insert_skills.returning }, null, 2) }] };
-    }
+      const data = await executeQuery<{
+        insert_skills: { returning: unknown[]; affected_rows: number };
+      }>(client, mutation, { skills: prepared });
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(
+              {
+                affected_rows: data.insert_skills.affected_rows,
+                skills: data.insert_skills.returning,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    },
   );
 
   server.tool(
@@ -221,9 +275,20 @@ export function registerSkillTools(server: McpServer, client: GraphQLClient, org
           affected_rows
         }
       }`;
-      const data = await executeQuery<{ update_skills: { affected_rows: number } }>(client, mutation, { ids, org_id: orgId, activated });
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ affected_rows: data.update_skills.affected_rows }, null, 2) }] };
-    }
+      const data = await executeQuery<{ update_skills: { affected_rows: number } }>(
+        client,
+        mutation,
+        { ids, org_id: orgId, activated },
+      );
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({ affected_rows: data.update_skills.affected_rows }, null, 2),
+          },
+        ],
+      };
+    },
   );
 
   server.tool(
@@ -234,8 +299,19 @@ export function registerSkillTools(server: McpServer, client: GraphQLClient, org
       const mutation = `mutation ($ids: [uuid!]!, $org_id: String!) {
         delete_skills(where: {id: {_in: $ids}, org_id: {_eq: $org_id}}) { affected_rows }
       }`;
-      const data = await executeQuery<{ delete_skills: { affected_rows: number } }>(client, mutation, { ids, org_id: orgId });
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ deleted: data.delete_skills.affected_rows }, null, 2) }] };
-    }
+      const data = await executeQuery<{ delete_skills: { affected_rows: number } }>(
+        client,
+        mutation,
+        { ids, org_id: orgId },
+      );
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({ deleted: data.delete_skills.affected_rows }, null, 2),
+          },
+        ],
+      };
+    },
   );
 }

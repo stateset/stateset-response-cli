@@ -7,6 +7,8 @@
  * - Retryable flag for automatic retry logic
  */
 
+import { logger } from './logger.js';
+
 /**
  * Base error class for all StateSet errors
  */
@@ -21,7 +23,7 @@ export class StateSetError extends Error {
     code: string,
     statusCode: number = 500,
     retryable: boolean = false,
-    context?: Record<string, unknown>
+    context?: Record<string, unknown>,
   ) {
     super(message);
     this.name = 'StateSetError';
@@ -242,6 +244,25 @@ export function toStateSetError(error: unknown): StateSetError {
   }
 
   return new InternalError(String(error));
+}
+
+/**
+ * Install global process error handlers for uncaught exceptions
+ * and unhandled promise rejections. Call once at startup.
+ */
+export function installGlobalErrorHandlers(): void {
+  process.on('uncaughtException', (error: unknown) => {
+    const ssError = toStateSetError(error);
+    const userMsg = getUserMessage(ssError);
+    logger.error('Fatal error', { message: userMsg });
+    process.exitCode = 1;
+  });
+
+  process.on('unhandledRejection', (reason: unknown) => {
+    const userMsg = getUserMessage(toStateSetError(reason));
+    logger.error('Unhandled error', { message: userMsg });
+    process.exitCode = 1;
+  });
 }
 
 /**

@@ -2,6 +2,10 @@
 
 import { Orchestrator } from '../dist/gateway/orchestrator.js';
 import { configExists, getAnthropicApiKey, getCurrentOrg, resolveModel } from '../dist/config.js';
+import { logger } from '../dist/lib/logger.js';
+import { installGlobalErrorHandlers } from '../dist/lib/errors.js';
+
+installGlobalErrorHandlers();
 
 // ---------------------------------------------------------------------------
 // CLI argument parsing
@@ -9,11 +13,12 @@ import { configExists, getAnthropicApiKey, getCurrentOrg, resolveModel } from '.
 
 const args = process.argv.slice(2);
 const options = {
-  model: undefined as string | undefined,
-  slackAllow: undefined as string[] | undefined,
-  whatsappAllow: undefined as string[] | undefined,
+  model: undefined,
+  slackAllow: undefined,
+  whatsappAllow: undefined,
   whatsappGroups: false,
-  whatsappAuthDir: undefined as string | undefined,
+  whatsappSelfChat: false,
+  whatsappAuthDir: undefined,
   noSlack: false,
   noWhatsapp: false,
   verbose: false,
@@ -32,6 +37,9 @@ for (let i = 0; i < args.length; i++) {
       break;
     case '--whatsapp-groups':
       options.whatsappGroups = true;
+      break;
+    case '--whatsapp-self-chat':
+      options.whatsappSelfChat = true;
       break;
     case '--whatsapp-auth-dir':
       options.whatsappAuthDir = args[++i];
@@ -63,6 +71,7 @@ Options:
   --slack-allow <ids>        Comma-separated Slack user ID allowlist
   --whatsapp-allow <phones>  Comma-separated phone number allowlist
   --whatsapp-groups          Allow WhatsApp group messages          [default: false]
+  --whatsapp-self-chat       Only respond to messages you send to yourself
   --whatsapp-auth-dir <path> WhatsApp auth credential directory
   --verbose, -v              Enable debug logging
   --help, -h                 Show this help message
@@ -84,6 +93,12 @@ Examples:
       process.exit(0);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Logger
+// ---------------------------------------------------------------------------
+
+logger.configure({ level: options.verbose ? 'debug' : 'info' });
 
 // ---------------------------------------------------------------------------
 // Validation
@@ -140,6 +155,7 @@ const orchestrator = new Orchestrator({
   whatsappEnabled: !options.noWhatsapp,
   whatsappAllowList: options.whatsappAllow,
   whatsappAllowGroups: options.whatsappGroups,
+  whatsappSelfChatOnly: options.whatsappSelfChat,
   whatsappAuthDir: options.whatsappAuthDir,
 });
 

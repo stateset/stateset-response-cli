@@ -36,7 +36,7 @@ function readFileIfExists(filePath: string): string | null {
   }
 }
 
-function getDisplayPath(cwd: string, filePath: string): string {
+export function getDisplayPath(cwd: string, filePath: string): string {
   const rel = path.relative(cwd, filePath);
   if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) {
     return filePath;
@@ -44,7 +44,7 @@ function getDisplayPath(cwd: string, filePath: string): string {
   return rel.startsWith('.') ? rel : `./${rel}`;
 }
 
-function collectParentDirs(cwd: string): string[] {
+export function collectParentDirs(cwd: string): string[] {
   const dirs: string[] = [];
   let current = path.resolve(cwd);
   while (true) {
@@ -104,13 +104,14 @@ export function loadSystemPromptFiles(cwd: string = process.cwd()): {
       : null;
 
   const overrideContent = overridePath ? readFileIfExists(overridePath) : null;
-  const override = overridePath && overrideContent
-    ? {
-        path: overridePath,
-        displayPath: getDisplayPath(cwd, overridePath),
-        content: overrideContent,
-      }
-    : null;
+  const override =
+    overridePath && overrideContent
+      ? {
+          path: overridePath,
+          displayPath: getDisplayPath(cwd, overridePath),
+          content: overrideContent,
+        }
+      : null;
 
   const append: ResourceFile[] = [];
   const appendPaths = [
@@ -131,7 +132,9 @@ export function loadSystemPromptFiles(cwd: string = process.cwd()): {
   return { override, append };
 }
 
-function extractTemplateVariables(content: string): Array<{ name: string; defaultValue?: string }> {
+export function extractTemplateVariables(
+  content: string,
+): Array<{ name: string; defaultValue?: string }> {
   const regex = /{{\s*([a-zA-Z0-9_-]+)(?:\s*=\s*([^}]+?))?\s*}}/g;
   const vars = new Map<string, { name: string; defaultValue?: string }>();
   let match: RegExpExecArray | null = null;
@@ -165,7 +168,11 @@ interface PromptTemplateFile {
   content: string;
 }
 
-function loadPromptTemplateFilesFromDir(dir: string, cwd: string, map: Map<string, PromptTemplateFile>): void {
+function loadPromptTemplateFilesFromDir(
+  dir: string,
+  cwd: string,
+  map: Map<string, PromptTemplateFile>,
+): void {
   if (!fs.existsSync(dir)) return;
   let entries: fs.Dirent[] = [];
   try {
@@ -200,7 +207,10 @@ function loadPromptTemplateFiles(cwd: string): Map<string, PromptTemplateFile> {
   return map;
 }
 
-function parseIncludeArgs(rawArgs: string, parentVars: Record<string, string>): Record<string, string> {
+export function parseIncludeArgs(
+  rawArgs: string,
+  parentVars: Record<string, string>,
+): Record<string, string> {
   const vars: Record<string, string> = { ...parentVars };
   if (!rawArgs) return vars;
   const argText = rawArgs.trim();
@@ -221,12 +231,6 @@ function applyIncludeVars(content: string, vars: Record<string, string>): string
   for (const [key, value] of Object.entries(vars)) {
     const regex = new RegExp(`{{\\s*${key}(?:\\s*=\\s*[^}]+?)?\\s*}}`, 'g');
     output = output.replace(regex, value);
-
-    const safeValue = value.includes(' ') ? JSON.stringify(value) : value;
-    const ifRegex = new RegExp(`{{#if\\s+${key}\\s*}}`, 'g');
-    const unlessRegex = new RegExp(`{{#unless\\s+${key}\\s*}}`, 'g');
-    output = output.replace(ifRegex, `{{#if ${key}=${safeValue}}}`);
-    output = output.replace(unlessRegex, `{{#unless ${key}=${safeValue}}}`);
   }
   return output;
 }
@@ -235,7 +239,8 @@ function expandPromptTemplate(
   name: string,
   files: Map<string, PromptTemplateFile>,
   stack: string[] = [],
-  parentVars: Record<string, string> = {}
+  parentVars: Record<string, string> = {},
+  collectedDefaults?: Map<string, string>,
 ): string {
   if (stack.includes(name)) {
     throw new Error(`Prompt include cycle detected: ${[...stack, name].join(' -> ')}`);
@@ -252,9 +257,28 @@ function expandPromptTemplate(
     const childName = String(includeName || '').trim();
     if (!childName) return '';
     const vars = parseIncludeArgs(rawArgs || '', parentVars);
-    const expanded = expandPromptTemplate(childName, files, nextStack, vars);
+    if (collectedDefaults) {
+      for (const [key, value] of Object.entries(vars)) {
+        if (!collectedDefaults.has(key)) {
+          collectedDefaults.set(key, value);
+        }
+      }
+    }
+    const expanded = expandPromptTemplate(childName, files, nextStack, vars, collectedDefaults);
     return applyIncludeVars(expanded, vars);
   });
+}
+
+function mergeCollectedDefaults(
+  variables: Array<{ name: string; defaultValue?: string }>,
+  collectedDefaults: Map<string, string>,
+): Array<{ name: string; defaultValue?: string }> {
+  for (const v of variables) {
+    if (!v.defaultValue && collectedDefaults.has(v.name)) {
+      v.defaultValue = collectedDefaults.get(v.name);
+    }
+  }
+  return variables;
 }
 
 export function listPromptTemplates(cwd: string = process.cwd()): PromptTemplate[] {
@@ -262,42 +286,55 @@ export function listPromptTemplates(cwd: string = process.cwd()): PromptTemplate
   const templates: PromptTemplate[] = [];
   for (const file of files.values()) {
     let content = file.content;
+    const collectedDefaults = new Map<string, string>();
     try {
-      content = expandPromptTemplate(file.name, files);
+      content = expandPromptTemplate(file.name, files, [], {}, collectedDefaults);
     } catch {
       content = file.content;
     }
+    const variables = mergeCollectedDefaults(extractTemplateVariables(content), collectedDefaults);
     templates.push({
       name: file.name,
       path: file.path,
       displayPath: file.displayPath,
       content,
-      variables: extractTemplateVariables(content),
+      variables,
     });
   }
   return templates.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export function getPromptTemplate(name: string, cwd: string = process.cwd()): PromptTemplate | null {
+export function getPromptTemplate(
+  name: string,
+  cwd: string = process.cwd(),
+): PromptTemplate | null {
   const files = loadPromptTemplateFiles(cwd);
   const file = files.get(name);
   if (!file) return null;
-  const content = expandPromptTemplate(name, files);
+  const collectedDefaults = new Map<string, string>();
+  const content = expandPromptTemplate(name, files, [], {}, collectedDefaults);
+  const variables = mergeCollectedDefaults(extractTemplateVariables(content), collectedDefaults);
   return {
     name: file.name,
     path: file.path,
     displayPath: file.displayPath,
     content,
-    variables: extractTemplateVariables(content),
+    variables,
   };
 }
 
-export function getPromptTemplateFile(name: string, cwd: string = process.cwd()): PromptTemplateFile | null {
+export function getPromptTemplateFile(
+  name: string,
+  cwd: string = process.cwd(),
+): PromptTemplateFile | null {
   const files = loadPromptTemplateFiles(cwd);
   return files.get(name) || null;
 }
 
-function stripFrontmatter(content: string): { frontmatter: Record<string, string>; body: string } {
+export function stripFrontmatter(content: string): {
+  frontmatter: Record<string, string>;
+  body: string;
+} {
   const lines = content.split(/\r?\n/);
   if (lines.length === 0 || lines[0].trim() !== '---') {
     return { frontmatter: {}, body: content.trim() };
@@ -325,7 +362,10 @@ function stripFrontmatter(content: string): { frontmatter: Record<string, string
     if (key) frontmatter[key] = value;
   }
 
-  const body = lines.slice(endIndex + 1).join('\n').trim();
+  const body = lines
+    .slice(endIndex + 1)
+    .join('\n')
+    .trim();
   return { frontmatter, body };
 }
 

@@ -11,7 +11,6 @@ const MESSAGE_FIELDS = `
 `;
 
 export function registerMessageTools(server: McpServer, client: GraphQLClient, orgId: string) {
-
   server.tool(
     'list_messages',
     'List messages for a specific channel thread in chronological order',
@@ -34,7 +33,7 @@ export function registerMessageTools(server: McpServer, client: GraphQLClient, o
         offset: offset ?? 0,
       });
       return { content: [{ type: 'text' as const, text: JSON.stringify(data.message, null, 2) }] };
-    }
+    },
   );
 
   server.tool(
@@ -51,8 +50,10 @@ export function registerMessageTools(server: McpServer, client: GraphQLClient, o
       if (!data.message.length) {
         return { content: [{ type: 'text' as const, text: 'Message not found' }], isError: true };
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.message[0], null, 2) }] };
-    }
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(data.message[0], null, 2) }],
+      };
+    },
   );
 
   server.tool(
@@ -63,7 +64,10 @@ export function registerMessageTools(server: McpServer, client: GraphQLClient, o
       body: z.string().describe('Message body text'),
       username: z.string().optional().describe('Display name of the sender'),
       from: z.string().optional().describe('Sender identifier'),
-      fromAgent: z.boolean().optional().describe('Whether this message is from an AI agent (default false)'),
+      fromAgent: z
+        .boolean()
+        .optional()
+        .describe('Whether this message is from an AI agent (default false)'),
       user_id: z.string().optional().describe('User ID of the sender'),
       agent_id: z.string().optional().describe('Agent ID if sent by an agent'),
       image_url: z.string().optional().describe('URL or base64 of an attached image'),
@@ -100,10 +104,19 @@ export function registerMessageTools(server: McpServer, client: GraphQLClient, o
       if (args.metadata) message.metadata = args.metadata;
 
       const data = await executeQuery<{ insert_message: { returning: unknown[] } }>(
-        client, mutation, { message }
+        client,
+        mutation,
+        { message },
       );
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.insert_message.returning[0], null, 2) }] };
-    }
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(data.insert_message.returning[0], null, 2),
+          },
+        ],
+      };
+    },
   );
 
   server.tool(
@@ -128,13 +141,22 @@ export function registerMessageTools(server: McpServer, client: GraphQLClient, o
         }
       }`;
       const data = await executeQuery<{ update_message: { returning: unknown[] } }>(
-        client, mutation, { id, set: setFields }
+        client,
+        mutation,
+        { id, set: setFields },
       );
       if (!data.update_message.returning.length) {
         return { content: [{ type: 'text' as const, text: 'Message not found' }], isError: true };
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.update_message.returning[0], null, 2) }] };
-    }
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(data.update_message.returning[0], null, 2),
+          },
+        ],
+      };
+    },
   );
 
   server.tool(
@@ -148,13 +170,17 @@ export function registerMessageTools(server: McpServer, client: GraphQLClient, o
         }
       }`;
       const data = await executeQuery<{ delete_message: { affected_rows: number } }>(
-        client, mutation, { id }
+        client,
+        mutation,
+        { id },
       );
       if (data.delete_message.affected_rows === 0) {
         return { content: [{ type: 'text' as const, text: 'Message not found' }], isError: true };
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ deleted: true, id }, null, 2) }] };
-    }
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ deleted: true, id }, null, 2) }],
+      };
+    },
   );
 
   server.tool(
@@ -167,10 +193,7 @@ export function registerMessageTools(server: McpServer, client: GraphQLClient, o
       limit: z.number().optional().describe('Max results (default 20)'),
     },
     async ({ query: searchQuery, chat_id, from_agent, limit }) => {
-      const conditions = [
-        '{ org_id: { _eq: $org_id } }',
-        '{ body: { _ilike: $search } }',
-      ];
+      const conditions = ['{ org_id: { _eq: $org_id } }', '{ body: { _ilike: $search } }'];
       const variables: Record<string, unknown> = {
         org_id: orgId,
         search: `%${searchQuery}%`,
@@ -201,7 +224,7 @@ export function registerMessageTools(server: McpServer, client: GraphQLClient, o
 
       const data = await executeQuery<{ message: unknown[] }>(client, gqlQuery, variables);
       return { content: [{ type: 'text' as const, text: JSON.stringify(data.message, null, 2) }] };
-    }
+    },
   );
 
   server.tool(
@@ -221,9 +244,8 @@ export function registerMessageTools(server: McpServer, client: GraphQLClient, o
         params = ', $chat_id: uuid!';
       }
 
-      const whereClause = conditions.length === 1
-        ? conditions[0]
-        : `{ _and: [${conditions.join(', ')}] }`;
+      const whereClause =
+        conditions.length === 1 ? conditions[0] : `{ _and: [${conditions.join(', ')}] }`;
 
       const query = `query ($org_id: String!${params}) {
         message_aggregate(where: ${whereClause}) {
@@ -231,9 +253,13 @@ export function registerMessageTools(server: McpServer, client: GraphQLClient, o
         }
       }`;
       const data = await executeQuery<{ message_aggregate: { aggregate: { count: number } } }>(
-        client, query, variables
+        client,
+        query,
+        variables,
       );
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.message_aggregate, null, 2) }] };
-    }
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(data.message_aggregate, null, 2) }],
+      };
+    },
   );
 }

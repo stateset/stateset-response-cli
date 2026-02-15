@@ -32,7 +32,6 @@ const AGENT_SETTINGS_FIELDS = `
 `;
 
 export function registerSettingsTools(server: McpServer, client: GraphQLClient, orgId: string) {
-
   // ── Agent Settings ──────────────────────────────────────────────────
 
   server.tool(
@@ -45,9 +44,13 @@ export function registerSettingsTools(server: McpServer, client: GraphQLClient, 
           ${AGENT_SETTINGS_FIELDS}
         }
       }`;
-      const data = await executeQuery<{ agent_settings: unknown[] }>(client, query, { org_id: orgId });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.agent_settings, null, 2) }] };
-    }
+      const data = await executeQuery<{ agent_settings: unknown[] }>(client, query, {
+        org_id: orgId,
+      });
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(data.agent_settings, null, 2) }],
+      };
+    },
   );
 
   server.tool(
@@ -60,12 +63,20 @@ export function registerSettingsTools(server: McpServer, client: GraphQLClient, 
           ${AGENT_SETTINGS_FIELDS}
         }
       }`;
-      const data = await executeQuery<{ agent_settings: unknown[] }>(client, query, { id, org_id: orgId });
+      const data = await executeQuery<{ agent_settings: unknown[] }>(client, query, {
+        id,
+        org_id: orgId,
+      });
       if (!data.agent_settings.length) {
-        return { content: [{ type: 'text' as const, text: 'Agent settings not found' }], isError: true };
+        return {
+          content: [{ type: 'text' as const, text: 'Agent settings not found' }],
+          isError: true,
+        };
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.agent_settings[0], null, 2) }] };
-    }
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(data.agent_settings[0], null, 2) }],
+      };
+    },
   );
 
   server.tool(
@@ -75,7 +86,10 @@ export function registerSettingsTools(server: McpServer, client: GraphQLClient, 
       id: z.number().describe('ID of the agent settings record to update'),
       test: z.boolean().optional().describe('Enable test mode'),
       model_name: z.string().optional().describe('AI model name'),
-      model_type: z.string().optional().describe('Model type (Instruct, Function Calling, Reasoning)'),
+      model_type: z
+        .string()
+        .optional()
+        .describe('Model type (Instruct, Function Calling, Reasoning)'),
       model_provider: z.string().optional().describe('Model provider'),
       temperature: z.number().optional().describe('Temperature 0-1'),
       max_tokens: z.number().optional().describe('Max response tokens'),
@@ -86,13 +100,25 @@ export function registerSettingsTools(server: McpServer, client: GraphQLClient, 
       skip_subjects: z.array(z.string()).optional().describe('Subject keywords to skip'),
       skip_tags: z.array(z.string()).optional().describe('Message tags to skip'),
       skip_channels: z.array(z.string()).optional().describe('Channel names to skip'),
-      skip_instagram_messages: z.array(z.string()).optional().describe('Instagram patterns to skip'),
+      skip_instagram_messages: z
+        .array(z.string())
+        .optional()
+        .describe('Instagram patterns to skip'),
       agent_emails: z.array(z.string()).optional().describe('Agent email addresses'),
       active_channels: z.array(z.string()).optional().describe('Active channels'),
-      out_of_office_keywords: z.array(z.string()).optional().describe('Out-of-office detection keywords'),
+      out_of_office_keywords: z
+        .array(z.string())
+        .optional()
+        .describe('Out-of-office detection keywords'),
       allowed_intents: z.array(z.string()).optional().describe('Allowed intent names'),
-      health_concern_keywords: z.array(z.string()).optional().describe('Escalation trigger keywords'),
-      agent_takeover_phrases: z.array(z.string()).optional().describe('Human takeover trigger phrases'),
+      health_concern_keywords: z
+        .array(z.string())
+        .optional()
+        .describe('Escalation trigger keywords'),
+      agent_takeover_phrases: z
+        .array(z.string())
+        .optional()
+        .describe('Human takeover trigger phrases'),
       escalation_team_id: z.string().optional().describe('Team ID for escalation'),
       escalation_tag_name: z.string().optional().describe('Tag name for escalated tickets'),
       stateset_response_gorgias_email: z.string().optional().describe('Support email for Gorgias'),
@@ -124,14 +150,24 @@ export function registerSettingsTools(server: McpServer, client: GraphQLClient, 
           returning { ${AGENT_SETTINGS_FIELDS} }
         }
       }`;
-      const data = await executeQuery<{ update_agent_settings: { affected_rows: number; returning: unknown[] } }>(
-        client, mutation, { id, org_id: orgId, set: setFields }
-      );
+      const data = await executeQuery<{
+        update_agent_settings: { affected_rows: number; returning: unknown[] };
+      }>(client, mutation, { id, org_id: orgId, set: setFields });
       if (!data.update_agent_settings.returning.length) {
-        return { content: [{ type: 'text' as const, text: 'Agent settings not found' }], isError: true };
+        return {
+          content: [{ type: 'text' as const, text: 'Agent settings not found' }],
+          isError: true,
+        };
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.update_agent_settings.returning[0], null, 2) }] };
-    }
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(data.update_agent_settings.returning[0], null, 2),
+          },
+        ],
+      };
+    },
   );
 
   // ── Channel Settings ────────────────────────────────────────────────
@@ -151,11 +187,18 @@ export function registerSettingsTools(server: McpServer, client: GraphQLClient, 
           }
         }
       }`;
-      const data = await executeQuery<{ organizations: unknown[] }>(client, query, { org_id: orgId });
+      const data = await executeQuery<{ organizations: unknown[] }>(client, query, {
+        org_id: orgId,
+      });
       if (!data.organizations.length) {
-        return { content: [{ type: 'text' as const, text: 'Organization not found' }], isError: true };
+        return {
+          content: [{ type: 'text' as const, text: 'Organization not found' }],
+          isError: true,
+        };
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.organizations[0], null, 2) }] };
-    }
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(data.organizations[0], null, 2) }],
+      };
+    },
   );
 }

@@ -61,9 +61,16 @@ export function createMockMcpServer(): MockMcpServer {
   const tools = new Map<string, ToolDefinition>();
 
   const server = {
-    tool: vi.fn((name: string, description: string, schema: unknown, handler: (args: unknown) => Promise<unknown>) => {
-      tools.set(name, { name, description, schema, handler });
-    }),
+    tool: vi.fn(
+      (
+        name: string,
+        description: string,
+        schema: unknown,
+        handler: (args: unknown) => Promise<unknown>,
+      ) => {
+        tools.set(name, { name, description, schema, handler });
+      },
+    ),
     _tools: tools,
     _callTool: async (name: string, args: unknown) => {
       const tool = tools.get(name);
@@ -118,12 +125,14 @@ export function createMockAnthropicClient(): MockAnthropicClient {
         const toolCall = pendingToolCall;
         pendingToolCall = null;
         return {
-          content: [{
-            type: 'tool_use',
-            id: 'tool_call_123',
-            name: toolCall.name,
-            input: toolCall.input,
-          }],
+          content: [
+            {
+              type: 'tool_use',
+              id: 'tool_call_123',
+              name: toolCall.name,
+              input: toolCall.input,
+            },
+          ],
           stop_reason: 'tool_use',
         };
       }
@@ -161,7 +170,9 @@ export function createMockFs() {
     readFileSync: vi.fn((path: string) => {
       const content = files.get(path);
       if (content === undefined) {
-        const error = new Error(`ENOENT: no such file or directory, open '${path}'`) as NodeJS.ErrnoException;
+        const error = new Error(
+          `ENOENT: no such file or directory, open '${path}'`,
+        ) as NodeJS.ErrnoException;
         error.code = 'ENOENT';
         throw error;
       }
@@ -211,8 +222,10 @@ export function mockEnv(overrides: Record<string, string | undefined> = {}) {
 // GraphQL Error Helpers
 // ============================================================================
 
-export function createGraphQLError(message: string, code?: string) {
-  const error = new Error(message) as Error & { response?: { errors?: Array<{ message: string }> } };
+export function createGraphQLError(message: string, _code?: string) {
+  const error = new Error(message) as Error & {
+    response?: { errors?: Array<{ message: string }> };
+  };
   error.response = {
     errors: [{ message }],
   };

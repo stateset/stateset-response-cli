@@ -4,7 +4,6 @@ import fs from 'node:fs';
 
 // Baileys + auth are loaded dynamically since they are optional deps
 type BaileysModule = typeof import('@whiskeysockets/baileys');
-type WASocket = ReturnType<Awaited<ReturnType<BaileysModule['default']>>extends infer T ? () => T : never> extends () => infer R ? R : never;
 
 // Re-export a minimal socket type for consumers
 export type WhatsAppSocket = {
@@ -36,11 +35,15 @@ function makeSilentLogger() {
 
 /** Verbose logger that prints to stderr */
 function makeVerboseLogger() {
-  const log = (level: string) => (...args: unknown[]) => {
-    const ts = new Date().toISOString();
-    process.stderr.write(`[${ts}] [baileys:${level}] ${args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')}\n`);
-    return verboseLogger;
-  };
+  const log =
+    (level: string) =>
+    (...args: unknown[]) => {
+      const ts = new Date().toISOString();
+      process.stderr.write(
+        `[${ts}] [baileys:${level}] ${args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')}\n`,
+      );
+      return verboseLogger;
+    };
   const verboseLogger: Record<string, unknown> = {
     level: 'debug',
     trace: log('trace'),
@@ -63,12 +66,18 @@ export interface CreateSocketOptions {
 /**
  * Create a Baileys WhatsApp Web socket with persistent multi-file auth.
  */
-export async function createWhatsAppSocket(options: CreateSocketOptions = {}): Promise<WhatsAppSocket> {
+export async function createWhatsAppSocket(
+  options: CreateSocketOptions = {},
+): Promise<WhatsAppSocket> {
   const authDir = options.authDir ?? DEFAULT_AUTH_DIR;
 
   // Ensure auth directory exists
   fs.mkdirSync(authDir, { recursive: true });
-  try { fs.chmodSync(authDir, 0o700); } catch { /* best-effort */ }
+  try {
+    fs.chmodSync(authDir, 0o700);
+  } catch {
+    /* best-effort */
+  }
 
   // Dynamic import of optional dependency
   let baileys: BaileysModule;
@@ -77,14 +86,13 @@ export async function createWhatsAppSocket(options: CreateSocketOptions = {}): P
   } catch {
     throw new Error(
       'WhatsApp gateway requires @whiskeysockets/baileys.\n' +
-      'Install it with: npm install @whiskeysockets/baileys qrcode-terminal'
+        'Install it with: npm install @whiskeysockets/baileys qrcode-terminal',
     );
   }
 
   const {
     default: makeWASocket,
     useMultiFileAuthState,
-    DisconnectReason,
     fetchLatestBaileysVersion,
     makeCacheableSignalKeyStore,
   } = baileys;
@@ -110,11 +118,14 @@ export async function createWhatsAppSocket(options: CreateSocketOptions = {}): P
   sock.ev.on('creds.update' as never, saveCreds as never);
 
   // Handle QR codes
-  sock.ev.on('connection.update' as never, ((update: { qr?: string }) => {
-    if (update.qr && options.onQr) {
-      options.onQr(update.qr);
-    }
-  }) as never);
+  sock.ev.on(
+    'connection.update' as never,
+    ((update: { qr?: string }) => {
+      if (update.qr && options.onQr) {
+        options.onQr(update.qr);
+      }
+    }) as never,
+  );
 
   return sock as unknown as WhatsAppSocket;
 }
@@ -125,7 +136,10 @@ export async function createWhatsAppSocket(options: CreateSocketOptions = {}): P
  */
 export function waitForConnection(sock: WhatsAppSocket): Promise<void> {
   return new Promise((resolve, reject) => {
-    const handler = (update: { connection?: string; lastDisconnect?: { error?: { output?: { statusCode?: number } } } }) => {
+    const handler = (update: {
+      connection?: string;
+      lastDisconnect?: { error?: { output?: { statusCode?: number } } };
+    }) => {
       if (update.connection === 'open') {
         resolve();
       } else if (update.connection === 'close') {
@@ -159,7 +173,8 @@ export function extractText(message: Record<string, unknown> | undefined | null)
 
   // Button response
   const btnResp = msg.buttonsResponseMessage as Record<string, unknown> | undefined;
-  if (btnResp && typeof btnResp.selectedDisplayText === 'string') return btnResp.selectedDisplayText;
+  if (btnResp && typeof btnResp.selectedDisplayText === 'string')
+    return btnResp.selectedDisplayText;
 
   // List response
   const listResp = msg.listResponseMessage as Record<string, unknown> | undefined;
@@ -185,7 +200,9 @@ export function isGroup(jid: string): boolean {
 }
 
 /** Extract status code from a Baileys disconnect event */
-export function getStatusCode(lastDisconnect?: { error?: { output?: { statusCode?: number } } }): number {
+export function getStatusCode(lastDisconnect?: {
+  error?: { output?: { statusCode?: number } };
+}): number {
   return lastDisconnect?.error?.output?.statusCode ?? 0;
 }
 

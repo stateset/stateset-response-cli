@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
-import { requestJsonWithRetry } from './http.js';
+import { requestJsonWithRetry, normalizePath, applyQueryParams, throwOnHttpError } from './http.js';
 import type { KlaviyoConfig } from './config.js';
+import { ValidationError } from '../lib/errors.js';
 
 const BASE_URL = 'https://a.klaviyo.com/api';
 
@@ -23,44 +24,27 @@ export interface KlaviyoFileUploadOptions {
   revision?: string | null;
 }
 
-function normalizePath(rawPath: string): string {
-  let path = String(rawPath || '').trim();
-  if (!path) {
-    throw new Error('Path is required');
-  }
-  if (path.startsWith('http://') || path.startsWith('https://')) {
-    throw new Error('Path must be relative (e.g., /profiles, /lists/123)');
-  }
-  if (!path.startsWith('/')) {
-    path = `/${path}`;
-  }
-  return path;
-}
-
-export async function klaviyoRequest(options: KlaviyoRequestOptions): Promise<{ status: number; data: unknown }> {
+export async function klaviyoRequest(
+  options: KlaviyoRequestOptions,
+): Promise<{ status: number; data: unknown }> {
   const method = String(options.method || '').toUpperCase();
-  if (!method) throw new Error('Method is required');
+  if (!method) throw new ValidationError('Method is required');
 
-  const path = normalizePath(options.path);
+  const path = normalizePath(options.path, '/profiles, /lists/123');
   const url = new URL(`${BASE_URL}${path}`);
 
-  if (options.query) {
-    for (const [key, value] of Object.entries(options.query)) {
-      if (value === undefined || value === null) continue;
-      url.searchParams.set(key, String(value));
-    }
-  }
+  applyQueryParams(url, options.query);
 
   const revision = options.revision || options.klaviyo.revision;
   if (!revision) {
-    throw new Error('Klaviyo revision header is required. Set KLAVIYO_REVISION.');
+    throw new ValidationError('Klaviyo revision header is required. Set KLAVIYO_REVISION.');
   }
 
   const headers: Record<string, string> = {
-    'Accept': 'application/vnd.api+json',
+    Accept: 'application/vnd.api+json',
     'Content-Type': 'application/vnd.api+json',
-    'Authorization': `Klaviyo-API-Key ${options.klaviyo.apiKey}`,
-    'revision': revision,
+    Authorization: `Klaviyo-API-Key ${options.klaviyo.apiKey}`,
+    revision: revision,
   };
 
   const { status, data } = await requestJsonWithRetry(url.toString(), {
@@ -70,25 +54,22 @@ export async function klaviyoRequest(options: KlaviyoRequestOptions): Promise<{ 
     timeoutMs: 30_000,
   });
 
-  if (status >= 400) {
-    const msg = typeof data === 'string' ? data : JSON.stringify(data);
-    throw new Error(`Klaviyo API error (${status}): ${msg}`);
-  }
+  throwOnHttpError(status, data, 'Klaviyo');
 
   return { status, data };
 }
 
 export async function klaviyoUploadImageFromFile(
-  options: KlaviyoFileUploadOptions
+  options: KlaviyoFileUploadOptions,
 ): Promise<{ status: number; data: unknown }> {
   const filePath = String(options.filePath || '').trim();
   if (!filePath) {
-    throw new Error('filePath is required');
+    throw new ValidationError('filePath is required');
   }
 
   const revision = options.revision || options.klaviyo.revision;
   if (!revision) {
-    throw new Error('Klaviyo revision header is required. Set KLAVIYO_REVISION.');
+    throw new ValidationError('Klaviyo revision header is required. Set KLAVIYO_REVISION.');
   }
 
   const buffer = await readFile(filePath);
@@ -105,9 +86,9 @@ export async function klaviyoUploadImageFromFile(
   }
 
   const headers: Record<string, string> = {
-    'Accept': 'application/vnd.api+json',
-    'Authorization': `Klaviyo-API-Key ${options.klaviyo.apiKey}`,
-    'revision': revision,
+    Accept: 'application/vnd.api+json',
+    Authorization: `Klaviyo-API-Key ${options.klaviyo.apiKey}`,
+    revision: revision,
   };
 
   const { status, data } = await requestJsonWithRetry(`${BASE_URL}/image-upload`, {
@@ -117,10 +98,7 @@ export async function klaviyoUploadImageFromFile(
     timeoutMs: 30_000,
   });
 
-  if (status >= 400) {
-    const msg = typeof data === 'string' ? data : JSON.stringify(data);
-    throw new Error(`Klaviyo API error (${status}): ${msg}`);
-  }
+  throwOnHttpError(status, data, 'Klaviyo');
 
   return { status, data };
 }

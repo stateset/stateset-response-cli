@@ -31,7 +31,9 @@ async function fetchKBConfig(client: GraphQLClient, orgId: string): Promise<KBCo
 
   const { stateset_kb_collection, stateset_kb_api_key } = data.access_tokens[0];
   if (!stateset_kb_collection || !stateset_kb_api_key) {
-    throw new Error('Knowledge Base not configured — missing collection or API key in access_tokens');
+    throw new Error(
+      'Knowledge Base not configured — missing collection or API key in access_tokens',
+    );
   }
 
   const openaiApiKey = process.env.OPENAI_API_KEY || process.env.OPEN_AI || '';
@@ -47,7 +49,7 @@ async function createEmbedding(text: string, config: KBConfig): Promise<number[]
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${config.openaiApiKey}`,
+      Authorization: `Bearer ${config.openaiApiKey}`,
     },
     body: JSON.stringify({ input: text, model: EMBEDDING_MODEL }),
   });
@@ -57,7 +59,7 @@ async function createEmbedding(text: string, config: KBConfig): Promise<number[]
     throw new Error(`OpenAI embedding failed (${res.status}): ${err}`);
   }
 
-  const json = await res.json() as { data: Array<{ embedding: number[] }> };
+  const json = (await res.json()) as { data: Array<{ embedding: number[] }> };
   if (!json.data?.[0]?.embedding) {
     throw new Error('Invalid embedding response from OpenAI');
   }
@@ -68,10 +70,12 @@ async function qdrantRequest(
   path: string,
   method: string,
   body: unknown,
-  config: KBConfig
+  config: KBConfig,
 ): Promise<unknown> {
   if (!QDRANT_HOST) {
-    throw new Error('STATESET_KB_HOST environment variable is required for Knowledge Base operations.');
+    throw new Error(
+      'STATESET_KB_HOST environment variable is required for Knowledge Base operations.',
+    );
   }
   const url = `${QDRANT_HOST}/collections/${config.collection}${path}`;
   const res = await fetch(url, {
@@ -91,15 +95,21 @@ async function qdrantRequest(
   return res.json();
 }
 
-export function registerKnowledgeBaseTools(server: McpServer, client: GraphQLClient, orgId: string) {
-
+export function registerKnowledgeBaseTools(
+  server: McpServer,
+  client: GraphQLClient,
+  orgId: string,
+) {
   server.tool(
     'kb_search',
     'Search the Knowledge Base using semantic similarity. Returns the most relevant entries for a given question.',
     {
       question: z.string().describe('The question or text to search for'),
       top_k: z.number().optional().describe('Number of results to return (default 5)'),
-      score_threshold: z.number().optional().describe('Minimum similarity score 0-1 (default: no threshold)'),
+      score_threshold: z
+        .number()
+        .optional()
+        .describe('Minimum similarity score 0-1 (default: no threshold)'),
     },
     async ({ question, top_k, score_threshold }) => {
       const config = await fetchKBConfig(client, orgId);
@@ -114,26 +124,28 @@ export function registerKnowledgeBaseTools(server: McpServer, client: GraphQLCli
         searchBody.score_threshold = score_threshold;
       }
 
-      const result = await qdrantRequest('/points/search', 'POST', searchBody, config) as {
+      const result = (await qdrantRequest('/points/search', 'POST', searchBody, config)) as {
         result: Array<{ id: string; score: number; payload: Record<string, unknown> }>;
       };
 
-      const matches = result.result.map(point => ({
+      const matches = result.result.map((point) => ({
         id: point.id,
         score: point.score,
         text: point.payload?.text,
         metadata: point.payload,
       }));
 
-      const contexts = matches.map(m => m.text).filter(Boolean);
+      const contexts = matches.map((m) => m.text).filter(Boolean);
 
       return {
-        content: [{
-          type: 'text' as const,
-          text: JSON.stringify({ matches, contexts, collection: config.collection }, null, 2),
-        }],
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({ matches, contexts, collection: config.collection }, null, 2),
+          },
+        ],
       };
-    }
+    },
   );
 
   server.tool(
@@ -141,8 +153,14 @@ export function registerKnowledgeBaseTools(server: McpServer, client: GraphQLCli
     'Add or update knowledge in the Knowledge Base. Automatically deduplicates — if similar content exists (above similarity threshold), it updates the existing entry instead of creating a duplicate.',
     {
       knowledge: z.string().describe('The text content to store in the knowledge base'),
-      metadata: z.record(z.unknown()).optional().describe('Additional metadata (e.g. category, source, tags)'),
-      similarity_threshold: z.number().optional().describe('Deduplication threshold 0-1 (default 0.95)'),
+      metadata: z
+        .record(z.unknown())
+        .optional()
+        .describe('Additional metadata (e.g. category, source, tags)'),
+      similarity_threshold: z
+        .number()
+        .optional()
+        .describe('Deduplication threshold 0-1 (default 0.95)'),
     },
     async ({ knowledge, metadata, similarity_threshold }) => {
       const config = await fetchKBConfig(client, orgId);
@@ -150,12 +168,17 @@ export function registerKnowledgeBaseTools(server: McpServer, client: GraphQLCli
       const threshold = similarity_threshold ?? SIMILARITY_THRESHOLD;
 
       // Search for similar existing content
-      const searchResult = await qdrantRequest('/points/search', 'POST', {
-        vector,
-        limit: 1,
-        with_payload: true,
-        score_threshold: threshold,
-      }, config) as { result: Array<{ id: string; score: number }> };
+      const searchResult = (await qdrantRequest(
+        '/points/search',
+        'POST',
+        {
+          vector,
+          limit: 1,
+          with_payload: true,
+          score_threshold: threshold,
+        },
+        config,
+      )) as { result: Array<{ id: string; score: number }> };
 
       let pointId: string;
       let action: string;
@@ -168,31 +191,44 @@ export function registerKnowledgeBaseTools(server: McpServer, client: GraphQLCli
         action = 'created';
       }
 
-      await qdrantRequest('/points?wait=true', 'PUT', {
-        points: [{
-          id: pointId,
-          vector,
-          payload: {
-            text: knowledge,
-            org_id: orgId,
-            [action === 'created' ? 'created_at' : 'updated_at']: new Date().toISOString(),
-            ...(metadata || {}),
-          },
-        }],
-      }, config);
+      await qdrantRequest(
+        '/points?wait=true',
+        'PUT',
+        {
+          points: [
+            {
+              id: pointId,
+              vector,
+              payload: {
+                text: knowledge,
+                org_id: orgId,
+                [action === 'created' ? 'created_at' : 'updated_at']: new Date().toISOString(),
+                ...(metadata || {}),
+              },
+            },
+          ],
+        },
+        config,
+      );
 
       return {
-        content: [{
-          type: 'text' as const,
-          text: JSON.stringify({
-            status: `${action}_stateset_kb_vector`,
-            action,
-            point_id: pointId,
-            collection: config.collection,
-          }, null, 2),
-        }],
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(
+              {
+                status: `${action}_stateset_kb_vector`,
+                action,
+                point_id: pointId,
+                collection: config.collection,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
       };
-    }
+    },
   );
 
   server.tool(
@@ -200,7 +236,10 @@ export function registerKnowledgeBaseTools(server: McpServer, client: GraphQLCli
     'Update an existing Knowledge Base entry by ID, or find the closest match and update it',
     {
       knowledge: z.string().describe('Updated text content'),
-      point_id: z.string().optional().describe('ID of the point to update (if omitted, finds closest match)'),
+      point_id: z
+        .string()
+        .optional()
+        .describe('ID of the point to update (if omitted, finds closest match)'),
       metadata: z.record(z.unknown()).optional().describe('Updated metadata'),
     },
     async ({ knowledge, point_id, metadata }) => {
@@ -210,42 +249,63 @@ export function registerKnowledgeBaseTools(server: McpServer, client: GraphQLCli
       let targetId = point_id;
 
       if (!targetId) {
-        const searchResult = await qdrantRequest('/points/search', 'POST', {
-          vector,
-          limit: 1,
-          with_payload: true,
-        }, config) as { result: Array<{ id: string }> };
+        const searchResult = (await qdrantRequest(
+          '/points/search',
+          'POST',
+          {
+            vector,
+            limit: 1,
+            with_payload: true,
+          },
+          config,
+        )) as { result: Array<{ id: string }> };
 
         if (!searchResult.result?.length) {
-          return { content: [{ type: 'text' as const, text: 'No matching entry found to update' }], isError: true };
+          return {
+            content: [{ type: 'text' as const, text: 'No matching entry found to update' }],
+            isError: true,
+          };
         }
         targetId = searchResult.result[0].id as string;
       }
 
-      await qdrantRequest('/points?wait=true', 'PUT', {
-        points: [{
-          id: targetId,
-          vector,
-          payload: {
-            text: knowledge,
-            org_id: orgId,
-            updated_at: new Date().toISOString(),
-            ...(metadata || {}),
-          },
-        }],
-      }, config);
+      await qdrantRequest(
+        '/points?wait=true',
+        'PUT',
+        {
+          points: [
+            {
+              id: targetId,
+              vector,
+              payload: {
+                text: knowledge,
+                org_id: orgId,
+                updated_at: new Date().toISOString(),
+                ...(metadata || {}),
+              },
+            },
+          ],
+        },
+        config,
+      );
 
       return {
-        content: [{
-          type: 'text' as const,
-          text: JSON.stringify({
-            status: 'updated_stateset_kb_vector',
-            point_id: targetId,
-            collection: config.collection,
-          }, null, 2),
-        }],
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(
+              {
+                status: 'updated_stateset_kb_vector',
+                point_id: targetId,
+                collection: config.collection,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
       };
-    }
+    },
   );
 
   server.tool(
@@ -257,21 +317,32 @@ export function registerKnowledgeBaseTools(server: McpServer, client: GraphQLCli
     async ({ ids }) => {
       const config = await fetchKBConfig(client, orgId);
 
-      await qdrantRequest('/points/delete?wait=true', 'POST', {
-        points: ids,
-      }, config);
+      await qdrantRequest(
+        '/points/delete?wait=true',
+        'POST',
+        {
+          points: ids,
+        },
+        config,
+      );
 
       return {
-        content: [{
-          type: 'text' as const,
-          text: JSON.stringify({
-            status: 'deleted_stateset_kb_vector',
-            deleted_ids: ids,
-            collection: config.collection,
-          }, null, 2),
-        }],
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(
+              {
+                status: 'deleted_stateset_kb_vector',
+                deleted_ids: ids,
+                collection: config.collection,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
       };
-    }
+    },
   );
 
   server.tool(
@@ -297,12 +368,14 @@ export function registerKnowledgeBaseTools(server: McpServer, client: GraphQLCli
 
       const data = await res.json();
       return {
-        content: [{
-          type: 'text' as const,
-          text: JSON.stringify({ collection: config.collection, info: data }, null, 2),
-        }],
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({ collection: config.collection, info: data }, null, 2),
+          },
+        ],
       };
-    }
+    },
   );
 
   server.tool(
@@ -311,7 +384,10 @@ export function registerKnowledgeBaseTools(server: McpServer, client: GraphQLCli
     {
       limit: z.number().optional().describe('Number of entries to return (default 10)'),
       offset: z.string().optional().describe('Pagination offset (point ID from previous scroll)'),
-      filter: z.record(z.unknown()).optional().describe('Qdrant filter object for metadata filtering'),
+      filter: z
+        .record(z.unknown())
+        .optional()
+        .describe('Qdrant filter object for metadata filtering'),
     },
     async ({ limit, offset, filter }) => {
       const config = await fetchKBConfig(client, orgId);
@@ -327,26 +403,35 @@ export function registerKnowledgeBaseTools(server: McpServer, client: GraphQLCli
         scrollBody.filter = filter;
       }
 
-      const result = await qdrantRequest('/points/scroll', 'POST', scrollBody, config) as {
-        result: { points: Array<{ id: string; payload: Record<string, unknown> }>; next_page_offset: string | null };
+      const result = (await qdrantRequest('/points/scroll', 'POST', scrollBody, config)) as {
+        result: {
+          points: Array<{ id: string; payload: Record<string, unknown> }>;
+          next_page_offset: string | null;
+        };
       };
 
-      const entries = result.result.points.map(p => ({
+      const entries = result.result.points.map((p) => ({
         id: p.id,
         text: p.payload?.text,
         metadata: p.payload,
       }));
 
       return {
-        content: [{
-          type: 'text' as const,
-          text: JSON.stringify({
-            entries,
-            next_offset: result.result.next_page_offset,
-            collection: config.collection,
-          }, null, 2),
-        }],
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(
+              {
+                entries,
+                next_offset: result.result.next_page_offset,
+                collection: config.collection,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
       };
-    }
+    },
   );
 }

@@ -2,51 +2,51 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { ZendeskConfig } from '../../integrations/config.js';
 import { zendeskRequest } from '../../integrations/zendesk.js';
-import { redactPii } from '../../integrations/redact.js';
-import { stringifyToolResult } from './output.js';
+import {
+  type IntegrationToolOptions,
+  MaxCharsSchema,
+  buildQuery,
+  createRequestRunner,
+  guardWrite,
+  registerRawRequestTool,
+  wrapToolResult,
+} from './helpers.js';
 
-export interface ZendeskToolOptions {
-  allowApply: boolean;
-  redact: boolean;
+export type ZendeskToolOptions = IntegrationToolOptions;
+
+// Typed response shapes for Zendesk API responses
+interface ZendeskUsersResponse {
+  users?: Array<{ id: number; email?: string; name?: string }>;
 }
 
-function writeNotAllowed() {
-  return {
-    content: [{
-      type: 'text' as const,
-      text: JSON.stringify({
-        error: 'Write operation not allowed. The --apply flag or STATESET_ALLOW_APPLY must be set.',
-        hint: 'Use list/get operations when writes are disabled.',
-      }, null, 2),
-    }],
-  };
+interface ZendeskGroupsResponse {
+  groups?: Array<{ id: number; name?: string }>;
 }
 
-async function runZendeskRequest(
+interface ZendeskMacrosResponse {
+  macros?: Array<{ id: number; title?: string }>;
+}
+
+interface ZendeskTicketResponse {
+  ticket?: { tags?: string[] };
+}
+
+interface ZendeskMacroApplyResponse {
+  result?: { ticket?: Record<string, unknown> };
+}
+
+const runRequest = createRequestRunner<ZendeskConfig>((config, args) =>
+  zendeskRequest({ zendesk: config, ...args }),
+);
+
+async function zendeskRaw(
   zendesk: ZendeskConfig,
-  options: ZendeskToolOptions,
   args: {
     method: string;
     path: string;
     query?: Record<string, string | number | boolean>;
     body?: Record<string, unknown>;
-  }
-) {
-  const response = await zendeskRequest({
-    zendesk,
-    method: args.method,
-    path: args.path,
-    query: args.query,
-    body: args.body,
-  });
-
-  const data = options.redact ? redactPii(response.data) : response.data;
-  return { status: response.status, data };
-}
-
-async function zendeskRaw(
-  zendesk: ZendeskConfig,
-  args: { method: string; path: string; query?: Record<string, string | number | boolean>; body?: Record<string, unknown> }
+  },
 ) {
   return zendeskRequest({
     zendesk,
@@ -69,36 +69,49 @@ function mergeTags(existing: string[], add?: string[], remove?: string[]): strin
 }
 
 async function resolveAssigneeId(zendesk: ZendeskConfig, email: string): Promise<number | null> {
-  const response = await zendeskRaw(zendesk, { method: 'GET', path: '/users.json', query: { role: 'agent' } });
-  const users = (response.data as any)?.users || [];
-  const match = users.find((u: any) => String(u.email || '').toLowerCase() === email.toLowerCase());
+  const response = await zendeskRaw(zendesk, {
+    method: 'GET',
+    path: '/users.json',
+    query: { role: 'agent' },
+  });
+  const users = (response.data as ZendeskUsersResponse)?.users ?? [];
+  const match = users.find((u) => String(u.email || '').toLowerCase() === email.toLowerCase());
   return match?.id ?? null;
 }
 
 async function resolveGroupId(zendesk: ZendeskConfig, groupName: string): Promise<number | null> {
   const response = await zendeskRaw(zendesk, { method: 'GET', path: '/groups.json' });
-  const groups = (response.data as any)?.groups || [];
-  const match = groups.find((g: any) => String(g.name || '').toLowerCase() === groupName.toLowerCase());
+  const groups = (response.data as ZendeskGroupsResponse)?.groups ?? [];
+  const match = groups.find((g) => String(g.name || '').toLowerCase() === groupName.toLowerCase());
   return match?.id ?? null;
 }
 
 async function resolveMacroId(zendesk: ZendeskConfig, title: string): Promise<number | null> {
   const response = await zendeskRaw(zendesk, { method: 'GET', path: '/macros.json' });
-  const macros = (response.data as any)?.macros || [];
-  const match = macros.find((m: any) => String(m.title || '').toLowerCase() === title.toLowerCase());
+  const macros = (response.data as ZendeskMacrosResponse)?.macros ?? [];
+  const match = macros.find((m) => String(m.title || '').toLowerCase() === title.toLowerCase());
   return match?.id ?? null;
 }
 
-export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, options: ZendeskToolOptions) {
+export function registerZendeskTools(
+  server: McpServer,
+  zendesk: ZendeskConfig,
+  options: IntegrationToolOptions,
+) {
   server.tool(
     'zendesk_search_tickets',
     'Search Zendesk tickets using query syntax.',
     {
-      query: z.string().describe('Zendesk search query (e.g., "status:open priority:urgent tags:refund")'),
-      sort_by: z.enum(['created_at', 'updated_at', 'priority', 'status']).optional().default('created_at'),
+      query: z
+        .string()
+        .describe('Zendesk search query (e.g., "status:open priority:urgent tags:refund")'),
+      sort_by: z
+        .enum(['created_at', 'updated_at', 'priority', 'status'])
+        .optional()
+        .default('created_at'),
       sort_order: z.enum(['asc', 'desc']).optional().default('desc'),
       limit: z.number().min(1).max(100).optional().default(50),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
       const query = {
@@ -107,21 +120,22 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
         sort_order: args.sort_order,
       } as Record<string, string | number | boolean>;
 
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'GET',
         path: '/search.json',
         query,
       });
 
-      const data = result.data as Record<string, any> | undefined;
+      const data = result.data as Record<string, unknown> | undefined;
       if (data && Array.isArray(data.results)) {
         data.results = data.results.slice(0, args.limit as number);
       }
 
-      const payload = { success: true, status: result.status, data };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult(
+        { success: true, status: result.status, data },
+        args.max_chars as number | undefined,
+      );
+    },
   );
 
   server.tool(
@@ -130,26 +144,27 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
     {
       page: z.number().min(1).optional().describe('Page number (1-based)'),
       per_page: z.number().min(1).max(100).optional().describe('Results per page'),
-      query: z.record(z.union([z.string(), z.number(), z.boolean()])).optional().describe('Additional query parameters'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      query: z
+        .record(z.union([z.string(), z.number(), z.boolean()]))
+        .optional()
+        .describe('Additional query parameters'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      const query: Record<string, string | number | boolean> = {
+      const query = buildQuery({
         ...(args.query || {}),
-      };
-      if (args.page !== undefined) query.page = args.page;
-      if (args.per_page !== undefined) query.per_page = args.per_page;
+        page: args.page,
+        per_page: args.per_page,
+      } as Record<string, string | number | boolean | undefined>);
 
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'GET',
         path: '/tickets.json',
-        query: Object.keys(query).length > 0 ? query : undefined,
+        query,
       });
 
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -157,10 +172,13 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
     'Search Zendesk users using query syntax.',
     {
       query: z.string().describe('Zendesk search query (e.g., "role:agent email:foo@bar.com")'),
-      sort_by: z.enum(['created_at', 'updated_at', 'name', 'email']).optional().default('created_at'),
+      sort_by: z
+        .enum(['created_at', 'updated_at', 'name', 'email'])
+        .optional()
+        .default('created_at'),
       sort_order: z.enum(['asc', 'desc']).optional().default('desc'),
       limit: z.number().min(1).max(100).optional().default(50),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
       const query = {
@@ -169,21 +187,22 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
         sort_order: args.sort_order,
       } as Record<string, string | number | boolean>;
 
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'GET',
         path: '/search.json',
         query,
       });
 
-      const data = result.data as Record<string, any> | undefined;
+      const data = result.data as Record<string, unknown> | undefined;
       if (data && Array.isArray(data.results)) {
         data.results = data.results.slice(0, args.limit as number);
       }
 
-      const payload = { success: true, status: result.status, data };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult(
+        { success: true, status: result.status, data },
+        args.max_chars as number | undefined,
+      );
+    },
   );
 
   server.tool(
@@ -194,7 +213,7 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
       sort_by: z.enum(['created_at', 'updated_at', 'name']).optional().default('created_at'),
       sort_order: z.enum(['asc', 'desc']).optional().default('desc'),
       limit: z.number().min(1).max(100).optional().default(50),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
       const query = {
@@ -203,21 +222,22 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
         sort_order: args.sort_order,
       } as Record<string, string | number | boolean>;
 
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'GET',
         path: '/search.json',
         query,
       });
 
-      const data = result.data as Record<string, any> | undefined;
+      const data = result.data as Record<string, unknown> | undefined;
       if (data && Array.isArray(data.results)) {
         data.results = data.results.slice(0, args.limit as number);
       }
 
-      const payload = { success: true, status: result.status, data };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult(
+        { success: true, status: result.status, data },
+        args.max_chars as number | undefined,
+      );
+    },
   );
 
   server.tool(
@@ -225,26 +245,23 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
     'Get details for a Zendesk ticket, including comments.',
     {
       ticket_id: z.number().describe('Zendesk ticket ID'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      const ticketResponse = await runZendeskRequest(zendesk, options, {
+      const ticketResponse = await runRequest(zendesk, options, {
         method: 'GET',
         path: `/tickets/${args.ticket_id}.json`,
       });
-      const commentsResponse = await runZendeskRequest(zendesk, options, {
+      const commentsResponse = await runRequest(zendesk, options, {
         method: 'GET',
         path: `/tickets/${args.ticket_id}/comments.json`,
       });
 
-      const payload = {
-        success: true,
-        ticket: ticketResponse.data,
-        comments: commentsResponse.data,
-      };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult(
+        { success: true, ticket: ticketResponse.data, comments: commentsResponse.data },
+        args.max_chars as number | undefined,
+      );
+    },
   );
 
   server.tool(
@@ -254,23 +271,19 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
       ticket_id: z.number().describe('Zendesk ticket ID'),
       page: z.number().min(1).optional().describe('Page number (1-based)'),
       per_page: z.number().min(1).max(100).optional().describe('Results per page'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      const query: Record<string, string | number | boolean> = {};
-      if (args.page !== undefined) query.page = args.page;
-      if (args.per_page !== undefined) query.per_page = args.per_page;
+      const query = buildQuery({ page: args.page, per_page: args.per_page });
 
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'GET',
         path: `/tickets/${args.ticket_id}/audits.json`,
-        query: Object.keys(query).length > 0 ? query : undefined,
+        query,
       });
 
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -279,22 +292,19 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
     {
       page: z.number().min(1).optional().describe('Page number (1-based)'),
       per_page: z.number().min(1).max(100).optional().describe('Results per page'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      const query: Record<string, string | number | boolean> = {};
-      if (args.page !== undefined) query.page = args.page;
-      if (args.per_page !== undefined) query.per_page = args.per_page;
+      const query = buildQuery({ page: args.page, per_page: args.per_page });
 
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'GET',
         path: '/suspended_tickets.json',
-        query: Object.keys(query).length > 0 ? query : undefined,
+        query,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -304,23 +314,19 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
       ticket_id: z.number().describe('Zendesk ticket ID'),
       page: z.number().min(1).optional().describe('Page number (1-based)'),
       per_page: z.number().min(1).max(100).optional().describe('Results per page'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      const query: Record<string, string | number | boolean> = {};
-      if (args.page !== undefined) query.page = args.page;
-      if (args.per_page !== undefined) query.per_page = args.per_page;
+      const query = buildQuery({ page: args.page, per_page: args.per_page });
 
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'GET',
         path: `/tickets/${args.ticket_id}/comments.json`,
-        query: Object.keys(query).length > 0 ? query : undefined,
+        query,
       });
 
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -329,7 +335,11 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
     {
       subject: z.string().describe('Ticket subject'),
       comment: z.string().describe('Initial comment body'),
-      public: z.boolean().optional().default(true).describe('Whether the initial comment is public'),
+      public: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe('Whether the initial comment is public'),
       requester_email: z.string().optional().describe('Requester email'),
       requester_name: z.string().optional().describe('Requester name'),
       priority: z.enum(['low', 'normal', 'high', 'urgent']).optional(),
@@ -337,11 +347,15 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
       tags: z.array(z.string()).optional().describe('Tags to add'),
       assignee_email: z.string().optional().describe('Agent email to assign'),
       group_name: z.string().optional().describe('Group name to assign'),
-      custom_fields: z.array(z.object({ id: z.number(), value: z.any() })).optional().describe('Custom fields'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      custom_fields: z
+        .array(z.object({ id: z.number(), value: z.unknown() }))
+        .optional()
+        .describe('Custom fields'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      if (!options.allowApply) return writeNotAllowed();
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
 
       const ticket: Record<string, unknown> = {
         subject: args.subject,
@@ -375,16 +389,14 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
         ticket.group_id = groupId;
       }
 
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'POST',
         path: '/tickets.json',
         body: { ticket },
       });
 
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -399,10 +411,11 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
       tags_to_add: z.array(z.string()).optional().describe('Tags to add'),
       tags_to_remove: z.array(z.string()).optional().describe('Tags to remove'),
       internal_note: z.string().optional().describe('Internal note to add'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      if (!options.allowApply) return writeNotAllowed();
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
 
       const update: Record<string, unknown> = {};
       if (args.status) update.status = args.status;
@@ -429,21 +442,22 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
       }
 
       if (args.tags_to_add || args.tags_to_remove) {
-        const ticket = await zendeskRaw(zendesk, { method: 'GET', path: `/tickets/${args.ticket_id}.json` });
-        const existingTags = (ticket.data as any)?.ticket?.tags || [];
+        const ticket = await zendeskRaw(zendesk, {
+          method: 'GET',
+          path: `/tickets/${args.ticket_id}.json`,
+        });
+        const existingTags = (ticket.data as ZendeskTicketResponse)?.ticket?.tags ?? [];
         update.tags = mergeTags(existingTags, args.tags_to_add, args.tags_to_remove);
       }
 
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'PUT',
         path: `/tickets/${args.ticket_id}.json`,
         body: { ticket: update },
       });
 
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -453,21 +467,20 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
       ticket_id: z.number().describe('Zendesk ticket ID'),
       comment: z.string().describe('Comment body'),
       public: z.boolean().optional().default(true).describe('Whether the comment is public'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      if (!options.allowApply) return writeNotAllowed();
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
 
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'PUT',
         path: `/tickets/${args.ticket_id}.json`,
         body: { ticket: { comment: { body: args.comment, public: args.public } } },
       });
 
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -478,10 +491,11 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
       status: z.enum(['solved', 'closed']).optional().default('solved'),
       public_comment: z.string().optional().describe('Public comment to customer'),
       internal_note: z.string().optional().describe('Internal note'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      if (!options.allowApply) return writeNotAllowed();
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
 
       const update: Record<string, unknown> = { status: args.status };
       if (args.public_comment) {
@@ -490,16 +504,14 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
         update.comment = { body: args.internal_note, public: false };
       }
 
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'PUT',
         path: `/tickets/${args.ticket_id}.json`,
         body: { ticket: update },
       });
 
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -511,10 +523,11 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
       assignee_email: z.string().optional().describe('Agent email to assign'),
       priority: z.enum(['low', 'normal', 'high', 'urgent']).optional(),
       internal_note: z.string().optional().describe('Internal note explaining escalation'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      if (!options.allowApply) return writeNotAllowed();
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
 
       const update: Record<string, unknown> = {};
       if (args.priority) update.priority = args.priority;
@@ -539,16 +552,14 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
         update.comment = { body: args.internal_note, public: false };
       }
 
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'PUT',
         path: `/tickets/${args.ticket_id}.json`,
         body: { ticket: update },
       });
 
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -558,10 +569,11 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
       ticket_id: z.number().describe('Zendesk ticket ID'),
       macro_id: z.number().optional().describe('Macro ID to apply'),
       macro_title: z.string().optional().describe('Macro title (alternative to macro_id)'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      if (!options.allowApply) return writeNotAllowed();
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
 
       let macroId = args.macro_id;
       if (!macroId && args.macro_title) {
@@ -578,7 +590,7 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
         query: { ticket_id: args.ticket_id },
       });
 
-      const ticketUpdate = (applyResponse.data as any)?.result?.ticket;
+      const ticketUpdate = (applyResponse.data as ZendeskMacroApplyResponse)?.result?.ticket;
       if (ticketUpdate) {
         await zendeskRaw(zendesk, {
           method: 'PUT',
@@ -587,10 +599,11 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
         });
       }
 
-      const payload = { success: true, applied: Boolean(ticketUpdate), macro_id: macroId };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult(
+        { success: true, applied: Boolean(ticketUpdate), macro_id: macroId },
+        args.max_chars as number | undefined,
+      );
+    },
   );
 
   server.tool(
@@ -599,25 +612,27 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
     {
       ticket_id: z.number().describe('Zendesk ticket ID'),
       tags: z.array(z.string()).min(1).describe('Tags to add'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      if (!options.allowApply) return writeNotAllowed();
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
 
-      const ticket = await zendeskRaw(zendesk, { method: 'GET', path: `/tickets/${args.ticket_id}.json` });
-      const existingTags = (ticket.data as any)?.ticket?.tags || [];
+      const ticket = await zendeskRaw(zendesk, {
+        method: 'GET',
+        path: `/tickets/${args.ticket_id}.json`,
+      });
+      const existingTags = (ticket.data as ZendeskTicketResponse)?.ticket?.tags ?? [];
       const tags = mergeTags(existingTags, args.tags, undefined);
 
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'PUT',
         path: `/tickets/${args.ticket_id}.json`,
         body: { ticket: { tags } },
       });
 
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -628,12 +643,13 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
       source_ticket_ids: z.array(z.number()).min(1).describe('Tickets to merge (will be closed)'),
       target_comment: z.string().optional().describe('Comment to add to target ticket'),
       source_comment: z.string().optional().describe('Comment to add to source tickets'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      if (!options.allowApply) return writeNotAllowed();
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
 
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'POST',
         path: `/tickets/${args.target_ticket_id}/merge.json`,
         body: {
@@ -643,27 +659,24 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
         },
       });
 
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
     'zendesk_list_macros',
     'List Zendesk macros.',
     {
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'GET',
         path: '/macros.json',
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -671,34 +684,32 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
     'Get a Zendesk macro by ID.',
     {
       macro_id: z.number().describe('Zendesk macro ID'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'GET',
         path: `/macros/${args.macro_id}.json`,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
     'zendesk_list_groups',
     'List Zendesk groups.',
     {
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'GET',
         path: '/groups.json',
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -706,17 +717,16 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
     'Get a Zendesk group by ID.',
     {
       group_id: z.number().describe('Zendesk group ID'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'GET',
         path: `/groups/${args.group_id}.json`,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -724,43 +734,42 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
     'List Zendesk users (defaults to agents).',
     {
       role: z.string().optional().describe('Zendesk role filter (agent, admin, end-user)'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'GET',
         path: '/users.json',
         query: args.role ? { role: args.role } : undefined,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
     'zendesk_create_user',
     'Create a Zendesk user. Requires --apply or STATESET_ALLOW_APPLY.',
     {
-      user: z.record(z.any()).describe('User payload'),
+      user: z.record(z.unknown()).describe('User payload'),
       skip_verify_email: z.boolean().optional().describe('Skip verification email'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      if (!options.allowApply) return writeNotAllowed();
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
 
       const body: Record<string, unknown> = { user: args.user };
       if (args.skip_verify_email !== undefined) body.skip_verify_email = args.skip_verify_email;
 
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'POST',
         path: '/users.json',
         body,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -768,21 +777,21 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
     'Update a Zendesk user. Requires --apply or STATESET_ALLOW_APPLY.',
     {
       user_id: z.number().describe('Zendesk user ID'),
-      user: z.record(z.any()).describe('User fields to update'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      user: z.record(z.unknown()).describe('User fields to update'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      if (!options.allowApply) return writeNotAllowed();
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
 
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'PUT',
         path: `/users/${args.user_id}.json`,
         body: { user: args.user },
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -791,43 +800,40 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
     {
       page: z.number().min(1).optional().describe('Page number (1-based)'),
       per_page: z.number().min(1).max(100).optional().describe('Results per page'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      const query: Record<string, string | number | boolean> = {};
-      if (args.page !== undefined) query.page = args.page;
-      if (args.per_page !== undefined) query.per_page = args.per_page;
+      const query = buildQuery({ page: args.page, per_page: args.per_page });
 
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'GET',
         path: '/organizations.json',
-        query: Object.keys(query).length > 0 ? query : undefined,
+        query,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
     'zendesk_create_organization',
     'Create a Zendesk organization. Requires --apply or STATESET_ALLOW_APPLY.',
     {
-      organization: z.record(z.any()).describe('Organization payload'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      organization: z.record(z.unknown()).describe('Organization payload'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      if (!options.allowApply) return writeNotAllowed();
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
 
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'POST',
         path: '/organizations.json',
         body: { organization: args.organization },
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -835,21 +841,21 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
     'Update a Zendesk organization. Requires --apply or STATESET_ALLOW_APPLY.',
     {
       organization_id: z.number().describe('Zendesk organization ID'),
-      organization: z.record(z.any()).describe('Organization fields to update'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      organization: z.record(z.unknown()).describe('Organization fields to update'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      if (!options.allowApply) return writeNotAllowed();
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
 
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'PUT',
         path: `/organizations/${args.organization_id}.json`,
         body: { organization: args.organization },
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -857,17 +863,16 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
     'Get a Zendesk organization by ID.',
     {
       organization_id: z.number().describe('Zendesk organization ID'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'GET',
         path: `/organizations/${args.organization_id}.json`,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -876,43 +881,40 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
     {
       page: z.number().min(1).optional().describe('Page number (1-based)'),
       per_page: z.number().min(1).max(100).optional().describe('Results per page'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      const query: Record<string, string | number | boolean> = {};
-      if (args.page !== undefined) query.page = args.page;
-      if (args.per_page !== undefined) query.per_page = args.per_page;
+      const query = buildQuery({ page: args.page, per_page: args.per_page });
 
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'GET',
         path: '/ticket_fields.json',
-        query: Object.keys(query).length > 0 ? query : undefined,
+        query,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
     'zendesk_create_ticket_field',
     'Create a Zendesk ticket field. Requires --apply or STATESET_ALLOW_APPLY.',
     {
-      ticket_field: z.record(z.any()).describe('Ticket field payload'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      ticket_field: z.record(z.unknown()).describe('Ticket field payload'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      if (!options.allowApply) return writeNotAllowed();
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
 
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'POST',
         path: '/ticket_fields.json',
         body: { ticket_field: args.ticket_field },
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -920,21 +922,21 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
     'Update a Zendesk ticket field. Requires --apply or STATESET_ALLOW_APPLY.',
     {
       ticket_field_id: z.number().describe('Zendesk ticket field ID'),
-      ticket_field: z.record(z.any()).describe('Ticket field fields to update'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      ticket_field: z.record(z.unknown()).describe('Ticket field fields to update'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      if (!options.allowApply) return writeNotAllowed();
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
 
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'PUT',
         path: `/ticket_fields/${args.ticket_field_id}.json`,
         body: { ticket_field: args.ticket_field },
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -942,19 +944,19 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
     'Delete a Zendesk ticket field. Requires --apply or STATESET_ALLOW_APPLY.',
     {
       ticket_field_id: z.number().describe('Zendesk ticket field ID'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      if (!options.allowApply) return writeNotAllowed();
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
 
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'DELETE',
         path: `/ticket_fields/${args.ticket_field_id}.json`,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -962,17 +964,16 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
     'Get a Zendesk ticket field by ID.',
     {
       ticket_field_id: z.number().describe('Zendesk ticket field ID'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'GET',
         path: `/ticket_fields/${args.ticket_field_id}.json`,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -981,43 +982,40 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
     {
       page: z.number().min(1).optional().describe('Page number (1-based)'),
       per_page: z.number().min(1).max(100).optional().describe('Results per page'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      const query: Record<string, string | number | boolean> = {};
-      if (args.page !== undefined) query.page = args.page;
-      if (args.per_page !== undefined) query.per_page = args.per_page;
+      const query = buildQuery({ page: args.page, per_page: args.per_page });
 
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'GET',
         path: '/ticket_forms.json',
-        query: Object.keys(query).length > 0 ? query : undefined,
+        query,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
     'zendesk_create_ticket_form',
     'Create a Zendesk ticket form. Requires --apply or STATESET_ALLOW_APPLY.',
     {
-      ticket_form: z.record(z.any()).describe('Ticket form payload'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      ticket_form: z.record(z.unknown()).describe('Ticket form payload'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      if (!options.allowApply) return writeNotAllowed();
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
 
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'POST',
         path: '/ticket_forms.json',
         body: { ticket_form: args.ticket_form },
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -1025,21 +1023,21 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
     'Update a Zendesk ticket form. Requires --apply or STATESET_ALLOW_APPLY.',
     {
       ticket_form_id: z.number().describe('Zendesk ticket form ID'),
-      ticket_form: z.record(z.any()).describe('Ticket form fields to update'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      ticket_form: z.record(z.unknown()).describe('Ticket form fields to update'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      if (!options.allowApply) return writeNotAllowed();
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
 
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'PUT',
         path: `/ticket_forms/${args.ticket_form_id}.json`,
         body: { ticket_form: args.ticket_form },
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -1047,19 +1045,19 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
     'Delete a Zendesk ticket form. Requires --apply or STATESET_ALLOW_APPLY.',
     {
       ticket_form_id: z.number().describe('Zendesk ticket form ID'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      if (!options.allowApply) return writeNotAllowed();
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
 
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'DELETE',
         path: `/ticket_forms/${args.ticket_form_id}.json`,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -1067,17 +1065,16 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
     'Get a Zendesk ticket form by ID.',
     {
       ticket_form_id: z.number().describe('Zendesk ticket form ID'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'GET',
         path: `/ticket_forms/${args.ticket_form_id}.json`,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -1086,22 +1083,19 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
     {
       page: z.number().min(1).optional().describe('Page number (1-based)'),
       per_page: z.number().min(1).max(100).optional().describe('Results per page'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      const query: Record<string, string | number | boolean> = {};
-      if (args.page !== undefined) query.page = args.page;
-      if (args.per_page !== undefined) query.per_page = args.per_page;
+      const query = buildQuery({ page: args.page, per_page: args.per_page });
 
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'GET',
         path: '/views.json',
-        query: Object.keys(query).length > 0 ? query : undefined,
+        query,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -1109,17 +1103,16 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
     'Get a Zendesk view by ID.',
     {
       view_id: z.number().describe('Zendesk view ID'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'GET',
         path: `/views/${args.view_id}.json`,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -1128,22 +1121,19 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
     {
       page: z.number().min(1).optional().describe('Page number (1-based)'),
       per_page: z.number().min(1).max(100).optional().describe('Results per page'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      const query: Record<string, string | number | boolean> = {};
-      if (args.page !== undefined) query.page = args.page;
-      if (args.per_page !== undefined) query.per_page = args.per_page;
+      const query = buildQuery({ page: args.page, per_page: args.per_page });
 
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'GET',
         path: '/triggers.json',
-        query: Object.keys(query).length > 0 ? query : undefined,
+        query,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -1151,17 +1141,16 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
     'Get a Zendesk trigger by ID.',
     {
       trigger_id: z.number().describe('Zendesk trigger ID'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'GET',
         path: `/triggers/${args.trigger_id}.json`,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -1170,22 +1159,19 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
     {
       page: z.number().min(1).optional().describe('Page number (1-based)'),
       per_page: z.number().min(1).max(100).optional().describe('Results per page'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      const query: Record<string, string | number | boolean> = {};
-      if (args.page !== undefined) query.page = args.page;
-      if (args.per_page !== undefined) query.per_page = args.per_page;
+      const query = buildQuery({ page: args.page, per_page: args.per_page });
 
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'GET',
         path: '/automations.json',
-        query: Object.keys(query).length > 0 ? query : undefined,
+        query,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -1193,17 +1179,16 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
     'Get a Zendesk automation by ID.',
     {
       automation_id: z.number().describe('Zendesk automation ID'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'GET',
         path: `/automations/${args.automation_id}.json`,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -1212,22 +1197,19 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
     {
       page: z.number().min(1).optional().describe('Page number (1-based)'),
       per_page: z.number().min(1).max(100).optional().describe('Results per page'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      const query: Record<string, string | number | boolean> = {};
-      if (args.page !== undefined) query.page = args.page;
-      if (args.per_page !== undefined) query.per_page = args.per_page;
+      const query = buildQuery({ page: args.page, per_page: args.per_page });
 
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'GET',
         path: '/slas/policies.json',
-        query: Object.keys(query).length > 0 ? query : undefined,
+        query,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -1235,17 +1217,16 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
     'Get a Zendesk SLA policy by ID.',
     {
       sla_policy_id: z.number().describe('Zendesk SLA policy ID'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'GET',
         path: `/slas/policies/${args.sla_policy_id}.json`,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -1253,17 +1234,16 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
     'Get a Zendesk user by ID.',
     {
       user_id: z.number().describe('Zendesk user ID'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'GET',
         path: `/users/${args.user_id}.json`,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -1276,10 +1256,11 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
       tags_to_add: z.array(z.string()).optional(),
       tags_to_remove: z.array(z.string()).optional(),
       internal_note: z.string().optional(),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      if (!options.allowApply) return writeNotAllowed();
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
 
       const update: Record<string, unknown> = {};
       if (args.status) update.status = args.status;
@@ -1292,8 +1273,11 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
 
         for (const ticketId of args.ticket_ids) {
           try {
-            const ticket = await zendeskRaw(zendesk, { method: 'GET', path: `/tickets/${ticketId}.json` });
-            const existingTags = (ticket.data as any)?.ticket?.tags || [];
+            const ticket = await zendeskRaw(zendesk, {
+              method: 'GET',
+              path: `/tickets/${ticketId}.json`,
+            });
+            const existingTags = (ticket.data as ZendeskTicketResponse)?.ticket?.tags ?? [];
             const tags = mergeTags(existingTags, args.tags_to_add, args.tags_to_remove);
             await zendeskRaw(zendesk, {
               method: 'PUT',
@@ -1302,60 +1286,42 @@ export function registerZendeskTools(server: McpServer, zendesk: ZendeskConfig, 
             });
             results.push({ ticket_id: ticketId, success: true });
           } catch (error) {
-            errors.push({ ticket_id: ticketId, error: error instanceof Error ? error.message : String(error) });
+            errors.push({
+              ticket_id: ticketId,
+              error: error instanceof Error ? error.message : String(error),
+            });
           }
         }
 
-        const payload = {
-          success: errors.length === 0,
-          total_requested: args.ticket_ids.length,
-          updated: results.length,
-          failed: errors.length,
-          errors: errors.length > 0 ? errors : undefined,
-        };
-        const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-        return { content: [{ type: 'text' as const, text }] };
+        return wrapToolResult(
+          {
+            success: errors.length === 0,
+            total_requested: args.ticket_ids.length,
+            updated: results.length,
+            failed: errors.length,
+            errors: errors.length > 0 ? errors : undefined,
+          },
+          args.max_chars as number | undefined,
+        );
       }
 
-      const result = await runZendeskRequest(zendesk, options, {
+      const result = await runRequest(zendesk, options, {
         method: 'PUT',
         path: `/tickets/update_many.json`,
         query: { ids: args.ticket_ids.join(',') },
         body: { ticket: update },
       });
 
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
-  server.tool(
+  registerRawRequestTool(
+    server,
     'zendesk_request',
-    'Execute a raw Zendesk API request. Non-GET methods require --apply or STATESET_ALLOW_APPLY.',
-    {
-      method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH']).describe('HTTP method'),
-      endpoint: z.string().describe('API endpoint path (e.g., /tickets/123.json)'),
-      query: z.record(z.union([z.string(), z.number(), z.boolean()])).optional().describe('Optional query params'),
-      body: z.record(z.any()).optional().describe('Optional JSON body'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
-    },
-    async (args) => {
-      const method = String(args.method || '').toUpperCase();
-      if (method !== 'GET' && !options.allowApply) {
-        return writeNotAllowed();
-      }
-
-      const result = await runZendeskRequest(zendesk, options, {
-        method,
-        path: args.endpoint as string,
-        query: args.query as Record<string, string | number | boolean> | undefined,
-        body: args.body as Record<string, unknown> | undefined,
-      });
-
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+    'Execute a raw Zendesk API request.',
+    runRequest,
+    zendesk,
+    options,
   );
 }

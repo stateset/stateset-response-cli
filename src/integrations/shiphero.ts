@@ -1,5 +1,6 @@
-import { requestJsonWithRetry } from './http.js';
+import { requestJsonWithRetry, throwOnHttpError } from './http.js';
 import type { ShipHeroConfig } from './config.js';
+import { ValidationError, ServiceUnavailableError } from '../lib/errors.js';
 
 const BASE_URL = 'https://public-api.shiphero.com/graphql';
 
@@ -9,18 +10,20 @@ export interface ShipHeroGraphqlOptions {
   variables?: Record<string, unknown> | null;
 }
 
-export async function shipheroGraphql(options: ShipHeroGraphqlOptions): Promise<{ status: number; data: unknown }> {
+export async function shipheroGraphql(
+  options: ShipHeroGraphqlOptions,
+): Promise<{ status: number; data: unknown }> {
   const query = String(options.query || '').trim();
   if (!query) {
-    throw new Error('GraphQL query is required');
+    throw new ValidationError('GraphQL query is required');
   }
 
   const { status, data } = await requestJsonWithRetry(BASE_URL, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${options.shiphero.accessToken}`,
+      Authorization: `Bearer ${options.shiphero.accessToken}`,
       'Content-Type': 'application/json',
-      'Accept': 'application/json',
+      Accept: 'application/json',
     },
     body: JSON.stringify({
       query,
@@ -29,20 +32,18 @@ export async function shipheroGraphql(options: ShipHeroGraphqlOptions): Promise<
     timeoutMs: 30_000,
   });
 
-  if (status >= 400) {
-    const msg = typeof data === 'string' ? data : JSON.stringify(data);
-    throw new Error(`ShipHero API error (${status}): ${msg}`);
-  }
+  throwOnHttpError(status, data, 'ShipHero');
 
   if (data && typeof data === 'object' && 'errors' in (data as Record<string, unknown>)) {
     const errors = (data as { errors?: Array<{ message?: string }> }).errors;
     const msg = errors?.[0]?.message || 'Unknown ShipHero GraphQL error';
-    throw new Error(`ShipHero GraphQL error: ${msg}`);
+    throw new ServiceUnavailableError(`ShipHero GraphQL error: ${msg}`);
   }
 
-  const payload = data && typeof data === 'object' && 'data' in (data as Record<string, unknown>)
-    ? (data as { data?: unknown }).data
-    : data;
+  const payload =
+    data && typeof data === 'object' && 'data' in (data as Record<string, unknown>)
+      ? (data as { data?: unknown }).data
+      : data;
 
   return { status, data: payload };
 }

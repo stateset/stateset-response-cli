@@ -40,10 +40,9 @@ function getMachineId(): string {
       }
     } else if (platform === 'darwin') {
       try {
-        const output = execSync(
-          'ioreg -rd1 -c IOPlatformExpertDevice | grep IOPlatformUUID',
-          { encoding: 'utf8' }
-        );
+        const output = execSync('ioreg -rd1 -c IOPlatformExpertDevice | grep IOPlatformUUID', {
+          encoding: 'utf8',
+        });
         const match = output.match(/"IOPlatformUUID"\s*=\s*"([^"]+)"/);
         if (match) return match[1];
       } catch {
@@ -52,7 +51,7 @@ function getMachineId(): string {
     } else if (platform === 'win32') {
       try {
         const output = execSync('wmic csproduct get uuid', { encoding: 'utf8' });
-        const lines = output.split('\n').filter(line => line.trim() && !line.includes('UUID'));
+        const lines = output.split('\n').filter((line) => line.trim() && !line.includes('UUID'));
         if (lines.length > 0) return lines[0].trim();
       } catch {
         // Continue to fallback
@@ -101,10 +100,7 @@ export function encryptSecret(plaintext: string): string {
   const iv = crypto.randomBytes(IV_LENGTH);
 
   const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
-  const encrypted = Buffer.concat([
-    cipher.update(plaintext, 'utf8'),
-    cipher.final(),
-  ]);
+  const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
   const authTag = cipher.getAuthTag();
 
   // Combine: IV (16) + authTag (16) + ciphertext
@@ -142,10 +138,7 @@ export function decryptSecret(ciphertext: string): string {
     const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
     decipher.setAuthTag(authTag);
 
-    const decrypted = Buffer.concat([
-      decipher.update(encrypted),
-      decipher.final(),
-    ]);
+    const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]);
 
     return decrypted.toString('utf8');
   } catch (error) {
@@ -153,8 +146,8 @@ export function decryptSecret(ciphertext: string): string {
     const message = error instanceof Error ? error.message : 'Unknown error';
     throw new Error(
       `Failed to decrypt secret: ${message}. ` +
-      'This may happen if the config was created on a different machine. ' +
-      'Please run `response auth login` to re-authenticate.'
+        'This may happen if the config was created on a different machine. ' +
+        'Please run `response auth login` to re-authenticate.',
     );
   }
 }
@@ -164,7 +157,7 @@ export function decryptSecret(ciphertext: string): string {
  */
 export function encryptConfigSecrets<T extends Record<string, unknown>>(
   config: T,
-  secretKeys: string[]
+  secretKeys: string[],
 ): T {
   const result = { ...config };
 
@@ -182,7 +175,7 @@ export function encryptConfigSecrets<T extends Record<string, unknown>>(
  */
 export function decryptConfigSecrets<T extends Record<string, unknown>>(
   config: T,
-  secretKeys: string[]
+  secretKeys: string[],
 ): T {
   const result = { ...config };
 
@@ -198,11 +191,7 @@ export function decryptConfigSecrets<T extends Record<string, unknown>>(
 /**
  * List of config keys that should be encrypted
  */
-export const SECRET_KEYS = [
-  'cliToken',
-  'adminSecret',
-  'anthropicApiKey',
-];
+export const SECRET_KEYS = ['cliToken', 'adminSecret', 'anthropicApiKey'];
 
 /**
  * Redact a secret for display (show first/last few chars)

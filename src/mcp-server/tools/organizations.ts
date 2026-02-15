@@ -8,7 +8,6 @@ const ORG_FIELDS = `
 `;
 
 export function registerOrganizationTools(server: McpServer, client: GraphQLClient, orgId: string) {
-
   server.tool(
     'get_organization',
     'Get the current organization profile and metadata',
@@ -19,12 +18,19 @@ export function registerOrganizationTools(server: McpServer, client: GraphQLClie
           ${ORG_FIELDS}
         }
       }`;
-      const data = await executeQuery<{ organizations: unknown[] }>(client, query, { org_id: orgId });
+      const data = await executeQuery<{ organizations: unknown[] }>(client, query, {
+        org_id: orgId,
+      });
       if (!data.organizations.length) {
-        return { content: [{ type: 'text' as const, text: 'Organization not found' }], isError: true };
+        return {
+          content: [{ type: 'text' as const, text: 'Organization not found' }],
+          isError: true,
+        };
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.organizations[0], null, 2) }] };
-    }
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(data.organizations[0], null, 2) }],
+      };
+    },
   );
 
   server.tool(
@@ -67,11 +73,14 @@ export function registerOrganizationTools(server: McpServer, client: GraphQLClie
 
       const orgs = data.organizations as unknown[];
       if (!orgs?.length) {
-        return { content: [{ type: 'text' as const, text: 'Organization not found' }], isError: true };
+        return {
+          content: [{ type: 'text' as const, text: 'Organization not found' }],
+          isError: true,
+        };
       }
 
       const agg = (key: string) =>
-        ((data[key] as { aggregate?: { count?: number } })?.aggregate?.count) ?? 0;
+        (data[key] as { aggregate?: { count?: number } })?.aggregate?.count ?? 0;
 
       const overview = {
         organization: orgs[0],
@@ -87,7 +96,7 @@ export function registerOrganizationTools(server: McpServer, client: GraphQLClie
       };
 
       return { content: [{ type: 'text' as const, text: JSON.stringify(overview, null, 2) }] };
-    }
+    },
   );
 
   server.tool(
@@ -116,13 +125,23 @@ export function registerOrganizationTools(server: McpServer, client: GraphQLClie
           returning { ${ORG_FIELDS} }
         }
       }`;
-      const data = await executeQuery<{ update_organizations: { affected_rows: number; returning: unknown[] } }>(
-        client, mutation, { org_id: orgId, set: setFields }
-      );
+      const data = await executeQuery<{
+        update_organizations: { affected_rows: number; returning: unknown[] };
+      }>(client, mutation, { org_id: orgId, set: setFields });
       if (!data.update_organizations.returning.length) {
-        return { content: [{ type: 'text' as const, text: 'Organization not found' }], isError: true };
+        return {
+          content: [{ type: 'text' as const, text: 'Organization not found' }],
+          isError: true,
+        };
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.update_organizations.returning[0], null, 2) }] };
-    }
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(data.update_organizations.returning[0], null, 2),
+          },
+        ],
+      };
+    },
   );
 }

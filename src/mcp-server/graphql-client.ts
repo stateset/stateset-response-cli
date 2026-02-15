@@ -12,19 +12,25 @@ const DEFAULT_TIMEOUT_MS = 30000; // 30 seconds
 function isTransientError(error: unknown): boolean {
   if (error instanceof TypeError) return true; // network failures
   const gqlError = error as { response?: { status?: number }; code?: string };
-  if (gqlError?.response?.status && RETRYABLE_STATUS_CODES.has(gqlError.response.status)) return true;
-  if (gqlError?.code === 'ECONNRESET' || gqlError?.code === 'ECONNREFUSED' || gqlError?.code === 'ETIMEDOUT') return true;
+  if (gqlError?.response?.status && RETRYABLE_STATUS_CODES.has(gqlError.response.status))
+    return true;
+  if (
+    gqlError?.code === 'ECONNRESET' ||
+    gqlError?.code === 'ECONNREFUSED' ||
+    gqlError?.code === 'ETIMEDOUT'
+  )
+    return true;
   return false;
 }
 
 function delay(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export function createGraphQLClient(
   endpoint: string,
   auth: GraphQLAuth,
-  orgId?: string
+  orgId?: string,
 ): GraphQLClient {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -52,7 +58,7 @@ export async function executeQuery<T = Record<string, unknown>>(
   client: GraphQLClient,
   query: string,
   variables?: Record<string, unknown>,
-  options?: ExecuteQueryOptions
+  options?: ExecuteQueryOptions,
 ): Promise<T> {
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   let lastError: unknown;
@@ -92,7 +98,11 @@ export async function executeQuery<T = Record<string, unknown>>(
     }
   }
 
-  const gqlError = lastError as { response?: { errors?: Array<{ message: string }> }; message?: string };
-  const message = gqlError?.response?.errors?.[0]?.message || gqlError?.message || 'Unknown GraphQL error';
+  const gqlError = lastError as {
+    response?: { errors?: Array<{ message: string }> };
+    message?: string;
+  };
+  const message =
+    gqlError?.response?.errors?.[0]?.message || gqlError?.message || 'Unknown GraphQL error';
   throw new Error(message);
 }

@@ -3,12 +3,12 @@ import { z } from 'zod';
 import type { ShipHeroConfig } from '../../integrations/config.js';
 import { shipheroGraphql } from '../../integrations/shiphero.js';
 import { redactPii } from '../../integrations/redact.js';
-import { stringifyToolResult } from './output.js';
-
-export interface ShipHeroToolOptions {
-  allowApply: boolean;
-  redact: boolean;
-}
+import {
+  type IntegrationToolOptions,
+  guardWrite,
+  wrapToolResult,
+  MaxCharsSchema,
+} from './helpers.js';
 
 const LIST_ORDERS_QUERY = `
   query listOrders($shop_name: String, $order_status: String, $warehouse_id: String, $sku: String, $created_from: ISODateTime, $created_to: ISODateTime, $first: Int) {
@@ -173,42 +173,46 @@ const ROUTE_ORDER_MUTATION = `
   }
 `;
 
-function writeNotAllowed() {
-  return {
-    content: [{
-      type: 'text' as const,
-      text: JSON.stringify({
-        error: 'Write operation not allowed. The --apply flag or STATESET_ALLOW_APPLY must be set.',
-        hint: 'Use list/get operations when writes are disabled.',
-      }, null, 2),
-    }],
-  };
-}
-
 async function runShipHeroGraphql(
   shiphero: ShipHeroConfig,
-  options: ShipHeroToolOptions,
+  options: IntegrationToolOptions,
   query: string,
-  variables?: Record<string, unknown> | null
+  variables?: Record<string, unknown> | null,
 ) {
   const response = await shipheroGraphql({ shiphero, query, variables: variables || {} });
   const data = options.redact ? redactPii(response.data) : response.data;
   return { status: response.status, data };
 }
 
-export function registerShipHeroTools(server: McpServer, shiphero: ShipHeroConfig, options: ShipHeroToolOptions) {
+export function registerShipHeroTools(
+  server: McpServer,
+  shiphero: ShipHeroConfig,
+  options: IntegrationToolOptions,
+) {
   server.tool(
     'shiphero_list_orders',
     'List ShipHero orders with filters.',
     {
-      order_status: z.enum(['pending', 'processing', 'allocated', 'picked', 'packed', 'shipped', 'cancelled', 'on_hold', 'backorder']).optional(),
+      order_status: z
+        .enum([
+          'pending',
+          'processing',
+          'allocated',
+          'picked',
+          'packed',
+          'shipped',
+          'cancelled',
+          'on_hold',
+          'backorder',
+        ])
+        .optional(),
       shop_name: z.string().optional().describe('Filter by shop name'),
       warehouse_id: z.string().optional().describe('Filter by warehouse ID'),
       sku: z.string().optional().describe('Filter by SKU'),
       created_after: z.string().optional().describe('Orders created after (ISO date)'),
       created_before: z.string().optional().describe('Orders created before (ISO date)'),
       limit: z.number().min(1).max(100).optional().describe('Max orders to return'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
       const result = await runShipHeroGraphql(shiphero, options, LIST_ORDERS_QUERY, {
@@ -220,10 +224,8 @@ export function registerShipHeroTools(server: McpServer, shiphero: ShipHeroConfi
         created_to: args.created_before,
         first: args.limit || 50,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -231,14 +233,14 @@ export function registerShipHeroTools(server: McpServer, shiphero: ShipHeroConfi
     'Get a ShipHero order by ID.',
     {
       order_id: z.string().describe('ShipHero order ID'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      const result = await runShipHeroGraphql(shiphero, options, GET_ORDER_QUERY, { id: args.order_id });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      const result = await runShipHeroGraphql(shiphero, options, GET_ORDER_QUERY, {
+        id: args.order_id,
+      });
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -249,10 +251,11 @@ export function registerShipHeroTools(server: McpServer, shiphero: ShipHeroConfi
       priority: z.enum(['normal', 'high', 'urgent']).optional(),
       on_hold: z.boolean().optional().describe('Put order on hold or release'),
       notes: z.string().optional().describe('Internal notes'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      if (!options.allowApply) return writeNotAllowed();
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
 
       const result = await runShipHeroGraphql(shiphero, options, UPDATE_ORDER_MUTATION, {
         id: args.order_id,
@@ -260,10 +263,8 @@ export function registerShipHeroTools(server: McpServer, shiphero: ShipHeroConfi
         on_hold: args.on_hold,
         notes: args.notes,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -273,20 +274,19 @@ export function registerShipHeroTools(server: McpServer, shiphero: ShipHeroConfi
       order_id: z.string().describe('ShipHero order ID'),
       carrier: z.string().describe('Carrier name (e.g., usps, ups)'),
       service: z.string().describe('Service level'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      if (!options.allowApply) return writeNotAllowed();
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
 
       const result = await runShipHeroGraphql(shiphero, options, CREATE_SHIPMENT_MUTATION, {
         order_id: args.order_id,
         carrier: args.carrier,
         service: args.service,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -295,17 +295,15 @@ export function registerShipHeroTools(server: McpServer, shiphero: ShipHeroConfi
     {
       sku: z.string().describe('Product SKU'),
       warehouse_id: z.string().optional().describe('Filter by warehouse ID'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
       const result = await runShipHeroGraphql(shiphero, options, GET_INVENTORY_QUERY, {
         sku: args.sku,
         warehouse_id: args.warehouse_id,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -315,11 +313,14 @@ export function registerShipHeroTools(server: McpServer, shiphero: ShipHeroConfi
       sku: z.string().describe('Product SKU'),
       warehouse_id: z.string().describe('Warehouse ID'),
       adjustment: z.number().describe('Quantity to add (positive) or remove (negative)'),
-      reason: z.enum(['received', 'cycle_count', 'damaged', 'lost', 'returned', 'transferred', 'other']).describe('Adjustment reason'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      reason: z
+        .enum(['received', 'cycle_count', 'damaged', 'lost', 'returned', 'transferred', 'other'])
+        .describe('Adjustment reason'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      if (!options.allowApply) return writeNotAllowed();
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
 
       const result = await runShipHeroGraphql(shiphero, options, ADJUST_INVENTORY_MUTATION, {
         sku: args.sku,
@@ -327,24 +328,20 @@ export function registerShipHeroTools(server: McpServer, shiphero: ShipHeroConfi
         quantity: Math.round(args.adjustment),
         reason: args.reason,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
     'shiphero_list_warehouses',
     'List ShipHero warehouses.',
     {
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
       const result = await runShipHeroGraphql(shiphero, options, LIST_WAREHOUSES_QUERY);
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -353,19 +350,18 @@ export function registerShipHeroTools(server: McpServer, shiphero: ShipHeroConfi
     {
       order_id: z.string().describe('ShipHero order ID'),
       warehouse_id: z.string().describe('Target warehouse ID'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      if (!options.allowApply) return writeNotAllowed();
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
 
       const result = await runShipHeroGraphql(shiphero, options, ROUTE_ORDER_MUTATION, {
         order_id: args.order_id,
         warehouse_id: args.warehouse_id,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -375,10 +371,11 @@ export function registerShipHeroTools(server: McpServer, shiphero: ShipHeroConfi
       order_ids: z.array(z.string()).min(1).describe('Order IDs'),
       carrier: z.string().describe('Carrier for all shipments'),
       service: z.string().describe('Service level for all shipments'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      if (!options.allowApply) return writeNotAllowed();
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
 
       const results: Array<{ order_id: string; success: boolean }> = [];
       const errors: Array<{ order_id: string; error: string }> = [];
@@ -392,20 +389,24 @@ export function registerShipHeroTools(server: McpServer, shiphero: ShipHeroConfi
           });
           results.push({ order_id: orderId, success: true });
         } catch (error) {
-          errors.push({ order_id: orderId, error: error instanceof Error ? error.message : String(error) });
+          errors.push({
+            order_id: orderId,
+            error: error instanceof Error ? error.message : String(error),
+          });
         }
       }
 
-      const payload = {
-        success: errors.length === 0,
-        total_requested: args.order_ids.length,
-        shipped: results.length,
-        failed: errors.length,
-        errors: errors.length > 0 ? errors : undefined,
-      };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult(
+        {
+          success: errors.length === 0,
+          total_requested: args.order_ids.length,
+          shipped: results.length,
+          failed: errors.length,
+          errors: errors.length > 0 ? errors : undefined,
+        },
+        args.max_chars as number | undefined,
+      );
+    },
   );
 
   server.tool(
@@ -413,19 +414,23 @@ export function registerShipHeroTools(server: McpServer, shiphero: ShipHeroConfi
     'Execute a raw ShipHero GraphQL query. Requires --apply or STATESET_ALLOW_APPLY for mutations.',
     {
       query: z.string().describe('GraphQL query or mutation'),
-      variables: z.record(z.any()).optional().describe('GraphQL variables'),
+      variables: z.record(z.unknown()).optional().describe('GraphQL variables'),
       is_mutation: z.boolean().optional().default(false).describe('Set true if running a mutation'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      if (args.is_mutation && !options.allowApply) {
-        return writeNotAllowed();
+      if (args.is_mutation) {
+        const blocked = guardWrite(options);
+        if (blocked) return blocked;
       }
 
-      const result = await runShipHeroGraphql(shiphero, options, args.query as string, args.variables as Record<string, unknown> | undefined);
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      const result = await runShipHeroGraphql(
+        shiphero,
+        options,
+        args.query as string,
+        args.variables as Record<string, unknown> | undefined,
+      );
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 }

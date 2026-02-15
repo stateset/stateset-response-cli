@@ -1,9 +1,25 @@
 import { BASE_SYSTEM_PROMPT } from './agent.js';
 import { getCurrentOrg } from './config.js';
-import { getIntegrationFlagsFromEnv, getGorgiasConfigFromEnv, getKlaviyoConfigFromEnv, getLoopConfigFromEnv, getRechargeConfigFromEnv, getShipFusionConfigFromEnv, getShipHawkConfigFromEnv, getShipHeroConfigFromEnv, getShipStationConfigFromEnv, getShopifyConfigFromEnv, getZendeskConfigFromEnv } from './integrations/config.js';
+import {
+  getIntegrationFlagsFromEnv,
+  getGorgiasConfigFromEnv,
+  getKlaviyoConfigFromEnv,
+  getLoopConfigFromEnv,
+  getRechargeConfigFromEnv,
+  getShipFusionConfigFromEnv,
+  getShipHawkConfigFromEnv,
+  getShipHeroConfigFromEnv,
+  getShipStationConfigFromEnv,
+  getShopifyConfigFromEnv,
+  getZendeskConfigFromEnv,
+} from './integrations/config.js';
 import { getStateSetDir } from './session.js';
 import { getSkill, loadContextFiles, loadSystemPromptFiles } from './resources.js';
 
+/**
+ * Inputs for system prompt assembly: session identity, optional persistent
+ * memory, working directory for context files, and active skill names.
+ */
 export interface PromptContext {
   sessionId: string;
   memory?: string;
@@ -15,6 +31,10 @@ function getTimezone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 }
 
+/**
+ * Assembles the full system prompt from the base prompt (or override file),
+ * session metadata, integration status, events info, context files, active skills, and memory.
+ */
 export function buildSystemPrompt(context: PromptContext): string {
   const cwd = context.cwd || process.cwd();
   const { override, append } = loadSystemPromptFiles(cwd);
@@ -28,7 +48,9 @@ export function buildSystemPrompt(context: PromptContext): string {
     // ignore if not configured
   }
 
-  sections.push(`## Session\n- Org: ${orgId}\n- Session: ${context.sessionId}\n- Timezone: ${getTimezone()}`);
+  sections.push(
+    `## Session\n- Org: ${orgId}\n- Session: ${context.sessionId}\n- Timezone: ${getTimezone()}`,
+  );
 
   const integrationFlags = getIntegrationFlagsFromEnv();
   let shopifyConfigured = false;
@@ -103,12 +125,12 @@ export function buildSystemPrompt(context: PromptContext): string {
   }
 
   sections.push(
-    `## Integrations\n- Shopify: ${shopifyConfigured ? 'configured' : 'not configured'}\n- Gorgias: ${gorgiasConfigured ? 'configured' : 'not configured'}\n- Recharge: ${rechargeConfigured ? 'configured' : 'not configured'}\n- Klaviyo: ${klaviyoConfigured ? 'configured' : 'not configured'}\n- Loop Returns: ${loopConfigured ? 'configured' : 'not configured'}\n- ShipStation: ${shipstationConfigured ? 'configured' : 'not configured'}\n- ShipHero: ${shipheroConfigured ? 'configured' : 'not configured'}\n- ShipFusion: ${shipfusionConfigured ? 'configured' : 'not configured'}\n- ShipHawk: ${shiphawkConfigured ? 'configured' : 'not configured'}\n- Zendesk: ${zendeskConfigured ? 'configured' : 'not configured'}\n- Writes enabled: ${integrationFlags.allowApply ? 'yes' : 'no'}\n- Redaction: ${integrationFlags.redact ? 'enabled' : 'disabled'}`
+    `## Integrations\n- Shopify: ${shopifyConfigured ? 'configured' : 'not configured'}\n- Gorgias: ${gorgiasConfigured ? 'configured' : 'not configured'}\n- Recharge: ${rechargeConfigured ? 'configured' : 'not configured'}\n- Klaviyo: ${klaviyoConfigured ? 'configured' : 'not configured'}\n- Loop Returns: ${loopConfigured ? 'configured' : 'not configured'}\n- ShipStation: ${shipstationConfigured ? 'configured' : 'not configured'}\n- ShipHero: ${shipheroConfigured ? 'configured' : 'not configured'}\n- ShipFusion: ${shipfusionConfigured ? 'configured' : 'not configured'}\n- ShipHawk: ${shiphawkConfigured ? 'configured' : 'not configured'}\n- Zendesk: ${zendeskConfigured ? 'configured' : 'not configured'}\n- Writes enabled: ${integrationFlags.allowApply ? 'yes' : 'no'}\n- Redaction: ${integrationFlags.redact ? 'enabled' : 'disabled'}`,
   );
 
   const eventsDir = `${getStateSetDir()}/events`;
   sections.push(
-    `## Events\nYou can schedule background runs by creating JSON files in ${eventsDir}. Supported types: immediate, one-shot, periodic.`
+    `## Events\nYou can schedule background runs by creating JSON files in ${eventsDir}. Supported types: immediate, one-shot, periodic.`,
   );
 
   const contextFiles = loadContextFiles(cwd);

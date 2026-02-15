@@ -12,6 +12,7 @@ import {
   resolveModel,
   getConfiguredModel,
 } from '../config.js';
+import { logger } from '../lib/logger.js';
 
 export interface OrchestratorOptions {
   model?: string;
@@ -23,6 +24,7 @@ export interface OrchestratorOptions {
   whatsappEnabled?: boolean;
   whatsappAllowList?: string[];
   whatsappAllowGroups?: boolean;
+  whatsappSelfChatOnly?: boolean;
   whatsappAuthDir?: string;
 }
 
@@ -34,6 +36,7 @@ interface ChannelGateway {
 export class Orchestrator {
   private gateways: ChannelGateway[] = [];
   private options: OrchestratorOptions;
+  private readonly log = logger.child('orchestrator');
 
   constructor(options: OrchestratorOptions = {}) {
     this.options = options;
@@ -55,10 +58,11 @@ export class Orchestrator {
     }
 
     const model = this.options.model
-      ? resolveModel(this.options.model) ?? getConfiguredModel()
+      ? (resolveModel(this.options.model) ?? getConfiguredModel())
       : getConfiguredModel();
 
-    const results: Array<{ name: string; status: 'ok' | 'skipped' | 'error'; reason?: string }> = [];
+    const results: Array<{ name: string; status: 'ok' | 'skipped' | 'error'; reason?: string }> =
+      [];
 
     // Start Slack gateway
     if (this.options.slackEnabled !== false) {
@@ -73,7 +77,7 @@ export class Orchestrator {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         results.push({ name: 'Slack', status: 'error', reason: msg });
-        this.log(`Slack failed to start: ${msg}`);
+        this.log.error(`Slack failed to start: ${msg}`);
       }
     } else {
       results.push({ name: 'Slack', status: 'skipped', reason: 'disabled' });
@@ -92,13 +96,13 @@ export class Orchestrator {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         results.push({ name: 'WhatsApp', status: 'error', reason: msg });
-        this.log(`WhatsApp failed to start: ${msg}`);
+        this.log.error(`WhatsApp failed to start: ${msg}`);
       }
     } else {
       results.push({ name: 'WhatsApp', status: 'skipped', reason: 'disabled' });
     }
 
-    // Summary
+    // Summary (user-facing output — keep as console.log)
     console.log('\n  Channel Status:');
     for (const r of results) {
       const icon = r.status === 'ok' ? '+' : r.status === 'skipped' ? '-' : 'x';
@@ -108,29 +112,31 @@ export class Orchestrator {
     console.log();
 
     if (this.gateways.length === 0) {
-      throw new Error('No channels started. Check environment variables and optional dependencies.');
+      throw new Error(
+        'No channels started. Check environment variables and optional dependencies.',
+      );
     }
 
-    this.log(`${this.gateways.length} channel(s) active.`);
+    this.log.info(`${this.gateways.length} channel(s) active.`);
   }
 
   async stop(): Promise<void> {
-    this.log('Shutting down all channels...');
-    const stops = this.gateways.map(gw => {
-      this.log(`Stopping ${gw.name}...`);
-      return gw.stop().catch(err => {
-        this.log(`Error stopping ${gw.name}: ${err instanceof Error ? err.message : err}`);
+    this.log.info('Shutting down all channels...');
+    const stops = this.gateways.map((gw) => {
+      this.log.info(`Stopping ${gw.name}...`);
+      return gw.stop().catch((err) => {
+        this.log.error(`Error stopping ${gw.name}: ${err instanceof Error ? err.message : err}`);
       });
     });
     await Promise.all(stops);
     this.gateways = [];
-    this.log('All channels stopped.');
+    this.log.info('All channels stopped.');
   }
 
   private async startSlack(model: string): Promise<ChannelGateway | null> {
     if (!process.env.SLACK_BOT_TOKEN || !process.env.SLACK_APP_TOKEN) {
       if (this.options.verbose) {
-        this.log('Slack: SLACK_BOT_TOKEN or SLACK_APP_TOKEN not set, skipping.');
+        this.log.debug('Slack: SLACK_BOT_TOKEN or SLACK_APP_TOKEN not set, skipping.');
       }
       return null;
     }
@@ -153,6 +159,7 @@ export class Orchestrator {
         model,
         allowList: this.options.whatsappAllowList,
         allowGroups: this.options.whatsappAllowGroups,
+        selfChatOnly: this.options.whatsappSelfChatOnly,
         authDir: this.options.whatsappAuthDir,
         verbose: this.options.verbose,
       });
@@ -165,10 +172,5 @@ export class Orchestrator {
       }
       throw err;
     }
-  }
-
-  private log(message: string): void {
-    const ts = new Date().toISOString().slice(11, 19);
-    console.log(`[${ts}] [orchestrator] ${message}`);
   }
 }

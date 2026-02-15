@@ -17,6 +17,7 @@ import {
   getConfiguredModel,
   type ModelId,
 } from '../config.js';
+import { logger } from '../lib/logger.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -33,6 +34,7 @@ export interface GatewayOptions {
   model?: string;
   allowList?: string[];
   allowGroups?: boolean;
+  selfChatOnly?: boolean;
   authDir?: string;
   verbose?: boolean;
 }
@@ -44,11 +46,15 @@ export interface GatewayOptions {
 const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const MAX_WHATSAPP_LENGTH = 4000;
+const SENT_MESSAGE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const AGENT_MARKER = '[agent]';
+const AGENT_MARKER_LOWER = AGENT_MARKER.toLowerCase();
 const RECONNECT_INITIAL_MS = 2000;
 const RECONNECT_MAX_MS = 30000;
 const RECONNECT_FACTOR = 1.8;
 const RECONNECT_JITTER = 0.25;
 const RECONNECT_MAX_ATTEMPTS = 12;
+const normalizePhone = (jid: string): string => jidToPhone(jid).replace(/[^0-9]/g, '');
 
 // ---------------------------------------------------------------------------
 // WhatsApp Gateway
@@ -60,21 +66,27 @@ export class WhatsAppGateway {
   private running = false;
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectAttempts = 0;
+  private reconnectScheduled = false;
+  private connecting = false;
   private model: ModelId;
   private allowList: Set<string> | null;
   private allowGroups: boolean;
+  private selfChatOnly: boolean;
   private authDir?: string;
   private verbose: boolean;
   private ownJid: string | null = null;
+  private ownPhone: string | null = null;
+  private sentMessageIds = new Map<string, number>();
 
   constructor(options: GatewayOptions = {}) {
     this.model = options.model
-      ? resolveModel(options.model) ?? getConfiguredModel()
+      ? (resolveModel(options.model) ?? getConfiguredModel())
       : getConfiguredModel();
     this.allowList = options.allowList?.length
-      ? new Set(options.allowList.map(p => p.replace(/[^0-9]/g, '')))
+      ? new Set(options.allowList.map((p) => p.replace(/[^0-9]/g, '')))
       : null;
-    this.allowGroups = options.allowGroups ?? false;
+    this.selfChatOnly = options.selfChatOnly ?? false;
+    this.allowGroups = this.selfChatOnly ? false : (options.allowGroups ?? false);
     this.authDir = options.authDir;
     this.verbose = options.verbose ?? false;
   }
@@ -111,11 +123,15 @@ export class WhatsAppGateway {
 
     // Close socket
     if (this.sock) {
-      try { this.sock.end(); } catch { /* ignore */ }
+      try {
+        this.sock.end();
+      } catch {
+        /* ignore */
+      }
       this.sock = null;
     }
 
-    this.log('Gateway stopped.');
+    this.log.info('Gateway stopped.');
   }
 
   // -------------------------------------------------------------------------
@@ -123,13 +139,35 @@ export class WhatsAppGateway {
   // -------------------------------------------------------------------------
 
   private async connect(): Promise<void> {
-    this.log('Connecting to WhatsApp...');
+    if (this.connecting) {
+      this.log.debug('Connect already in progress; skipping.');
+      return;
+    }
 
-    let qrTerminal: { generate: (qr: string, opts: Record<string, unknown>, cb: (code: string) => void) => void } | null = null;
+    if (this.sock?.ws?.readyState === 1) {
+      this.log.debug('Socket already open; skipping connect.');
+      return;
+    }
+
+    this.connecting = true;
+    this.log.info('Connecting to WhatsApp...');
+
+    let qrTerminal: {
+      generate: (qr: string, opts: Record<string, unknown>, cb: (code: string) => void) => void;
+    } | null = null;
     try {
       qrTerminal = (await import('qrcode-terminal')).default;
     } catch {
       // qrcode-terminal not available; print raw QR string
+    }
+
+    if (this.sock) {
+      try {
+        this.sock.end();
+      } catch {
+        /* ignore */
+      }
+      this.sock = null;
     }
 
     this.sock = await createWhatsAppSocket({
@@ -155,12 +193,15 @@ export class WhatsAppGateway {
       await waitForConnection(this.sock);
       this.reconnectAttempts = 0;
       this.ownJid = this.sock.user?.id ?? null;
-      this.log(`Connected as ${this.ownJid ?? 'unknown'}`);
+      this.ownPhone = this.ownJid ? normalizePhone(this.ownJid) : null;
+      this.log.info(`Connected as ${this.ownJid ?? 'unknown'}`);
     } catch (err) {
-      this.log(`Initial connection failed: ${err instanceof Error ? err.message : err}`);
+      this.log.error(`Initial connection failed: ${err instanceof Error ? err.message : err}`);
       if (this.running) {
         await this.scheduleReconnect();
       }
+    } finally {
+      this.connecting = false;
     }
   }
 
@@ -172,11 +213,11 @@ export class WhatsAppGateway {
     }) => {
       if (update.connection === 'close') {
         const code = getStatusCode(update.lastDisconnect);
-        this.log(`Connection closed (code: ${code})`);
+        this.log.info(`Connection closed (code: ${code})`);
 
         const reasons = await getDisconnectReason();
         if (code === reasons.loggedOut) {
-          this.log('Logged out — cannot reconnect. Clear auth and re-scan QR.');
+          this.log.warn('Logged out — cannot reconnect. Clear auth and re-scan QR.');
           this.running = false;
           return;
         }
@@ -198,28 +239,43 @@ export class WhatsAppGateway {
         const key = msg.key as { remoteJid?: string; fromMe?: boolean; id?: string } | undefined;
         if (!key?.remoteJid) continue;
 
-        // Skip own messages
-        if (key.fromMe) continue;
-
-        // Skip self-chat (message from own number)
-        if (this.ownJid && jidToPhone(key.remoteJid) === jidToPhone(this.ownJid)) continue;
-
         const jid = key.remoteJid;
+        const isFromMe = Boolean(key.fromMe);
+        const isSelfChat = this.isSelfChat(jid);
+
+        if (this.selfChatOnly) {
+          if (!isSelfChat) continue;
+          if (isGroup(jid)) continue;
+          if (isFromMe && this.isSentByGateway(key.id)) {
+            this.log.debug(`Skipping gateway echo ${key.id ?? ''}`.trim());
+            continue;
+          }
+        } else {
+          // Skip own messages
+          if (isFromMe) continue;
+
+          // Skip self-chat (message from own number)
+          if (isSelfChat) continue;
+        }
 
         // Group filtering
         if (isGroup(jid) && !this.allowGroups) continue;
 
         // Allowlist filtering
-        const phone = jidToPhone(jid);
+        const phone = normalizePhone(jid);
         if (this.allowList && !this.allowList.has(phone)) {
-          this.debugLog(`Filtered message from ${phone} (not in allowlist)`);
+          this.log.debug(`Filtered message from ${phone} (not in allowlist)`);
           continue;
         }
 
         const text = extractText(msg);
         if (!text || text.trim().length === 0) continue;
+        if (this.selfChatOnly && this.isAgentMessage(text)) {
+          this.log.debug('Skipping agent-tagged message');
+          continue;
+        }
 
-        this.debugLog(`Message from ${phone}: ${text.substring(0, 80)}...`);
+        this.log.debug(`Message from ${phone}: ${text.substring(0, 80)}...`);
         this.enqueueMessage(jid, text.trim(), key.id ?? '');
       }
     }) as never);
@@ -231,30 +287,49 @@ export class WhatsAppGateway {
 
   private async scheduleReconnect(): Promise<void> {
     if (!this.running) return;
-
-    this.reconnectAttempts++;
-    if (this.reconnectAttempts > RECONNECT_MAX_ATTEMPTS) {
-      this.log(`Max reconnect attempts (${RECONNECT_MAX_ATTEMPTS}) reached. Stopping.`);
-      this.running = false;
+    if (this.connecting) {
+      this.log.debug('Reconnect skipped: connect already in progress.');
       return;
     }
-
-    const baseDelay = Math.min(
-      RECONNECT_INITIAL_MS * Math.pow(RECONNECT_FACTOR, this.reconnectAttempts - 1),
-      RECONNECT_MAX_MS,
-    );
-    const jitter = baseDelay * RECONNECT_JITTER * (Math.random() * 2 - 1);
-    const delay = Math.round(baseDelay + jitter);
-
-    this.log(`Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${RECONNECT_MAX_ATTEMPTS})...`);
-    await sleep(delay);
-
-    if (!this.running) return;
+    if (this.sock?.ws?.readyState === 1) {
+      this.log.debug('Reconnect skipped: socket already open.');
+      return;
+    }
+    if (this.reconnectScheduled) {
+      this.log.debug('Reconnect already scheduled.');
+      return;
+    }
+    this.reconnectScheduled = true;
 
     try {
-      await this.connect();
-    } catch (err) {
-      this.log(`Reconnect failed: ${err instanceof Error ? err.message : err}`);
+      this.reconnectAttempts++;
+      if (this.reconnectAttempts > RECONNECT_MAX_ATTEMPTS) {
+        this.log.warn(`Max reconnect attempts (${RECONNECT_MAX_ATTEMPTS}) reached. Stopping.`);
+        this.running = false;
+        return;
+      }
+
+      const baseDelay = Math.min(
+        RECONNECT_INITIAL_MS * Math.pow(RECONNECT_FACTOR, this.reconnectAttempts - 1),
+        RECONNECT_MAX_MS,
+      );
+      const jitter = baseDelay * RECONNECT_JITTER * (Math.random() * 2 - 1);
+      const delay = Math.round(baseDelay + jitter);
+
+      this.log.info(
+        `Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${RECONNECT_MAX_ATTEMPTS})...`,
+      );
+      await sleep(delay);
+
+      if (!this.running) return;
+
+      try {
+        await this.connect();
+      } catch (err) {
+        this.log.error(`Reconnect failed: ${err instanceof Error ? err.message : err}`);
+      }
+    } finally {
+      this.reconnectScheduled = false;
     }
   }
 
@@ -280,8 +355,13 @@ export class WhatsAppGateway {
       try {
         await this.handleMessage(item.jid, item.text, session);
       } catch (err) {
-        this.log(`Error processing message from ${jidToPhone(jid)}: ${err instanceof Error ? err.message : err}`);
-        await this.sendText(item.jid, 'Sorry, something went wrong processing your message. Please try again.');
+        this.log.error(
+          `Error processing message from ${jidToPhone(jid)}: ${err instanceof Error ? err.message : err}`,
+        );
+        await this.sendText(
+          item.jid,
+          'Sorry, something went wrong processing your message. Please try again.',
+        );
       }
     }
 
@@ -305,7 +385,7 @@ export class WhatsAppGateway {
       response = await session.agent.chat(text);
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      this.log(`Agent error for ${jidToPhone(jid)}: ${errMsg}`);
+      this.log.error(`Agent error for ${jidToPhone(jid)}: ${errMsg}`);
       response = 'I encountered an error processing your request. Please try again.';
     }
 
@@ -385,14 +465,16 @@ export class WhatsAppGateway {
     let session = this.sessions.get(phone);
 
     if (!session) {
-      this.debugLog(`Creating new session for ${phone}`);
+      this.log.debug(`Creating new session for ${phone}`);
       const apiKey = getAnthropicApiKey();
       const agent = new StateSetAgent(apiKey, this.model);
 
       // Connect agent asynchronously — it will be ready by the time we need it
       // since the queue processing is also async
-      agent.connect().catch(err => {
-        this.log(`Failed to connect agent for ${phone}: ${err instanceof Error ? err.message : err}`);
+      agent.connect().catch((err) => {
+        this.log.error(
+          `Failed to connect agent for ${phone}: ${err instanceof Error ? err.message : err}`,
+        );
       });
 
       session = {
@@ -423,11 +505,12 @@ export class WhatsAppGateway {
     const now = Date.now();
     for (const [phone, session] of this.sessions) {
       if (now - session.lastActivity > SESSION_TTL_MS && !session.processing) {
-        this.debugLog(`Cleaning up expired session for ${phone}`);
+        this.log.debug(`Cleaning up expired session for ${phone}`);
         session.agent.disconnect().catch(() => {});
         this.sessions.delete(phone);
       }
     }
+    this.pruneSentMessageIds();
   }
 
   // -------------------------------------------------------------------------
@@ -436,10 +519,17 @@ export class WhatsAppGateway {
 
   private async sendText(jid: string, text: string): Promise<void> {
     if (!this.sock) return;
+    const outboundText = this.decorateOutgoing(text);
     try {
-      await this.sock.sendMessage(jid, { text });
+      const result = await this.sock.sendMessage(jid, { text: outboundText });
+      const messageId = (result as { key?: { id?: string } })?.key?.id;
+      if (messageId) {
+        this.rememberSentMessage(messageId);
+      }
     } catch (err) {
-      this.log(`Failed to send message to ${jidToPhone(jid)}: ${err instanceof Error ? err.message : err}`);
+      this.log.error(
+        `Failed to send message to ${jidToPhone(jid)}: ${err instanceof Error ? err.message : err}`,
+      );
     }
   }
 
@@ -456,14 +546,45 @@ export class WhatsAppGateway {
   // Logging
   // -------------------------------------------------------------------------
 
-  private log(message: string): void {
-    const ts = new Date().toISOString().slice(11, 19);
-    console.log(`[${ts}] ${message}`);
+  private readonly log = logger.child('whatsapp');
+
+  private isAgentMessage(text: string): boolean {
+    return text.trimStart().toLowerCase().startsWith(AGENT_MARKER_LOWER);
   }
 
-  private debugLog(message: string): void {
-    if (this.verbose) {
-      this.log(`[debug] ${message}`);
+  private decorateOutgoing(text: string): string {
+    if (!this.selfChatOnly) return text;
+    if (!text.trim()) return text;
+    if (this.isAgentMessage(text)) return text;
+    return `${AGENT_MARKER} ${text}`;
+  }
+
+  private isSelfChat(jid: string): boolean {
+    if (!this.ownPhone) return false;
+    return normalizePhone(jid) === this.ownPhone;
+  }
+
+  private isSentByGateway(messageId?: string): boolean {
+    if (!messageId) return false;
+    const sentAt = this.sentMessageIds.get(messageId);
+    if (!sentAt) return false;
+    if (Date.now() - sentAt > SENT_MESSAGE_TTL_MS) {
+      this.sentMessageIds.delete(messageId);
+      return false;
+    }
+    return true;
+  }
+
+  private rememberSentMessage(messageId: string): void {
+    this.sentMessageIds.set(messageId, Date.now());
+  }
+
+  private pruneSentMessageIds(): void {
+    const now = Date.now();
+    for (const [id, ts] of this.sentMessageIds) {
+      if (now - ts > SENT_MESSAGE_TTL_MS) {
+        this.sentMessageIds.delete(id);
+      }
     }
   }
 }
@@ -583,21 +704,22 @@ export function chunkMessage(text: string, maxLength: number = MAX_WHATSAPP_LENG
 // ---------------------------------------------------------------------------
 
 function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // ---------------------------------------------------------------------------
 // Direct execution support
 // ---------------------------------------------------------------------------
 
-const isDirectRun = process.argv[1] &&
+const isDirectRun =
+  process.argv[1] &&
   (process.argv[1].endsWith('/gateway.ts') || process.argv[1].endsWith('/gateway.js'));
 
 if (isDirectRun) {
   const gateway = new WhatsAppGateway();
 
   const shutdown = async () => {
-    console.log('\nShutting down...');
+    logger.info('Shutting down...');
     await gateway.stop();
     process.exit(0);
   };
@@ -605,8 +727,8 @@ if (isDirectRun) {
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
-  gateway.start().catch(err => {
-    console.error('Gateway failed to start:', err instanceof Error ? err.message : err);
+  gateway.start().catch((err) => {
+    logger.error('Gateway failed to start:', err instanceof Error ? err.message : err);
     process.exit(1);
   });
 }

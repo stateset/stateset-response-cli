@@ -21,7 +21,6 @@ const RULE_FIELDS = `
 `;
 
 export function registerRuleTools(server: McpServer, client: GraphQLClient, orgId: string) {
-
   server.tool(
     'list_rules',
     'List all rules for the current organization',
@@ -44,7 +43,7 @@ export function registerRuleTools(server: McpServer, client: GraphQLClient, orgI
         offset: offset ?? 0,
       });
       return { content: [{ type: 'text' as const, text: JSON.stringify(data.rules, null, 2) }] };
-    }
+    },
   );
 
   server.tool(
@@ -71,7 +70,7 @@ export function registerRuleTools(server: McpServer, client: GraphQLClient, orgI
         offset: offset ?? 0,
       });
       return { content: [{ type: 'text' as const, text: JSON.stringify(data.rules, null, 2) }] };
-    }
+    },
   );
 
   server.tool(
@@ -104,13 +103,25 @@ export function registerRuleTools(server: McpServer, client: GraphQLClient, orgI
         shared: args.shared || false,
         conditions: args.conditions || { any: [] },
         actions: args.actions || [],
-        metadata: args.metadata || { category: '', compliance: '', last_reviewed: new Date().toISOString() },
+        metadata: args.metadata || {
+          category: '',
+          compliance: '',
+          last_reviewed: new Date().toISOString(),
+        },
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
-      const data = await executeQuery<{ insert_rules: { returning: unknown[] } }>(client, mutation, { rule });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.insert_rules.returning[0], null, 2) }] };
-    }
+      const data = await executeQuery<{ insert_rules: { returning: unknown[] } }>(
+        client,
+        mutation,
+        { rule },
+      );
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(data.insert_rules.returning[0], null, 2) },
+        ],
+      };
+    },
   );
 
   server.tool(
@@ -130,7 +141,10 @@ export function registerRuleTools(server: McpServer, client: GraphQLClient, orgI
     },
     async (args) => {
       const { id, ...updates } = args;
-      const setFields: Record<string, unknown> = { ...updates, updated_at: new Date().toISOString() };
+      const setFields: Record<string, unknown> = {
+        ...updates,
+        updated_at: new Date().toISOString(),
+      };
       for (const key of Object.keys(setFields)) {
         if (setFields[key] === undefined) delete setFields[key];
       }
@@ -139,12 +153,20 @@ export function registerRuleTools(server: McpServer, client: GraphQLClient, orgI
           returning { ${RULE_FIELDS} }
         }
       }`;
-      const data = await executeQuery<{ update_rules: { returning: unknown[] } }>(client, mutation, { id, org_id: orgId, set: setFields });
+      const data = await executeQuery<{ update_rules: { returning: unknown[] } }>(
+        client,
+        mutation,
+        { id, org_id: orgId, set: setFields },
+      );
       if (!data.update_rules.returning.length) {
         return { content: [{ type: 'text' as const, text: 'Rule not found' }], isError: true };
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.update_rules.returning[0], null, 2) }] };
-    }
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(data.update_rules.returning[0], null, 2) },
+        ],
+      };
+    },
   );
 
   server.tool(
@@ -157,29 +179,45 @@ export function registerRuleTools(server: McpServer, client: GraphQLClient, orgI
           returning { id rule_name }
         }
       }`;
-      const data = await executeQuery<{ delete_rules: { returning: unknown[] } }>(client, mutation, { id, org_id: orgId });
+      const data = await executeQuery<{ delete_rules: { returning: unknown[] } }>(
+        client,
+        mutation,
+        { id, org_id: orgId },
+      );
       if (!data.delete_rules.returning.length) {
         return { content: [{ type: 'text' as const, text: 'Rule not found' }], isError: true };
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ deleted: data.delete_rules.returning[0] }, null, 2) }] };
-    }
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({ deleted: data.delete_rules.returning[0] }, null, 2),
+          },
+        ],
+      };
+    },
   );
 
   server.tool(
     'import_rules',
     'Bulk import rules (upserts on primary key conflict)',
     {
-      rules: z.array(z.object({
-        rule_name: z.string().max(MAX_NAME_LENGTH),
-        rule_type: z.string().max(50),
-        description: z.string().max(MAX_DESCRIPTION_LENGTH).optional(),
-        agent_id: z.string().uuid().optional(),
-        activated: z.boolean().optional(),
-        shared: z.boolean().optional(),
-        conditions: conditionsSchema,
-        actions: actionsSchema,
-        metadata: metadataSchema,
-      })).max(MAX_ARRAY_LENGTH).describe('Array of rules to import (max 100)'),
+      rules: z
+        .array(
+          z.object({
+            rule_name: z.string().max(MAX_NAME_LENGTH),
+            rule_type: z.string().max(50),
+            description: z.string().max(MAX_DESCRIPTION_LENGTH).optional(),
+            agent_id: z.string().uuid().optional(),
+            activated: z.boolean().optional(),
+            shared: z.boolean().optional(),
+            conditions: conditionsSchema,
+            actions: actionsSchema,
+            metadata: metadataSchema,
+          }),
+        )
+        .max(MAX_ARRAY_LENGTH)
+        .describe('Array of rules to import (max 100)'),
     },
     async ({ rules }) => {
       const mutation = `mutation ($rules: [rules_insert_input!]!) {
@@ -192,7 +230,7 @@ export function registerRuleTools(server: McpServer, client: GraphQLClient, orgI
         }
       }`;
       const timestamp = new Date().toISOString();
-      const prepared = rules.map(r => ({
+      const prepared = rules.map((r) => ({
         ...r,
         org_id: orgId,
         activated: r.activated !== undefined ? r.activated : true,
@@ -203,9 +241,25 @@ export function registerRuleTools(server: McpServer, client: GraphQLClient, orgI
         created_at: timestamp,
         updated_at: timestamp,
       }));
-      const data = await executeQuery<{ insert_rules: { returning: unknown[]; affected_rows: number } }>(client, mutation, { rules: prepared });
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ affected_rows: data.insert_rules.affected_rows, rules: data.insert_rules.returning }, null, 2) }] };
-    }
+      const data = await executeQuery<{
+        insert_rules: { returning: unknown[]; affected_rows: number };
+      }>(client, mutation, { rules: prepared });
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(
+              {
+                affected_rows: data.insert_rules.affected_rows,
+                rules: data.insert_rules.returning,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    },
   );
 
   server.tool(
@@ -221,9 +275,20 @@ export function registerRuleTools(server: McpServer, client: GraphQLClient, orgI
           affected_rows
         }
       }`;
-      const data = await executeQuery<{ update_rules: { affected_rows: number } }>(client, mutation, { ids, org_id: orgId, activated });
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ affected_rows: data.update_rules.affected_rows }, null, 2) }] };
-    }
+      const data = await executeQuery<{ update_rules: { affected_rows: number } }>(
+        client,
+        mutation,
+        { ids, org_id: orgId, activated },
+      );
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({ affected_rows: data.update_rules.affected_rows }, null, 2),
+          },
+        ],
+      };
+    },
   );
 
   server.tool(
@@ -239,9 +304,20 @@ export function registerRuleTools(server: McpServer, client: GraphQLClient, orgI
           affected_rows
         }
       }`;
-      const data = await executeQuery<{ update_rules: { affected_rows: number } }>(client, mutation, { ids, org_id: orgId, agent_id });
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ affected_rows: data.update_rules.affected_rows }, null, 2) }] };
-    }
+      const data = await executeQuery<{ update_rules: { affected_rows: number } }>(
+        client,
+        mutation,
+        { ids, org_id: orgId, agent_id },
+      );
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({ affected_rows: data.update_rules.affected_rows }, null, 2),
+          },
+        ],
+      };
+    },
   );
 
   server.tool(
@@ -252,8 +328,19 @@ export function registerRuleTools(server: McpServer, client: GraphQLClient, orgI
       const mutation = `mutation ($ids: [uuid!]!, $org_id: String!) {
         delete_rules(where: {id: {_in: $ids}, org_id: {_eq: $org_id}}) { affected_rows }
       }`;
-      const data = await executeQuery<{ delete_rules: { affected_rows: number } }>(client, mutation, { ids, org_id: orgId });
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ deleted: data.delete_rules.affected_rows }, null, 2) }] };
-    }
+      const data = await executeQuery<{ delete_rules: { affected_rows: number } }>(
+        client,
+        mutation,
+        { ids, org_id: orgId },
+      );
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({ deleted: data.delete_rules.affected_rows }, null, 2),
+          },
+        ],
+      };
+    },
   );
 }

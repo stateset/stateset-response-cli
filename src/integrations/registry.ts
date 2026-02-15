@@ -1,3 +1,5 @@
+export const KLAVIYO_DEFAULT_REVISION = '2026-01-15';
+
 export type IntegrationId =
   | 'shopify'
   | 'gorgias'
@@ -37,14 +39,24 @@ export const INTEGRATION_DEFINITIONS: IntegrationDefinition[] = [
       {
         key: 'shop',
         label: 'Shop domain',
-        envVars: ['SHOPIFY_SHOP_DOMAIN', 'SHOPIFY_SHOP', 'SHOPIFY_DOMAIN', 'STATESET_SHOPIFY_SHOP_DOMAIN'],
+        envVars: [
+          'SHOPIFY_SHOP_DOMAIN',
+          'SHOPIFY_SHOP',
+          'SHOPIFY_DOMAIN',
+          'STATESET_SHOPIFY_SHOP_DOMAIN',
+        ],
         required: true,
         placeholder: 'myshop.myshopify.com',
       },
       {
         key: 'accessToken',
         label: 'Admin API access token',
-        envVars: ['SHOPIFY_ACCESS_TOKEN', 'SHOPIFY_TOKEN', 'SHOPIFY_ADMIN_ACCESS_TOKEN', 'STATESET_SHOPIFY_ACCESS_TOKEN'],
+        envVars: [
+          'SHOPIFY_ACCESS_TOKEN',
+          'SHOPIFY_TOKEN',
+          'SHOPIFY_ADMIN_ACCESS_TOKEN',
+          'STATESET_SHOPIFY_ACCESS_TOKEN',
+        ],
         required: true,
         secret: true,
       },
@@ -91,7 +103,12 @@ export const INTEGRATION_DEFINITIONS: IntegrationDefinition[] = [
       {
         key: 'accessToken',
         label: 'Access token',
-        envVars: ['RECHARGE_ACCESS_TOKEN', 'RECHARGE_API_TOKEN', 'RECHARGE_API_KEY', 'STATESET_RECHARGE_ACCESS_TOKEN'],
+        envVars: [
+          'RECHARGE_ACCESS_TOKEN',
+          'RECHARGE_API_TOKEN',
+          'RECHARGE_API_KEY',
+          'STATESET_RECHARGE_ACCESS_TOKEN',
+        ],
         required: true,
         secret: true,
       },
@@ -111,7 +128,12 @@ export const INTEGRATION_DEFINITIONS: IntegrationDefinition[] = [
       {
         key: 'apiKey',
         label: 'Private API key',
-        envVars: ['KLAVIYO_PRIVATE_API_KEY', 'KLAVIYO_API_KEY', 'KLAVIYO_PRIVATE_KEY', 'STATESET_KLAVIYO_API_KEY'],
+        envVars: [
+          'KLAVIYO_PRIVATE_API_KEY',
+          'KLAVIYO_API_KEY',
+          'KLAVIYO_PRIVATE_KEY',
+          'STATESET_KLAVIYO_API_KEY',
+        ],
         required: true,
         secret: true,
       },
@@ -119,7 +141,7 @@ export const INTEGRATION_DEFINITIONS: IntegrationDefinition[] = [
         key: 'revision',
         label: 'API revision',
         envVars: ['KLAVIYO_REVISION', 'KLAVIYO_API_REVISION', 'STATESET_KLAVIYO_REVISION'],
-        defaultValue: '2026-01-15',
+        defaultValue: KLAVIYO_DEFAULT_REVISION,
       },
     ],
   },
@@ -235,11 +257,14 @@ export const INTEGRATION_DEFINITIONS: IntegrationDefinition[] = [
   },
 ];
 
-export const INTEGRATION_MAP: Record<IntegrationId, IntegrationDefinition> = INTEGRATION_DEFINITIONS
-  .reduce((acc, def) => {
-    acc[def.id] = def;
-    return acc;
-  }, {} as Record<IntegrationId, IntegrationDefinition>);
+export const INTEGRATION_MAP: Record<IntegrationId, IntegrationDefinition> =
+  INTEGRATION_DEFINITIONS.reduce(
+    (acc, def) => {
+      acc[def.id] = def;
+      return acc;
+    },
+    {} as Record<IntegrationId, IntegrationDefinition>,
+  );
 
 export function listIntegrations(): IntegrationDefinition[] {
   return INTEGRATION_DEFINITIONS.slice();

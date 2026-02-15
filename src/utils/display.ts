@@ -18,16 +18,18 @@ function redactValue(value: unknown): unknown {
 }
 
 export function formatToolCall(name: string, args: Record<string, unknown>): string {
-  const argsStr = Object.keys(args).length > 0
-    ? ' ' + Object.entries(args)
-        .map(([k, v]) => {
-          const safeValue = SENSITIVE_KEY_RE.test(k) ? '[redacted]' : redactValue(v);
-          const val = typeof safeValue === 'string' ? safeValue : JSON.stringify(safeValue);
-          const display = val.length > 80 ? val.slice(0, 77) + '...' : val;
-          return `${chalk.gray(k)}=${chalk.white(display)}`;
-        })
-        .join(' ')
-    : '';
+  const argsStr =
+    Object.keys(args).length > 0
+      ? ' ' +
+        Object.entries(args)
+          .map(([k, v]) => {
+            const safeValue = SENSITIVE_KEY_RE.test(k) ? '[redacted]' : redactValue(v);
+            const val = typeof safeValue === 'string' ? safeValue : JSON.stringify(safeValue);
+            const display = val.length > 80 ? val.slice(0, 77) + '...' : val;
+            return `${chalk.gray(k)}=${chalk.white(display)}`;
+          })
+          .join(' ')
+      : '';
   return chalk.yellow(`  -> ${name}`) + argsStr;
 }
 
@@ -64,10 +66,7 @@ export function formatUsage(usage: {
   cache_read_input_tokens: number | null;
   cache_creation_input_tokens: number | null;
 }): string {
-  const parts = [
-    `in ${usage.input_tokens}`,
-    `out ${usage.output_tokens}`,
-  ];
+  const parts = [`in ${usage.input_tokens}`, `out ${usage.output_tokens}`];
   if (usage.cache_read_input_tokens !== null) {
     parts.push(`cache read ${usage.cache_read_input_tokens}`);
   }
@@ -90,18 +89,55 @@ export function formatTable(rows: Record<string, string>[], columns?: string[]):
     }
   }
 
-  const header = cols.map(c => c.toUpperCase().padEnd(widths[c])).join('  ');
-  const separator = cols.map(c => '-'.repeat(widths[c])).join('  ');
+  const header = cols.map((c) => c.toUpperCase().padEnd(widths[c])).join('  ');
+  const separator = cols.map((c) => '-'.repeat(widths[c])).join('  ');
   const body = rows
-    .map(row => cols.map(c => (row[c] ?? '').padEnd(widths[c])).join('  '))
+    .map((row) => cols.map((c) => (row[c] ?? '').padEnd(widths[c])).join('  '))
     .join('\n  ');
 
   return `  ${chalk.bold(header)}\n  ${chalk.gray(separator)}\n  ${body}`;
 }
 
+export function formatDate(isoOrMs: string | number): string {
+  const d = typeof isoOrMs === 'number' ? new Date(isoOrMs) : new Date(isoOrMs);
+  if (Number.isNaN(d.getTime())) return 'invalid date';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+export function formatRelativeTime(isoOrMs: string | number): string {
+  const ts = typeof isoOrMs === 'number' ? isoOrMs : new Date(isoOrMs).getTime();
+  if (Number.isNaN(ts)) return 'unknown';
+  const diff = Date.now() - ts;
+  if (diff < 0) return 'just now';
+  if (diff < 60_000) return `${Math.floor(diff / 1000)}s ago`;
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+  return `${Math.floor(diff / 86_400_000)}d ago`;
+}
+
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return '0 B';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+export function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return '0ms';
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  const minutes = Math.floor(ms / 60_000);
+  const seconds = Math.round((ms % 60_000) / 1000);
+  return `${minutes}m ${seconds}s`;
+}
+
 export function printWelcome(orgId: string, version?: string, model?: string): void {
   console.log('');
-  console.log(chalk.bold.cyan('  StateSet Response CLI') + (version ? chalk.gray(` v${version}`) : ''));
+  console.log(
+    chalk.bold.cyan('  StateSet Response CLI') + (version ? chalk.gray(` v${version}`) : ''),
+  );
   console.log(chalk.gray(`  Organization: ${orgId}`));
   if (model) {
     console.log(chalk.gray(`  Model: ${model}`));
@@ -161,59 +197,121 @@ export function printHelp(): void {
   console.log(chalk.bold('  Core'));
   console.log(chalk.cyan('    /help                  ') + chalk.gray('Show this help message'));
   console.log(chalk.cyan('    /clear                 ') + chalk.gray('Reset conversation history'));
-  console.log(chalk.cyan('    /history               ') + chalk.gray('Show conversation turn count'));
-  console.log(chalk.cyan('    /model <name>          ') + chalk.gray('Switch model (sonnet, haiku, opus)'));
-  console.log(chalk.cyan('    /usage on|off          ') + chalk.gray('Enable or disable usage summaries'));
-  console.log(chalk.cyan('    /attach <path>         ') + chalk.gray('Attach a file or image to the next message'));
+  console.log(
+    chalk.cyan('    /history               ') + chalk.gray('Show conversation turn count'),
+  );
+  console.log(
+    chalk.cyan('    /model <name>          ') + chalk.gray('Switch model (sonnet, haiku, opus)'),
+  );
+  console.log(
+    chalk.cyan('    /usage on|off          ') + chalk.gray('Enable or disable usage summaries'),
+  );
+  console.log(
+    chalk.cyan('    /attach <path>         ') +
+      chalk.gray('Attach a file or image to the next message'),
+  );
   console.log(chalk.cyan('    /attachments           ') + chalk.gray('List staged attachments'));
   console.log(chalk.cyan('    /attach-clear          ') + chalk.gray('Clear staged attachments'));
   console.log('');
 
   console.log(chalk.bold('  Safety & Policy'));
-  console.log(chalk.cyan('    /apply on|off           ') + chalk.gray('Enable or disable write operations'));
-  console.log(chalk.cyan('    /redact on|off          ') + chalk.gray('Enable or disable PII redaction'));
-  console.log(chalk.cyan('    /audit on|off [detail]  ') + chalk.gray('Toggle tool audit logging (optional excerpts)'));
-  console.log(chalk.cyan('    /audit-show [session] [tool=name] [errors] [limit=20]') + chalk.gray('Show recent audit entries'));
-  console.log(chalk.cyan('    /audit-clear [session]  ') + chalk.gray('Clear audit log for a session'));
-  console.log(chalk.cyan('    /permissions [list|clear]') + chalk.gray('List or clear stored permissions'));
-  console.log(chalk.cyan('    /policy list|set|unset|clear|edit|init|import|export') + chalk.gray('Manage policy overrides'));
+  console.log(
+    chalk.cyan('    /apply on|off           ') + chalk.gray('Enable or disable write operations'),
+  );
+  console.log(
+    chalk.cyan('    /redact on|off          ') + chalk.gray('Enable or disable PII redaction'),
+  );
+  console.log(
+    chalk.cyan('    /audit on|off [detail]  ') +
+      chalk.gray('Toggle tool audit logging (optional excerpts)'),
+  );
+  console.log(
+    chalk.cyan('    /audit-show [session] [tool=name] [errors] [limit=20]') +
+      chalk.gray('Show recent audit entries'),
+  );
+  console.log(
+    chalk.cyan('    /audit-clear [session]  ') + chalk.gray('Clear audit log for a session'),
+  );
+  console.log(
+    chalk.cyan('    /permissions [list|clear]') + chalk.gray('List or clear stored permissions'),
+  );
+  console.log(
+    chalk.cyan('    /policy list|set|unset|clear|edit|init|import|export') +
+      chalk.gray('Manage policy overrides'),
+  );
   console.log('');
 
   console.log(chalk.bold('  Integrations'));
   console.log(chalk.cyan('    /integrations           ') + chalk.gray('Show integration status'));
-  console.log(chalk.cyan('    /integrations setup     ') + chalk.gray('Run integration setup wizard'));
+  console.log(
+    chalk.cyan('    /integrations setup     ') + chalk.gray('Run integration setup wizard'),
+  );
   console.log('');
 
   console.log(chalk.bold('  Sessions'));
   console.log(chalk.cyan('    /session               ') + chalk.gray('Show current session info'));
-  console.log(chalk.cyan('    /sessions [all] [tag=tag]') + chalk.gray('List sessions (optionally include archived or filter by tag)'));
+  console.log(
+    chalk.cyan('    /sessions [all] [tag=tag]') +
+      chalk.gray('List sessions (optionally include archived or filter by tag)'),
+  );
   console.log(chalk.cyan('    /new [name]            ') + chalk.gray('Start a new session'));
   console.log(chalk.cyan('    /resume <name>         ') + chalk.gray('Resume a saved session'));
   console.log(chalk.cyan('    /archive [name]        ') + chalk.gray('Archive a session'));
   console.log(chalk.cyan('    /unarchive [name]      ') + chalk.gray('Unarchive a session'));
   console.log(chalk.cyan('    /rename <name>         ') + chalk.gray('Rename the current session'));
   console.log(chalk.cyan('    /delete [name]         ') + chalk.gray('Delete a session'));
-  console.log(chalk.cyan('    /tag list|add|remove <tag> [session]') + chalk.gray('Manage session tags'));
-  console.log(chalk.cyan('    /search <text> [all] [role=user|assistant] [since=YYYY-MM-DD] [until=YYYY-MM-DD] [regex=/.../] [limit=50]') + chalk.gray('Search session transcripts'));
-  console.log(chalk.cyan('    /session-meta [session] [json|md] [out=path]') + chalk.gray('Show or export session metadata'));
+  console.log(
+    chalk.cyan('    /tag list|add|remove <tag> [session]') + chalk.gray('Manage session tags'),
+  );
+  console.log(
+    chalk.cyan(
+      '    /search <text> [all] [role=user|assistant] [since=YYYY-MM-DD] [until=YYYY-MM-DD] [regex=/.../] [limit=50]',
+    ) + chalk.gray('Search session transcripts'),
+  );
+  console.log(
+    chalk.cyan('    /session-meta [session] [json|md] [out=path]') +
+      chalk.gray('Show or export session metadata'),
+  );
   console.log('');
 
   console.log(chalk.bold('  Exports'));
-  console.log(chalk.cyan('    /export [session] [md|json|jsonl] [path]') + chalk.gray('Export session to markdown/json/jsonl'));
-  console.log(chalk.cyan('    /export-list [session]') + chalk.gray('List export files for a session'));
-  console.log(chalk.cyan('    /export-show <file> [session] [head=40]') + chalk.gray('Preview an export file'));
-  console.log(chalk.cyan('    /export-open <file> [session]') + chalk.gray('Show export file path'));
-  console.log(chalk.cyan('    /export-delete <file> [session]') + chalk.gray('Delete an export file'));
-  console.log(chalk.cyan('    /export-prune [session] keep=5') + chalk.gray('Delete older exports'));
+  console.log(
+    chalk.cyan('    /export [session] [md|json|jsonl] [path]') +
+      chalk.gray('Export session to markdown/json/jsonl'),
+  );
+  console.log(
+    chalk.cyan('    /export-list [session]') + chalk.gray('List export files for a session'),
+  );
+  console.log(
+    chalk.cyan('    /export-show <file> [session] [head=40]') +
+      chalk.gray('Preview an export file'),
+  );
+  console.log(
+    chalk.cyan('    /export-open <file> [session]') + chalk.gray('Show export file path'),
+  );
+  console.log(
+    chalk.cyan('    /export-delete <file> [session]') + chalk.gray('Delete an export file'),
+  );
+  console.log(
+    chalk.cyan('    /export-prune [session] keep=5') + chalk.gray('Delete older exports'),
+  );
   console.log('');
 
   console.log(chalk.bold('  Prompts & Skills'));
   console.log(chalk.cyan('    /prompts              ') + chalk.gray('List prompt templates'));
-  console.log(chalk.cyan('    /prompt <name>        ') + chalk.gray('Fill and send a prompt template'));
-  console.log(chalk.cyan('    /prompt-history       ') + chalk.gray('Show recent prompt templates'));
-  console.log(chalk.cyan('    /prompt-validate [name|all]') + chalk.gray('Validate prompt templates'));
+  console.log(
+    chalk.cyan('    /prompt <name>        ') + chalk.gray('Fill and send a prompt template'),
+  );
+  console.log(
+    chalk.cyan('    /prompt-history       ') + chalk.gray('Show recent prompt templates'),
+  );
+  console.log(
+    chalk.cyan('    /prompt-validate [name|all]') + chalk.gray('Validate prompt templates'),
+  );
   console.log(chalk.cyan('    /skills               ') + chalk.gray('List available skills'));
-  console.log(chalk.cyan('    /skill <name>         ') + chalk.gray('Activate a skill for this session'));
+  console.log(
+    chalk.cyan('    /skill <name>         ') + chalk.gray('Activate a skill for this session'),
+  );
   console.log(chalk.cyan('    /skill-clear          ') + chalk.gray('Clear active skills'));
   console.log('');
 

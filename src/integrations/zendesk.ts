@@ -1,5 +1,6 @@
-import { requestJsonWithRetry } from './http.js';
+import { requestJsonWithRetry, normalizePath, applyQueryParams, throwOnHttpError } from './http.js';
 import type { ZendeskConfig } from './config.js';
+import { ValidationError } from '../lib/errors.js';
 
 export interface ZendeskRequestOptions {
   zendesk: ZendeskConfig;
@@ -9,52 +10,34 @@ export interface ZendeskRequestOptions {
   body?: Record<string, unknown> | null;
 }
 
-function normalizePath(rawPath: string): string {
-  let path = String(rawPath || '').trim();
-  if (!path) {
-    throw new Error('Path is required');
-  }
-  if (path.startsWith('http://') || path.startsWith('https://')) {
-    throw new Error('Path must be relative (e.g., /tickets/123.json)');
-  }
-  if (!path.startsWith('/')) {
-    path = `/${path}`;
-  }
-  return path;
-}
-
-export async function zendeskRequest(options: ZendeskRequestOptions): Promise<{ status: number; data: unknown }> {
+export async function zendeskRequest(
+  options: ZendeskRequestOptions,
+): Promise<{ status: number; data: unknown }> {
   const method = String(options.method || '').toUpperCase();
-  if (!method) throw new Error('Method is required');
+  if (!method) throw new ValidationError('Method is required');
 
-  const path = normalizePath(options.path);
+  const path = normalizePath(options.path, '/tickets/123.json');
   const baseUrl = `https://${options.zendesk.subdomain}.zendesk.com/api/v2`;
   const url = new URL(`${baseUrl}${path}`);
 
-  if (options.query) {
-    for (const [key, value] of Object.entries(options.query)) {
-      if (value === undefined || value === null) continue;
-      url.searchParams.set(key, String(value));
-    }
-  }
+  applyQueryParams(url, options.query);
 
-  const auth = Buffer.from(`${options.zendesk.email}/token:${options.zendesk.apiToken}`).toString('base64');
+  const auth = Buffer.from(`${options.zendesk.email}/token:${options.zendesk.apiToken}`).toString(
+    'base64',
+  );
 
   const { status, data } = await requestJsonWithRetry(url.toString(), {
     method,
     headers: {
-      'Authorization': `Basic ${auth}`,
+      Authorization: `Basic ${auth}`,
       'Content-Type': 'application/json',
-      'Accept': 'application/json',
+      Accept: 'application/json',
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
     timeoutMs: 30_000,
   });
 
-  if (status >= 400) {
-    const msg = typeof data === 'string' ? data : JSON.stringify(data);
-    throw new Error(`Zendesk API error (${status}): ${msg}`);
-  }
+  throwOnHttpError(status, data, 'Zendesk');
 
   return { status, data };
 }

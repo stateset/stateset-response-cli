@@ -21,7 +21,6 @@ const DATASET_ENTRY_FIELDS = `
 `;
 
 export function registerDatasetTools(server: McpServer, client: GraphQLClient, orgId: string) {
-
   server.tool(
     'list_datasets',
     'List all datasets (knowledge bases) for the current organization',
@@ -43,7 +42,7 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
         offset: offset ?? 0,
       });
       return { content: [{ type: 'text' as const, text: JSON.stringify(data.datasets, null, 2) }] };
-    }
+    },
   );
 
   server.tool(
@@ -59,12 +58,17 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
           }
         }
       }`;
-      const data = await executeQuery<{ datasets: unknown[] }>(client, query, { id, org_id: orgId });
+      const data = await executeQuery<{ datasets: unknown[] }>(client, query, {
+        id,
+        org_id: orgId,
+      });
       if (!(data.datasets as unknown[]).length) {
         return { content: [{ type: 'text' as const, text: 'Dataset not found' }], isError: true };
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.datasets[0], null, 2) }] };
-    }
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(data.datasets[0], null, 2) }],
+      };
+    },
   );
 
   server.tool(
@@ -91,9 +95,20 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
-      const data = await executeQuery<{ insert_datasets: { returning: unknown[] } }>(client, mutation, { object: dataset });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.insert_datasets.returning[0], null, 2) }] };
-    }
+      const data = await executeQuery<{ insert_datasets: { returning: unknown[] } }>(
+        client,
+        mutation,
+        { object: dataset },
+      );
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(data.insert_datasets.returning[0], null, 2),
+          },
+        ],
+      };
+    },
   );
 
   server.tool(
@@ -108,7 +123,10 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
     },
     async (args) => {
       const { id, ...updates } = args;
-      const setFields: Record<string, unknown> = { ...updates, updated_at: new Date().toISOString() };
+      const setFields: Record<string, unknown> = {
+        ...updates,
+        updated_at: new Date().toISOString(),
+      };
       for (const key of Object.keys(setFields)) {
         if (setFields[key] === undefined) delete setFields[key];
       }
@@ -117,12 +135,23 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
           returning { ${DATASET_FIELDS} }
         }
       }`;
-      const data = await executeQuery<{ update_datasets: { returning: unknown[] } }>(client, mutation, { id, org_id: orgId, set: setFields });
+      const data = await executeQuery<{ update_datasets: { returning: unknown[] } }>(
+        client,
+        mutation,
+        { id, org_id: orgId, set: setFields },
+      );
       if (!data.update_datasets.returning.length) {
         return { content: [{ type: 'text' as const, text: 'Dataset not found' }], isError: true };
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.update_datasets.returning[0], null, 2) }] };
-    }
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(data.update_datasets.returning[0], null, 2),
+          },
+        ],
+      };
+    },
   );
 
   server.tool(
@@ -135,12 +164,23 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
           returning { id name }
         }
       }`;
-      const data = await executeQuery<{ delete_datasets: { returning: unknown[] } }>(client, mutation, { id, org_id: orgId });
+      const data = await executeQuery<{ delete_datasets: { returning: unknown[] } }>(
+        client,
+        mutation,
+        { id, org_id: orgId },
+      );
       if (!data.delete_datasets.returning.length) {
         return { content: [{ type: 'text' as const, text: 'Dataset not found' }], isError: true };
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ deleted: data.delete_datasets.returning[0] }, null, 2) }] };
-    }
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({ deleted: data.delete_datasets.returning[0] }, null, 2),
+          },
+        ],
+      };
+    },
   );
 
   server.tool(
@@ -164,9 +204,20 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
-      const data = await executeQuery<{ insert_dataset_entries: { returning: unknown[] } }>(client, mutation, { object: entry });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.insert_dataset_entries.returning[0], null, 2) }] };
-    }
+      const data = await executeQuery<{ insert_dataset_entries: { returning: unknown[] } }>(
+        client,
+        mutation,
+        { object: entry },
+      );
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(data.insert_dataset_entries.returning[0], null, 2),
+          },
+        ],
+      };
+    },
   );
 
   server.tool(
@@ -181,11 +232,25 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
           returning { id dataset_id }
         }
       }`;
-      const data = await executeQuery<{ delete_dataset_entries: { returning: unknown[] } }>(client, mutation, { id });
+      const data = await executeQuery<{ delete_dataset_entries: { returning: unknown[] } }>(
+        client,
+        mutation,
+        { id },
+      );
       if (!data.delete_dataset_entries.returning.length) {
-        return { content: [{ type: 'text' as const, text: 'Dataset entry not found' }], isError: true };
+        return {
+          content: [{ type: 'text' as const, text: 'Dataset entry not found' }],
+          isError: true,
+        };
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ deleted: data.delete_dataset_entries.returning[0] }, null, 2) }] };
-    }
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({ deleted: data.delete_dataset_entries.returning[0] }, null, 2),
+          },
+        ],
+      };
+    },
   );
 }

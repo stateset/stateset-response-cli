@@ -6,9 +6,12 @@
  * Imports that JSON back, creating or upserting all resources.
  */
 
-import { GraphQLClient } from 'graphql-request';
 import fs from 'node:fs';
-import { createGraphQLClient, executeQuery, type GraphQLAuth } from './mcp-server/graphql-client.js';
+import {
+  createGraphQLClient,
+  executeQuery,
+  type GraphQLAuth,
+} from './mcp-server/graphql-client.js';
 import { getCurrentOrg } from './config.js';
 
 // ─── Secret Redaction ────────────────────────────────────────────────────────
@@ -27,7 +30,7 @@ function redactSecrets(obj: unknown): unknown {
   }
 
   if (Array.isArray(obj)) {
-    return obj.map(item => redactSecrets(item));
+    return obj.map((item) => redactSecrets(item));
   }
 
   if (typeof obj === 'object') {
@@ -71,7 +74,11 @@ export interface OrgExport {
 
 // ─── Export ──────────────────────────────────────────────────────────────────
 
-export async function exportOrg(outputPath: string, options: ExportOptions = {}): Promise<OrgExport> {
+/** Exports all org resources (agents, rules, skills, etc.) to a JSON file. Secrets are redacted by default. */
+export async function exportOrg(
+  outputPath: string,
+  options: ExportOptions = {},
+): Promise<OrgExport> {
   const { includeSecrets = false } = options;
   const { orgId, config: orgConfig } = getCurrentOrg();
   const auth: GraphQLAuth = orgConfig.cliToken
@@ -162,7 +169,11 @@ export async function exportOrg(outputPath: string, options: ExportOptions = {})
     exportData = redactSecrets(exportData) as OrgExport;
   }
 
-  fs.writeFileSync(outputPath, JSON.stringify(exportData, null, 2), 'utf-8');
+  try {
+    fs.writeFileSync(outputPath, JSON.stringify(exportData, null, 2), 'utf-8');
+  } catch (e) {
+    throw new Error(`Failed to write export file: ${e instanceof Error ? e.message : String(e)}`);
+  }
   return exportData;
 }
 
@@ -181,9 +192,20 @@ export interface ImportResult {
   agentSettings: number;
 }
 
+/** Imports org resources from a previously exported JSON file, upserting into the current org. */
 export async function importOrg(inputPath: string): Promise<ImportResult> {
-  const raw = fs.readFileSync(inputPath, 'utf-8');
-  const data = JSON.parse(raw) as OrgExport;
+  let raw: string;
+  try {
+    raw = fs.readFileSync(inputPath, 'utf-8');
+  } catch (e) {
+    throw new Error(`Failed to read import file: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  let data: OrgExport;
+  try {
+    data = JSON.parse(raw) as OrgExport;
+  } catch (e) {
+    throw new Error(`Invalid JSON in import file: ${e instanceof Error ? e.message : String(e)}`);
+  }
 
   if (!data.version || !data.orgId) {
     throw new Error('Invalid export file — missing version or orgId fields.');
@@ -196,13 +218,23 @@ export async function importOrg(inputPath: string): Promise<ImportResult> {
   const client = createGraphQLClient(orgConfig.graphqlEndpoint, auth, orgId);
 
   const result: ImportResult = {
-    agents: 0, rules: 0, skills: 0, attributes: 0,
-    functions: 0, examples: 0, evals: 0, datasets: 0,
-    datasetEntries: 0, agentSettings: 0,
+    agents: 0,
+    rules: 0,
+    skills: 0,
+    attributes: 0,
+    functions: 0,
+    examples: 0,
+    evals: 0,
+    datasets: 0,
+    datasetEntries: 0,
+    agentSettings: 0,
   };
 
   // Helper: strip read-only fields and remap org_id
-  function prepObj(obj: Record<string, unknown>, extraOmit: string[] = []): Record<string, unknown> {
+  function prepObj(
+    obj: Record<string, unknown>,
+    extraOmit: string[] = [],
+  ): Record<string, unknown> {
     const omit = new Set(['id', '__typename', ...extraOmit]);
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(obj)) {
@@ -214,94 +246,136 @@ export async function importOrg(inputPath: string): Promise<ImportResult> {
 
   // Agents
   if (data.agents?.length) {
-    const objects = data.agents.map(a => prepObj(a as Record<string, unknown>));
+    const objects = data.agents.map((a) => prepObj(a as Record<string, unknown>));
     const mutation = `mutation ($objects: [agents_insert_input!]!) {
       insert_agents(objects: $objects, on_conflict: { constraint: agents_pkey, update_columns: [name, type, role, goal, backstory, instructions, voice_model, voice_model_id, voice_model_provider, status, metadata, updated_at] }) {
         affected_rows
       }
     }`;
     try {
-      const res = await executeQuery<{ insert_agents: { affected_rows: number } }>(client, mutation, { objects });
+      const res = await executeQuery<{ insert_agents: { affected_rows: number } }>(
+        client,
+        mutation,
+        { objects },
+      );
       result.agents = res.insert_agents.affected_rows;
     } catch {
       // Fallback: insert one by one
       for (const obj of objects) {
         try {
-          await executeQuery(client, `mutation ($object: agents_insert_input!) { insert_agents(objects: [$object]) { affected_rows } }`, { object: obj });
+          await executeQuery(
+            client,
+            `mutation ($object: agents_insert_input!) { insert_agents(objects: [$object]) { affected_rows } }`,
+            { object: obj },
+          );
           result.agents++;
-        } catch { /* skip duplicates */ }
+        } catch {
+          /* skip duplicates */
+        }
       }
     }
   }
 
   // Rules
   if (data.rules?.length) {
-    const objects = data.rules.map(r => prepObj(r as Record<string, unknown>));
+    const objects = data.rules.map((r) => prepObj(r as Record<string, unknown>));
     try {
-      const res = await executeQuery<{ insert_rules: { affected_rows: number } }>(client,
+      const res = await executeQuery<{ insert_rules: { affected_rows: number } }>(
+        client,
         `mutation ($objects: [rules_insert_input!]!) { insert_rules(objects: $objects) { affected_rows } }`,
-        { objects });
+        { objects },
+      );
       result.rules = res.insert_rules.affected_rows;
     } catch {
       for (const obj of objects) {
         try {
-          await executeQuery(client, `mutation ($object: rules_insert_input!) { insert_rules(objects: [$object]) { affected_rows } }`, { object: obj });
+          await executeQuery(
+            client,
+            `mutation ($object: rules_insert_input!) { insert_rules(objects: [$object]) { affected_rows } }`,
+            { object: obj },
+          );
           result.rules++;
-        } catch { /* skip */ }
+        } catch {
+          /* skip */
+        }
       }
     }
   }
 
   // Skills
   if (data.skills?.length) {
-    const objects = data.skills.map(s => prepObj(s as Record<string, unknown>));
+    const objects = data.skills.map((s) => prepObj(s as Record<string, unknown>));
     try {
-      const res = await executeQuery<{ insert_skills: { affected_rows: number } }>(client,
+      const res = await executeQuery<{ insert_skills: { affected_rows: number } }>(
+        client,
         `mutation ($objects: [skills_insert_input!]!) { insert_skills(objects: $objects) { affected_rows } }`,
-        { objects });
+        { objects },
+      );
       result.skills = res.insert_skills.affected_rows;
     } catch {
       for (const obj of objects) {
         try {
-          await executeQuery(client, `mutation ($object: skills_insert_input!) { insert_skills(objects: [$object]) { affected_rows } }`, { object: obj });
+          await executeQuery(
+            client,
+            `mutation ($object: skills_insert_input!) { insert_skills(objects: [$object]) { affected_rows } }`,
+            { object: obj },
+          );
           result.skills++;
-        } catch { /* skip */ }
+        } catch {
+          /* skip */
+        }
       }
     }
   }
 
   // Attributes
   if (data.attributes?.length) {
-    const objects = data.attributes.map(a => prepObj(a as Record<string, unknown>));
+    const objects = data.attributes.map((a) => prepObj(a as Record<string, unknown>));
     try {
-      const res = await executeQuery<{ insert_attributes: { affected_rows: number } }>(client,
+      const res = await executeQuery<{ insert_attributes: { affected_rows: number } }>(
+        client,
         `mutation ($objects: [attributes_insert_input!]!) { insert_attributes(objects: $objects) { affected_rows } }`,
-        { objects });
+        { objects },
+      );
       result.attributes = res.insert_attributes.affected_rows;
     } catch {
       for (const obj of objects) {
         try {
-          await executeQuery(client, `mutation ($object: attributes_insert_input!) { insert_attributes(objects: [$object]) { affected_rows } }`, { object: obj });
+          await executeQuery(
+            client,
+            `mutation ($object: attributes_insert_input!) { insert_attributes(objects: [$object]) { affected_rows } }`,
+            { object: obj },
+          );
           result.attributes++;
-        } catch { /* skip */ }
+        } catch {
+          /* skip */
+        }
       }
     }
   }
 
   // Functions
   if (data.functions?.length) {
-    const objects = data.functions.map(f => prepObj(f as Record<string, unknown>));
+    const objects = data.functions.map((f) => prepObj(f as Record<string, unknown>));
     try {
-      const res = await executeQuery<{ insert_functions: { affected_rows: number } }>(client,
+      const res = await executeQuery<{ insert_functions: { affected_rows: number } }>(
+        client,
         `mutation ($objects: [functions_insert_input!]!) { insert_functions(objects: $objects) { affected_rows } }`,
-        { objects });
+        { objects },
+      );
       result.functions = res.insert_functions.affected_rows;
     } catch {
       for (const obj of objects) {
         try {
-          await executeQuery(client, `mutation ($object: functions_insert_input!) { insert_functions(objects: [$object]) { affected_rows } }`, { object: obj });
+          await executeQuery(
+            client,
+            `mutation ($object: functions_insert_input!) { insert_functions(objects: [$object]) { affected_rows } }`,
+            { object: obj },
+          );
           result.functions++;
-        } catch { /* skip */ }
+        } catch {
+          /* skip */
+        }
       }
     }
   }
@@ -313,38 +387,54 @@ export async function importOrg(inputPath: string): Promise<ImportResult> {
       const messages = (exObj.example_messages || []) as Record<string, unknown>[];
       const cleanEx = prepObj(exObj, ['example_messages']);
       try {
-        await executeQuery(client,
+        await executeQuery(
+          client,
           `mutation ($object: examples_insert_input!) { insert_examples(objects: [$object]) { affected_rows } }`,
-          { object: cleanEx });
+          { object: cleanEx },
+        );
         result.examples++;
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
 
       // Insert messages for the example
       for (const msg of messages) {
         const cleanMsg = prepObj(msg);
         try {
-          await executeQuery(client,
+          await executeQuery(
+            client,
             `mutation ($object: example_messages_insert_input!) { insert_example_messages(objects: [$object]) { affected_rows } }`,
-            { object: cleanMsg });
-        } catch { /* skip */ }
+            { object: cleanMsg },
+          );
+        } catch {
+          /* skip */
+        }
       }
     }
   }
 
   // Evals
   if (data.evals?.length) {
-    const objects = data.evals.map(e => prepObj(e as Record<string, unknown>));
+    const objects = data.evals.map((e) => prepObj(e as Record<string, unknown>));
     try {
-      const res = await executeQuery<{ insert_evals: { affected_rows: number } }>(client,
+      const res = await executeQuery<{ insert_evals: { affected_rows: number } }>(
+        client,
         `mutation ($objects: [evals_insert_input!]!) { insert_evals(objects: $objects) { affected_rows } }`,
-        { objects });
+        { objects },
+      );
       result.evals = res.insert_evals.affected_rows;
     } catch {
       for (const obj of objects) {
         try {
-          await executeQuery(client, `mutation ($object: evals_insert_input!) { insert_evals(objects: [$object]) { affected_rows } }`, { object: obj });
+          await executeQuery(
+            client,
+            `mutation ($object: evals_insert_input!) { insert_evals(objects: [$object]) { affected_rows } }`,
+            { object: obj },
+          );
           result.evals++;
-        } catch { /* skip */ }
+        } catch {
+          /* skip */
+        }
       }
     }
   }
@@ -356,20 +446,28 @@ export async function importOrg(inputPath: string): Promise<ImportResult> {
       const entries = (dsObj.dataset_entries || []) as Record<string, unknown>[];
       const cleanDs = prepObj(dsObj, ['dataset_entries']);
       try {
-        await executeQuery(client,
+        await executeQuery(
+          client,
           `mutation ($object: datasets_insert_input!) { insert_datasets(objects: [$object]) { affected_rows } }`,
-          { object: cleanDs });
+          { object: cleanDs },
+        );
         result.datasets++;
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
 
       for (const entry of entries) {
         const cleanEntry = prepObj(entry);
         try {
-          await executeQuery(client,
+          await executeQuery(
+            client,
             `mutation ($object: dataset_entries_insert_input!) { insert_dataset_entries(objects: [$object]) { affected_rows } }`,
-            { object: cleanEntry });
+            { object: cleanEntry },
+          );
           result.datasetEntries++;
-        } catch { /* skip */ }
+        } catch {
+          /* skip */
+        }
       }
     }
   }
@@ -379,11 +477,15 @@ export async function importOrg(inputPath: string): Promise<ImportResult> {
     for (const s of data.agentSettings) {
       const sObj = prepObj(s as Record<string, unknown>);
       try {
-        await executeQuery(client,
+        await executeQuery(
+          client,
           `mutation ($object: agent_settings_insert_input!) { insert_agent_settings(objects: [$object]) { affected_rows } }`,
-          { object: sObj });
+          { object: sObj },
+        );
         result.agentSettings++;
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     }
   }
 

@@ -93,7 +93,7 @@ export function loadIntegrationsStore(cwd: string = process.cwd()): {
 
 export function loadIntegrationsStoreForScope(
   cwd: string,
-  scope: IntegrationStoreScope
+  scope: IntegrationStoreScope,
 ): { path: string; store: IntegrationsStore } {
   const filePath = getIntegrationsPath(cwd, scope);
   const raw = readStoreFile(filePath);
@@ -104,7 +104,7 @@ export function loadIntegrationsStoreForScope(
 export function saveIntegrationsStore(
   cwd: string,
   scope: IntegrationStoreScope,
-  store: IntegrationsStore
+  store: IntegrationsStore,
 ): string {
   const filePath = getIntegrationsPath(cwd, scope);
   const encrypted = encryptStore(store);
@@ -114,7 +114,7 @@ export function saveIntegrationsStore(
 
 export function getIntegrationConfigFromStore(
   id: IntegrationId,
-  cwd: string = process.cwd()
+  cwd: string = process.cwd(),
 ): Record<string, string> | null {
   const { store } = loadIntegrationsStore(cwd);
   const entry = store.integrations[id];
@@ -125,7 +125,7 @@ export function getIntegrationConfigFromStore(
 
 export function getIntegrationEntryFromStore(
   id: IntegrationId,
-  cwd: string = process.cwd()
+  cwd: string = process.cwd(),
 ): IntegrationEntry | null {
   const { store } = loadIntegrationsStore(cwd);
   return store.integrations[id] ?? null;

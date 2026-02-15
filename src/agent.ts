@@ -3,7 +3,6 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { formatToolCall } from './utils/display.js';
 import { SessionStore } from './session.js';
 import { type ModelId, DEFAULT_MODEL } from './config.js';
 import { INTEGRATION_DEFINITIONS } from './integrations/registry.js';
@@ -12,6 +11,7 @@ const THIS_FILE = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(THIS_FILE);
 const IS_TS = THIS_FILE.endsWith('.ts');
 const MAX_HISTORY_MESSAGES = 40;
+const DEFAULT_MAX_TOKENS = 4096;
 
 const INTEGRATION_ENV_KEYS = new Set<string>([
   'STATESET_ALLOW_APPLY',
@@ -41,6 +41,7 @@ function buildMcpEnv(): Record<string, string> {
   return env;
 }
 
+/** Default system prompt injected when no override is provided via prompt files. */
 export const BASE_SYSTEM_PROMPT = `You are an AI assistant for managing the StateSet Response platform.
 You have tools to manage agents, rules, skills, attributes, examples, evals, datasets, functions,
 responses, channels, messages, knowledge base (semantic search and vector storage), and agent/channel settings.
@@ -74,14 +75,25 @@ Commerce/support safety:
 - Never proceed without explicit user confirmation
 - If a tool reports writes are disabled, explain how to enable them (use /apply on in chat, start a session with --apply, or set STATESET_ALLOW_APPLY=true for non-interactive runs)`;
 
+/**
+ * Hooks invoked during the agentic chat loop for streaming text,
+ * intercepting tool calls (before/after execution), and tracking token usage.
+ */
 export interface ChatCallbacks {
   onText?: (delta: string) => void;
   onToolCall?: (name: string, args: Record<string, unknown>) => void;
-  onToolCallStart?: (name: string, args: Record<string, unknown>) => Promise<ToolCallDecision | void> | ToolCallDecision | void;
+  onToolCallStart?: (
+    name: string,
+    args: Record<string, unknown>,
+  ) => Promise<ToolCallDecision | void> | ToolCallDecision | void;
   onToolCallEnd?: (result: ToolCallResult) => void;
   onUsage?: (usage: Anthropic.Usage) => void;
 }
 
+/**
+ * Result of an `onToolCallStart` hook: 'allow' proceeds (optionally with modified args),
+ * 'deny' blocks the call with a reason, 'respond' short-circuits with canned content.
+ */
 export interface ToolCallDecision {
   action: 'allow' | 'deny' | 'respond';
   args?: Record<string, unknown>;
@@ -89,6 +101,7 @@ export interface ToolCallDecision {
   content?: string;
 }
 
+/** Captures the outcome of a single MCP tool invocation, including timing and error state. */
 export interface ToolCallResult {
   name: string;
   args: Record<string, unknown>;
@@ -97,6 +110,10 @@ export interface ToolCallResult {
   durationMs: number;
 }
 
+/**
+ * Orchestrates conversation with Claude via the Anthropic API and delegates
+ * tool execution to a co-located MCP server subprocess.
+ */
 export class StateSetAgent {
   private anthropic: Anthropic;
   private mcpClient: Client;
@@ -110,10 +127,7 @@ export class StateSetAgent {
 
   constructor(anthropicApiKey: string, model?: ModelId) {
     this.anthropic = new Anthropic({ apiKey: anthropicApiKey });
-    this.mcpClient = new Client(
-      { name: 'stateset-cli', version: '1.0.0' },
-      { capabilities: {} }
-    );
+    this.mcpClient = new Client({ name: 'stateset-cli', version: '1.0.0' }, { capabilities: {} });
     this.model = model || DEFAULT_MODEL;
   }
 
@@ -125,6 +139,7 @@ export class StateSetAgent {
     this.systemPrompt = prompt;
   }
 
+  /** Loads conversation history from a session store, trimming to the most recent messages. */
   useSessionStore(store: SessionStore): void {
     this.sessionStore = store;
     const loaded = store.loadMessages();
@@ -150,6 +165,7 @@ export class StateSetAgent {
     }
   }
 
+  /** Spawns the MCP server as a child process and discovers available tools. */
   async connect(): Promise<void> {
     const serverPath = path.join(__dirname, 'mcp-server', IS_TS ? 'index.ts' : 'index.js');
     const command = process.execPath;
@@ -166,14 +182,22 @@ export class StateSetAgent {
     await this.mcpClient.connect(this.transport);
 
     const { tools } = await this.mcpClient.listTools();
-    this.tools = tools.map(tool => ({
+    this.tools = tools.map((tool) => ({
       name: tool.name,
       description: tool.description || '',
       input_schema: tool.inputSchema as Anthropic.Tool.InputSchema,
     }));
   }
 
-  async chat(userMessage: Anthropic.MessageParam['content'], callbacks?: ChatCallbacks): Promise<string> {
+  /**
+   * Runs the agentic loop: streams Claude's response, executes any tool calls
+   * via MCP, feeds results back, and repeats until no more tool use is requested.
+   * Returns the concatenated text output.
+   */
+  async chat(
+    userMessage: Anthropic.MessageParam['content'],
+    callbacks?: ChatCallbacks,
+  ): Promise<string> {
     this.addMessage({ role: 'user', content: userMessage });
 
     const textParts: string[] = [];
@@ -185,7 +209,7 @@ export class StateSetAgent {
       const stream = this.anthropic.messages.stream(
         {
           model: this.model,
-          max_tokens: 4096,
+          max_tokens: DEFAULT_MAX_TOKENS,
           system: this.systemPrompt,
           tools: this.tools,
           messages: this.conversationHistory,
@@ -286,7 +310,7 @@ export class StateSetAgent {
             });
 
             const resultText = (result.content as Array<{ type: string; text?: string }>)
-              .map(c => c.type === 'text' ? c.text : JSON.stringify(c))
+              .map((c) => (c.type === 'text' ? c.text : JSON.stringify(c)))
               .join('\n');
 
             toolResults.push({
@@ -329,6 +353,7 @@ export class StateSetAgent {
     return textParts.join('\n');
   }
 
+  /** Closes the stdio transport to the MCP server subprocess. */
   async disconnect(): Promise<void> {
     if (this.transport) {
       await this.transport.close();
@@ -367,7 +392,9 @@ export class StateSetAgent {
         return null;
       }
       const textParts = content
-        .filter((part) => part.type === 'text' && typeof (part as { text?: string }).text === 'string')
+        .filter(
+          (part) => part.type === 'text' && typeof (part as { text?: string }).text === 'string',
+        )
         .map((part) => (part as { text: string }).text.trim())
         .filter(Boolean);
       if (textParts.length === 0) return null;

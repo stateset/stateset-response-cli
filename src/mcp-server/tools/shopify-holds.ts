@@ -8,15 +8,13 @@ import {
   type ShopifyOrder,
 } from '../../integrations/shopify.js';
 import { formatMoney } from '../../integrations/format.js';
+import { type IntegrationToolOptions, wrapToolResult } from './helpers.js';
 
-export interface ShopifyToolOptions {
-  allowApply: boolean;
-  redact: boolean;
-}
+export type ShopifyToolOptions = IntegrationToolOptions;
 
 function getSkipReason(
   order: ShopifyOrder,
-  { includeCancelled, includeRefunded }: { includeCancelled: boolean; includeRefunded: boolean }
+  { includeCancelled, includeRefunded }: { includeCancelled: boolean; includeRefunded: boolean },
 ): string | null {
   if (!includeCancelled && order.cancelledAt) return 'cancelled';
   if (!includeRefunded) {
@@ -52,7 +50,7 @@ async function executePreviewOrders(
     include_cancelled?: boolean;
     include_refunded?: boolean;
   },
-  { redact = false }: { redact?: boolean } = {}
+  { redact = false }: { redact?: boolean } = {},
 ) {
   const query = String(input.query || '').trim();
   if (!query) throw new Error('Query is required');
@@ -72,12 +70,12 @@ async function executePreviewOrders(
   }
 
   const ordersWithHolds = eligible.filter((o) =>
-    o.fulfillmentOrders.some((fo) => fo.status === 'on_hold')
+    o.fulfillmentOrders.some((fo) => fo.status === 'on_hold'),
   );
 
   const totalHolds = ordersWithHolds.reduce(
     (acc, o) => acc + o.fulfillmentOrders.filter((fo) => fo.status === 'on_hold').length,
-    0
+    0,
   );
 
   return {
@@ -104,11 +102,12 @@ async function executeReleaseHolds(
     add_tag?: string;
     concurrency?: number;
   },
-  { redact = false, allowApply = false }: { redact?: boolean; allowApply?: boolean } = {}
+  { redact: _redact = false, allowApply = false }: { redact?: boolean; allowApply?: boolean } = {},
 ) {
   if (!allowApply) {
     return {
-      error: 'Release operation not allowed. The --apply flag or STATESET_ALLOW_APPLY must be set to enable hold releases.',
+      error:
+        'Release operation not allowed. The --apply flag or STATESET_ALLOW_APPLY must be set to enable hold releases.',
       hint: 'Run the preview first to see what would be affected.',
     };
   }
@@ -131,7 +130,7 @@ async function executeReleaseHolds(
   }
 
   const ordersWithHolds = eligible.filter((o) =>
-    o.fulfillmentOrders.some((fo) => fo.status === 'on_hold')
+    o.fulfillmentOrders.some((fo) => fo.status === 'on_hold'),
   );
 
   if (ordersWithHolds.length === 0) {
@@ -211,7 +210,7 @@ async function executeReleaseHolds(
 async function executeAddTags(
   shopify: ShopifyConfig,
   input: { order_ids: string[]; tags: string[] },
-  { allowApply = false }: { allowApply?: boolean } = {}
+  { allowApply = false }: { allowApply?: boolean } = {},
 ) {
   if (!allowApply) {
     return {
@@ -248,7 +247,7 @@ async function executeAddTags(
 export function registerShopifyHoldsTools(
   server: McpServer,
   shopify: ShopifyConfig,
-  options: ShopifyToolOptions
+  options: ShopifyToolOptions,
 ) {
   server.tool(
     'shopify_preview_orders',
@@ -256,15 +255,17 @@ export function registerShopifyHoldsTools(
     {
       query: z
         .string()
-        .describe('Shopify order search query (e.g., "tag:pre-order -tag:released created_at:<2025-11-27")'),
+        .describe(
+          'Shopify order search query (e.g., "tag:pre-order -tag:released created_at:<2025-11-27")',
+        ),
       limit: z.number().min(1).max(500).optional().describe('Maximum number of orders to fetch'),
       include_cancelled: z.boolean().optional().describe('Include cancelled orders'),
       include_refunded: z.boolean().optional().describe('Include refunded orders'),
     },
     async (args) => {
       const result = await executePreviewOrders(shopify, args, { redact: options.redact });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
-    }
+      return wrapToolResult(result);
+    },
   );
 
   server.tool(
@@ -283,8 +284,8 @@ export function registerShopifyHoldsTools(
         redact: options.redact,
         allowApply: options.allowApply,
       });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
-    }
+      return wrapToolResult(result);
+    },
   );
 
   server.tool(
@@ -296,7 +297,7 @@ export function registerShopifyHoldsTools(
     },
     async (args) => {
       const result = await executeAddTags(shopify, args, { allowApply: options.allowApply });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
-    }
+      return wrapToolResult(result);
+    },
   );
 }

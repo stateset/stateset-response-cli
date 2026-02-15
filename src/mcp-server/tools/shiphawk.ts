@@ -2,49 +2,34 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { ShipHawkConfig } from '../../integrations/config.js';
 import { shiphawkRequest } from '../../integrations/shiphawk.js';
-import { redactPii } from '../../integrations/redact.js';
-import { stringifyToolResult } from './output.js';
+import {
+  type IntegrationToolOptions,
+  MaxCharsSchema,
+  buildQuery,
+  createRequestRunner,
+  guardWrite,
+  registerRawRequestTool,
+  wrapToolResult,
+} from './helpers.js';
 
-export interface ShipHawkToolOptions {
-  allowApply: boolean;
-  redact: boolean;
+interface ShipHawkRatesResponse {
+  rates?: Array<{
+    carrier?: string;
+    service_name?: string;
+    total_price?: number;
+    transit_days?: number;
+  }>;
 }
 
-function writeNotAllowed() {
-  return {
-    content: [{
-      type: 'text' as const,
-      text: JSON.stringify({
-        error: 'Write operation not allowed. The --apply flag or STATESET_ALLOW_APPLY must be set.',
-        hint: 'Use list/get operations when writes are disabled.',
-      }, null, 2),
-    }],
-  };
-}
+const runRequest = createRequestRunner<ShipHawkConfig>((config, args) =>
+  shiphawkRequest({ shiphawk: config, ...args }),
+);
 
-async function runShipHawkRequest(
+export function registerShipHawkTools(
+  server: McpServer,
   shiphawk: ShipHawkConfig,
-  options: ShipHawkToolOptions,
-  args: {
-    method: string;
-    path: string;
-    query?: Record<string, string | number | boolean>;
-    body?: Record<string, unknown>;
-  }
+  options: IntegrationToolOptions,
 ) {
-  const response = await shiphawkRequest({
-    shiphawk,
-    method: args.method,
-    path: args.path,
-    query: args.query,
-    body: args.body,
-  });
-
-  const data = options.redact ? redactPii(response.data) : response.data;
-  return { status: response.status, data };
-}
-
-export function registerShipHawkTools(server: McpServer, shiphawk: ShipHawkConfig, options: ShipHawkToolOptions) {
   server.tool(
     'shiphawk_get_rates',
     'Get ShipHawk shipping rates for parcel or freight.',
@@ -62,7 +47,7 @@ export function registerShipHawkTools(server: McpServer, shiphawk: ShipHawkConfi
       freight_class: z.number().optional().describe('Freight class (for LTL)'),
       pallet_count: z.number().optional().describe('Number of pallets (for LTL)'),
       accessorials: z.array(z.string()).optional().describe('Accessorial services needed'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
       const packageData: Record<string, unknown> = {
@@ -78,20 +63,22 @@ export function registerShipHawkTools(server: McpServer, shiphawk: ShipHawkConfi
 
       const body: Record<string, unknown> = {
         origin: { zip: args.origin_zip, country: args.origin_country || 'US' },
-        destination: { zip: args.destination_zip, country: args.destination_country || 'US', is_residential: args.destination_residential },
+        destination: {
+          zip: args.destination_zip,
+          country: args.destination_country || 'US',
+          is_residential: args.destination_residential,
+        },
         packages: [packageData],
       };
       if (args.accessorials && args.accessorials.length > 0) body.accessorials = args.accessorials;
 
-      const result = await runShipHawkRequest(shiphawk, options, {
+      const result = await runRequest(shiphawk, options, {
         method: 'POST',
         path: '/rates',
         body,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -125,10 +112,11 @@ export function registerShipHawkTools(server: McpServer, shiphawk: ShipHawkConfi
       }),
       reference: z.string().optional().describe('Order or reference number'),
       special_instructions: z.string().optional(),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      if (!options.allowApply) return writeNotAllowed();
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
 
       const body: Record<string, unknown> = {
         rate_id: args.rate_id,
@@ -160,15 +148,13 @@ export function registerShipHawkTools(server: McpServer, shiphawk: ShipHawkConfi
       if (args.reference) body.reference = args.reference;
       if (args.special_instructions) body.special_instructions = args.special_instructions;
 
-      const result = await runShipHawkRequest(shiphawk, options, {
+      const result = await runRequest(shiphawk, options, {
         method: 'POST',
         path: '/shipments',
         body,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -176,17 +162,15 @@ export function registerShipHawkTools(server: McpServer, shiphawk: ShipHawkConfi
     'Get ShipHawk shipment details.',
     {
       shipment_id: z.string().describe('ShipHawk shipment ID'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      const result = await runShipHawkRequest(shiphawk, options, {
+      const result = await runRequest(shiphawk, options, {
         method: 'GET',
         path: `/shipments/${args.shipment_id}`,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -194,19 +178,18 @@ export function registerShipHawkTools(server: McpServer, shiphawk: ShipHawkConfi
     'Cancel/void a ShipHawk shipment. Requires --apply or STATESET_ALLOW_APPLY.',
     {
       shipment_id: z.string().describe('ShipHawk shipment ID'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      if (!options.allowApply) return writeNotAllowed();
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
 
-      const result = await runShipHawkRequest(shiphawk, options, {
+      const result = await runRequest(shiphawk, options, {
         method: 'POST',
         path: `/shipments/${args.shipment_id}/void`,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -215,7 +198,7 @@ export function registerShipHawkTools(server: McpServer, shiphawk: ShipHawkConfi
     {
       shipment_id: z.string().optional().describe('ShipHawk shipment ID'),
       tracking_number: z.string().optional().describe('Carrier tracking number'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
       if (!args.shipment_id && !args.tracking_number) {
@@ -226,14 +209,12 @@ export function registerShipHawkTools(server: McpServer, shiphawk: ShipHawkConfi
         throw new Error('Tracking by number requires shipment_id for ShipHawk.');
       }
 
-      const result = await runShipHawkRequest(shiphawk, options, {
+      const result = await runRequest(shiphawk, options, {
         method: 'GET',
         path: `/shipments/${args.shipment_id}/tracking`,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -242,53 +223,52 @@ export function registerShipHawkTools(server: McpServer, shiphawk: ShipHawkConfi
     {
       tracking_number: z.string().describe('Carrier tracking number'),
       carrier: z.string().optional().describe('Carrier code if required by ShipHawk'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      const query: Record<string, string | number | boolean> = {
+      const query = buildQuery({
         tracking_number: args.tracking_number,
-      };
-      if (args.carrier) query.carrier = args.carrier;
+        carrier: args.carrier,
+      });
 
-      const result = await runShipHawkRequest(shiphawk, options, {
+      const result = await runRequest(shiphawk, options, {
         method: 'GET',
         path: '/tracking',
         query,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
     'shiphawk_list_shipments',
     'List ShipHawk shipments.',
     {
-      status: z.enum(['quoted', 'booked', 'picked_up', 'in_transit', 'delivered', 'exception', 'voided']).optional(),
+      status: z
+        .enum(['quoted', 'booked', 'picked_up', 'in_transit', 'delivered', 'exception', 'voided'])
+        .optional(),
       created_after: z.string().optional(),
       created_before: z.string().optional(),
       shipment_type: z.enum(['parcel', 'ltl', 'ftl']).optional(),
       limit: z.number().min(1).max(100).optional(),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      const query: Record<string, string | number | boolean> = {};
-      if (args.status) query.status = args.status;
-      if (args.created_after) query.created_after = args.created_after;
-      if (args.created_before) query.created_before = args.created_before;
-      if (args.shipment_type) query.shipment_type = args.shipment_type;
-      if (args.limit !== undefined) query.limit = args.limit;
+      const query = buildQuery({
+        status: args.status,
+        created_after: args.created_after,
+        created_before: args.created_before,
+        shipment_type: args.shipment_type,
+        limit: args.limit,
+      });
 
-      const result = await runShipHawkRequest(shiphawk, options, {
+      const result = await runRequest(shiphawk, options, {
         method: 'GET',
         path: '/shipments',
-        query: Object.keys(query).length > 0 ? query : undefined,
+        query,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -300,10 +280,11 @@ export function registerShipHawkTools(server: McpServer, shiphawk: ShipHawkConfi
       ready_time: z.string().optional().describe('Time packages ready (HH:MM)'),
       close_time: z.string().optional().describe('Location close time (HH:MM)'),
       special_instructions: z.string().optional(),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      if (!options.allowApply) return writeNotAllowed();
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
 
       const body: Record<string, unknown> = {
         shipment_ids: args.shipment_ids,
@@ -313,15 +294,13 @@ export function registerShipHawkTools(server: McpServer, shiphawk: ShipHawkConfi
         special_instructions: args.special_instructions,
       };
 
-      const result = await runShipHawkRequest(shiphawk, options, {
+      const result = await runRequest(shiphawk, options, {
         method: 'POST',
         path: '/pickups',
         body,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
@@ -329,31 +308,33 @@ export function registerShipHawkTools(server: McpServer, shiphawk: ShipHawkConfi
     'Get Bill of Lading document for a freight shipment.',
     {
       shipment_id: z.string().describe('ShipHawk shipment ID'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
-      const result = await runShipHawkRequest(shiphawk, options, {
+      const result = await runRequest(shiphawk, options, {
         method: 'GET',
         path: `/shipments/${args.shipment_id}/documents/bol`,
       });
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
     'shiphawk_batch_rate_shop',
     'Get rates for multiple shipments at once.',
     {
-      shipments: z.array(z.object({
-        id: z.string().describe('Reference ID'),
-        origin_zip: z.string(),
-        destination_zip: z.string(),
-        weight_lbs: z.number(),
-        shipment_type: z.enum(['parcel', 'ltl']).optional().default('parcel'),
-      })).describe('Shipments to rate'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      shipments: z
+        .array(
+          z.object({
+            id: z.string().describe('Reference ID'),
+            origin_zip: z.string(),
+            destination_zip: z.string(),
+            weight_lbs: z.number(),
+            shipment_type: z.enum(['parcel', 'ltl']).optional().default('parcel'),
+          }),
+        )
+        .describe('Shipments to rate'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
       const results: Array<Record<string, unknown>> = [];
@@ -372,8 +353,8 @@ export function registerShipHawkTools(server: McpServer, shiphawk: ShipHawkConfi
             path: '/rates',
             body: rateBody,
           });
-          const rates = (response.data as any)?.rates || [];
-          const cheapest = rates.sort((a: any, b: any) => a.total_price - b.total_price)[0];
+          const rates = (response.data as ShipHawkRatesResponse)?.rates ?? [];
+          const cheapest = rates.sort((a, b) => (a.total_price ?? 0) - (b.total_price ?? 0))[0];
 
           results.push({
             id: shipment.id,
@@ -384,7 +365,10 @@ export function registerShipHawkTools(server: McpServer, shiphawk: ShipHawkConfi
             total_options: rates.length,
           });
         } catch (error) {
-          errors.push({ id: shipment.id, error: error instanceof Error ? error.message : String(error) });
+          errors.push({
+            id: shipment.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
         }
       }
 
@@ -396,37 +380,16 @@ export function registerShipHawkTools(server: McpServer, shiphawk: ShipHawkConfi
         results,
         errors: errors.length > 0 ? errors : undefined,
       };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult(payload, args.max_chars as number | undefined);
+    },
   );
 
-  server.tool(
+  registerRawRequestTool(
+    server,
     'shiphawk_request',
-    'Execute a raw ShipHawk API request. Non-GET methods require --apply or STATESET_ALLOW_APPLY.',
-    {
-      method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH']).describe('HTTP method'),
-      endpoint: z.string().describe('API endpoint path (e.g., /shipments, /rates)'),
-      query: z.record(z.union([z.string(), z.number(), z.boolean()])).optional().describe('Optional query params'),
-      body: z.record(z.any()).optional().describe('Optional JSON body'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
-    },
-    async (args) => {
-      const method = String(args.method || '').toUpperCase();
-      if (method !== 'GET' && !options.allowApply) {
-        return writeNotAllowed();
-      }
-
-      const result = await runShipHawkRequest(shiphawk, options, {
-        method,
-        path: args.endpoint as string,
-        query: args.query as Record<string, string | number | boolean> | undefined,
-        body: args.body as Record<string, unknown> | undefined,
-      });
-
-      const payload = { success: true, ...result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+    'Execute a raw ShipHawk API request.',
+    runRequest,
+    shiphawk,
+    options,
   );
 }

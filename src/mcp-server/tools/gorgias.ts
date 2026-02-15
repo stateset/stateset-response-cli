@@ -3,14 +3,40 @@ import { z } from 'zod';
 import type { GorgiasConfig } from '../../integrations/config.js';
 import { createGorgiasApi } from '../../integrations/gorgias.js';
 import { redactPii } from '../../integrations/redact.js';
-import { stringifyToolResult } from './output.js';
+import {
+  type IntegrationToolOptions,
+  guardWrite,
+  wrapToolResult,
+  MaxCharsSchema,
+  RawRequestSchema,
+} from './helpers.js';
 
-export interface GorgiasToolOptions {
-  allowApply: boolean;
-  redact: boolean;
+export type GorgiasToolOptions = IntegrationToolOptions;
+
+interface GorgiasTicket {
+  id?: number;
+  subject?: string;
+  status?: string;
+  channel?: string;
+  priority?: number;
+  created_datetime?: string;
+  updated_datetime?: string;
+  tags?: Array<{ name?: string }>;
+  messages_count?: number;
+  assignee_user?: { email?: string };
+  customer?: { email?: string; name?: string };
 }
 
-function formatTicketSummary(ticket: any, { redact = false }: { redact?: boolean } = {}) {
+interface GorgiasMessage {
+  id?: number;
+  sender?: { email?: string };
+  channel?: string;
+  body_text?: string;
+  created_datetime?: string;
+  internal?: boolean;
+}
+
+function formatTicketSummary(ticket: GorgiasTicket, { redact = false }: { redact?: boolean } = {}) {
   const summary: Record<string, unknown> = {
     id: ticket.id,
     subject: ticket.subject,
@@ -34,21 +60,17 @@ function formatTicketSummary(ticket: any, { redact = false }: { redact?: boolean
 
 function resolveTeam(
   teams: Array<{ id?: number; name?: string }>,
-  input: string
+  input: string,
 ): { team: { id: number; name: string } | null; error?: string } {
   const raw = String(input).trim();
   if (!raw) return { team: null, error: 'Team value is empty' };
 
-  const byId = raw.match(/^\d+$/)
-    ? teams.find((t) => String(t.id) === raw)
-    : undefined;
+  const byId = raw.match(/^\d+$/) ? teams.find((t) => String(t.id) === raw) : undefined;
   if (byId && byId.id !== undefined && byId.name) {
     return { team: { id: byId.id, name: byId.name } };
   }
 
-  const matches = teams.filter(
-    (t) => t.name && String(t.name).toLowerCase() === raw.toLowerCase()
-  );
+  const matches = teams.filter((t) => t.name && String(t.name).toLowerCase() === raw.toLowerCase());
 
   if (matches.length === 0) {
     return { team: null, error: `Team "${raw}" not found` };
@@ -65,7 +87,20 @@ function resolveTeam(
   return { team: { id: team.id, name: team.name } };
 }
 
-async function executeListTickets(api: ReturnType<typeof createGorgiasApi>, input: any, { redact = false }: { redact?: boolean } = {}) {
+async function executeListTickets(
+  api: ReturnType<typeof createGorgiasApi>,
+  input: {
+    status?: string;
+    channel?: string;
+    limit?: number;
+    created_after?: string;
+    created_before?: string;
+    assignee_email?: string;
+    tags?: string[];
+    exclude_tags?: string[];
+  },
+  { redact = false }: { redact?: boolean } = {},
+) {
   const response = await api.listTickets({
     status: input.status,
     channel: input.channel,
@@ -75,27 +110,29 @@ async function executeListTickets(api: ReturnType<typeof createGorgiasApi>, inpu
     assignee_email: input.assignee_email,
   });
 
-  let tickets = response.data || [];
+  let tickets = (response.data as GorgiasTicket[] | undefined) || [];
 
   if (input.tags && input.tags.length > 0) {
-    tickets = tickets.filter((t: any) => {
-      const ticketTags = t.tags?.map((tag: any) => String(tag.name).toLowerCase()) || [];
-      return input.tags.every((tag: string) => ticketTags.includes(tag.toLowerCase()));
+    tickets = tickets.filter((t) => {
+      const ticketTags = t.tags?.map((tag) => String(tag.name).toLowerCase()) || [];
+      return input.tags!.every((tag) => ticketTags.includes(tag.toLowerCase()));
     });
   }
 
   if (input.exclude_tags && input.exclude_tags.length > 0) {
-    tickets = tickets.filter((t: any) => {
-      const ticketTags = t.tags?.map((tag: any) => String(tag.name).toLowerCase()) || [];
-      return !input.exclude_tags.some((tag: string) => ticketTags.includes(tag.toLowerCase()));
+    tickets = tickets.filter((t) => {
+      const ticketTags = t.tags?.map((tag) => String(tag.name).toLowerCase()) || [];
+      return !input.exclude_tags!.some((tag) => ticketTags.includes(tag.toLowerCase()));
     });
   }
 
   const byStatus: Record<string, number> = {};
   const byChannel: Record<string, number> = {};
   for (const t of tickets) {
-    byStatus[t.status] = (byStatus[t.status] || 0) + 1;
-    byChannel[t.channel] = (byChannel[t.channel] || 0) + 1;
+    const statusKey = String(t.status || '');
+    const channelKey = String(t.channel || '');
+    byStatus[statusKey] = (byStatus[statusKey] || 0) + 1;
+    byChannel[channelKey] = (byChannel[channelKey] || 0) + 1;
   }
 
   return {
@@ -103,31 +140,41 @@ async function executeListTickets(api: ReturnType<typeof createGorgiasApi>, inpu
     total_tickets: tickets.length,
     by_status: byStatus,
     by_channel: byChannel,
-    tickets: tickets.slice(0, 25).map((t: any) => formatTicketSummary(t, { redact })),
+    tickets: tickets.slice(0, 25).map((t: GorgiasTicket) => formatTicketSummary(t, { redact })),
     has_more: tickets.length > 25,
   };
 }
 
-async function executeGetTicket(api: ReturnType<typeof createGorgiasApi>, input: any, { redact = false }: { redact?: boolean } = {}) {
-  const ticket = await api.getTicket(input.ticket_id);
+async function executeGetTicket(
+  api: ReturnType<typeof createGorgiasApi>,
+  input: { ticket_id: number },
+  { redact = false }: { redact?: boolean } = {},
+) {
+  const ticket = (await api.getTicket(input.ticket_id)) as GorgiasTicket;
   const messages = await api.getTicketMessages(input.ticket_id);
 
   return {
     success: true,
     ticket: formatTicketSummary(ticket, { redact }),
-    messages: (messages.data || []).slice(0, 20).map((m: any) => ({
-      id: m.id,
-      sender: redact ? '[redacted]' : m.sender?.email,
-      channel: m.channel,
-      body_text: m.body_text?.substring(0, 500),
-      created_at: m.created_datetime,
-      is_internal: m.internal,
-    })),
-    has_more_messages: (messages.data || []).length > 20,
+    messages: ((messages.data as GorgiasMessage[] | undefined) || [])
+      .slice(0, 20)
+      .map((m: GorgiasMessage) => ({
+        id: m.id,
+        sender: redact ? '[redacted]' : m.sender?.email,
+        channel: m.channel,
+        body_text: m.body_text?.substring(0, 500),
+        created_at: m.created_datetime,
+        is_internal: m.internal,
+      })),
+    has_more_messages: ((messages.data as GorgiasMessage[] | undefined) || []).length > 20,
   };
 }
 
-async function executeCloseTicket(api: ReturnType<typeof createGorgiasApi>, input: any, { allowApply = false }: { allowApply?: boolean } = {}) {
+async function executeCloseTicket(
+  api: ReturnType<typeof createGorgiasApi>,
+  input: { ticket_id: number; internal_note?: string },
+  { allowApply = false }: { allowApply?: boolean } = {},
+) {
   if (!allowApply) {
     return {
       error: 'Close operation not allowed. The --apply flag or STATESET_ALLOW_APPLY must be set.',
@@ -153,10 +200,21 @@ async function executeCloseTicket(api: ReturnType<typeof createGorgiasApi>, inpu
   };
 }
 
-async function executeEscalateTicket(api: ReturnType<typeof createGorgiasApi>, input: any, { allowApply = false }: { allowApply?: boolean } = {}) {
+async function executeEscalateTicket(
+  api: ReturnType<typeof createGorgiasApi>,
+  input: {
+    ticket_id: number;
+    assignee_email?: string;
+    team?: string;
+    priority?: string;
+    internal_note?: string;
+  },
+  { allowApply = false }: { allowApply?: boolean } = {},
+) {
   if (!allowApply) {
     return {
-      error: 'Escalate operation not allowed. The --apply flag or STATESET_ALLOW_APPLY must be set.',
+      error:
+        'Escalate operation not allowed. The --apply flag or STATESET_ALLOW_APPLY must be set.',
       hint: 'Use get_ticket first to review the ticket.',
     };
   }
@@ -166,7 +224,9 @@ async function executeEscalateTicket(api: ReturnType<typeof createGorgiasApi>, i
 
   if (input.assignee_email) {
     const users = await api.listUsers();
-    const user = (users.data || []).find((u: any) => u.email === input.assignee_email);
+    const user = ((users.data as Array<{ id?: number; email?: string }> | undefined) || []).find(
+      (u: { id?: number; email?: string }) => u.email === input.assignee_email,
+    );
     if (!user) {
       return { success: false, error: `Assignee "${input.assignee_email}" not found` };
     }
@@ -175,7 +235,10 @@ async function executeEscalateTicket(api: ReturnType<typeof createGorgiasApi>, i
 
   if (input.team) {
     const teams = await api.listTeams();
-    const resolved = resolveTeam(teams.data || [], input.team);
+    const resolved = resolveTeam(
+      (teams.data as Array<{ id?: number; name?: string }> | undefined) || [],
+      input.team,
+    );
     if (resolved.error) {
       return { success: false, error: resolved.error };
     }
@@ -206,14 +269,18 @@ async function executeEscalateTicket(api: ReturnType<typeof createGorgiasApi>, i
     success: true,
     ticket_id: input.ticket_id,
     action: 'escalated',
-    team: resolvedTeam?.name || (input.team || null),
+    team: resolvedTeam?.name || input.team || null,
     team_id: resolvedTeam?.id || null,
     assignee: input.assignee_email || null,
     priority: input.priority || null,
   };
 }
 
-async function executeRespondWithMacro(api: ReturnType<typeof createGorgiasApi>, input: any, { allowApply = false }: { allowApply?: boolean } = {}) {
+async function executeRespondWithMacro(
+  api: ReturnType<typeof createGorgiasApi>,
+  input: { ticket_id: number; macro_id?: number; macro_name?: string; close_after?: boolean },
+  { allowApply = false }: { allowApply?: boolean } = {},
+) {
   if (!allowApply) {
     return {
       error: 'Respond operation not allowed. The --apply flag or STATESET_ALLOW_APPLY must be set.',
@@ -225,8 +292,9 @@ async function executeRespondWithMacro(api: ReturnType<typeof createGorgiasApi>,
 
   if (!macroId && input.macro_name) {
     const macros = await api.listMacros();
-    const macro = (macros.data || []).find((m: any) =>
-      String(m.name).toLowerCase() === String(input.macro_name).toLowerCase()
+    const macro = ((macros.data as Array<{ id?: number; name?: string }> | undefined) || []).find(
+      (m: { id?: number; name?: string }) =>
+        String(m.name).toLowerCase() === String(input.macro_name).toLowerCase(),
     );
     if (!macro) {
       return {
@@ -258,15 +326,19 @@ async function executeRespondWithMacro(api: ReturnType<typeof createGorgiasApi>,
   };
 }
 
-async function executeAddTags(api: ReturnType<typeof createGorgiasApi>, input: any, { allowApply = false }: { allowApply?: boolean } = {}) {
+async function executeAddTags(
+  api: ReturnType<typeof createGorgiasApi>,
+  input: { ticket_id: number; tags: string[] },
+  { allowApply = false }: { allowApply?: boolean } = {},
+) {
   if (!allowApply) {
     return {
       error: 'Tag operation not allowed. The --apply flag or STATESET_ALLOW_APPLY must be set.',
     };
   }
 
-  const ticket = await api.getTicket(input.ticket_id);
-  const existingTags = ticket.tags?.map((t: any) => t.name) || [];
+  const ticket = (await api.getTicket(input.ticket_id)) as GorgiasTicket;
+  const existingTags = ticket.tags?.map((t: { name?: string }) => t.name) || [];
   const newTags = [...new Set([...existingTags, ...input.tags])];
 
   await api.updateTicket(input.ticket_id, {
@@ -281,7 +353,11 @@ async function executeAddTags(api: ReturnType<typeof createGorgiasApi>, input: a
   };
 }
 
-async function executeMergeTickets(api: ReturnType<typeof createGorgiasApi>, input: any, { allowApply = false }: { allowApply?: boolean } = {}) {
+async function executeMergeTickets(
+  api: ReturnType<typeof createGorgiasApi>,
+  input: { primary_ticket_id: number; secondary_ticket_ids: number[] },
+  { allowApply = false }: { allowApply?: boolean } = {},
+) {
   if (!allowApply) {
     return {
       error: 'Merge operation not allowed. The --apply flag or STATESET_ALLOW_APPLY must be set.',
@@ -299,10 +375,15 @@ async function executeMergeTickets(api: ReturnType<typeof createGorgiasApi>, inp
   };
 }
 
-async function executeBatchCloseTickets(api: ReturnType<typeof createGorgiasApi>, input: any, { allowApply = false }: { allowApply?: boolean } = {}) {
+async function executeBatchCloseTickets(
+  api: ReturnType<typeof createGorgiasApi>,
+  input: { ticket_ids: number[]; internal_note?: string; add_tag?: string },
+  { allowApply = false }: { allowApply?: boolean } = {},
+) {
   if (!allowApply) {
     return {
-      error: 'Batch close operation not allowed. The --apply flag or STATESET_ALLOW_APPLY must be set.',
+      error:
+        'Batch close operation not allowed. The --apply flag or STATESET_ALLOW_APPLY must be set.',
       hint: 'Use list_tickets first to preview which tickets will be closed.',
     };
   }
@@ -313,8 +394,8 @@ async function executeBatchCloseTickets(api: ReturnType<typeof createGorgiasApi>
   for (const ticketId of input.ticket_ids) {
     try {
       if (input.add_tag) {
-        const ticket = await api.getTicket(ticketId);
-        const existingTags = ticket.tags?.map((t: any) => t.name) || [];
+        const ticket = (await api.getTicket(ticketId)) as GorgiasTicket;
+        const existingTags = ticket.tags?.map((t: { name?: string }) => t.name) || [];
         if (!existingTags.includes(input.add_tag)) {
           await api.updateTicket(ticketId, {
             tags: [...existingTags, input.add_tag].map((name) => ({ name })),
@@ -350,10 +431,15 @@ async function executeBatchCloseTickets(api: ReturnType<typeof createGorgiasApi>
   };
 }
 
-async function executeBatchTagTickets(api: ReturnType<typeof createGorgiasApi>, input: any, { allowApply = false }: { allowApply?: boolean } = {}) {
+async function executeBatchTagTickets(
+  api: ReturnType<typeof createGorgiasApi>,
+  input: { ticket_ids: number[]; tags: string[] },
+  { allowApply = false }: { allowApply?: boolean } = {},
+) {
   if (!allowApply) {
     return {
-      error: 'Batch tag operation not allowed. The --apply flag or STATESET_ALLOW_APPLY must be set.',
+      error:
+        'Batch tag operation not allowed. The --apply flag or STATESET_ALLOW_APPLY must be set.',
     };
   }
 
@@ -362,8 +448,8 @@ async function executeBatchTagTickets(api: ReturnType<typeof createGorgiasApi>, 
 
   for (const ticketId of input.ticket_ids) {
     try {
-      const ticket = await api.getTicket(ticketId);
-      const existingTags = ticket.tags?.map((t: any) => t.name) || [];
+      const ticket = (await api.getTicket(ticketId)) as GorgiasTicket;
+      const existingTags = ticket.tags?.map((t: { name?: string }) => t.name) || [];
       const newTags = [...new Set([...existingTags, ...input.tags])];
 
       await api.updateTicket(ticketId, {
@@ -389,7 +475,11 @@ async function executeBatchTagTickets(api: ReturnType<typeof createGorgiasApi>, 
   };
 }
 
-export function registerGorgiasTools(server: McpServer, gorgias: GorgiasConfig, options: GorgiasToolOptions) {
+export function registerGorgiasTools(
+  server: McpServer,
+  gorgias: GorgiasConfig,
+  options: GorgiasToolOptions,
+) {
   const api = createGorgiasApi(gorgias);
 
   server.tool(
@@ -397,18 +487,30 @@ export function registerGorgiasTools(server: McpServer, gorgias: GorgiasConfig, 
     'Search and list Gorgias tickets with filters. Use this to find tickets by status, channel, tags, or date.',
     {
       status: z.enum(['open', 'closed', 'snoozed']).optional().describe('Filter by ticket status'),
-      channel: z.string().optional().describe('Filter by channel (email, chat, facebook, instagram, twitter, phone)'),
-      tags: z.array(z.string()).optional().describe('Filter by tags (tickets must have all specified tags)'),
+      channel: z
+        .string()
+        .optional()
+        .describe('Filter by channel (email, chat, facebook, instagram, twitter, phone)'),
+      tags: z
+        .array(z.string())
+        .optional()
+        .describe('Filter by tags (tickets must have all specified tags)'),
       exclude_tags: z.array(z.string()).optional().describe('Exclude tickets with these tags'),
       assignee_email: z.string().optional().describe('Filter by assignee email'),
-      created_after: z.string().optional().describe('Filter tickets created after this date (ISO format)'),
-      created_before: z.string().optional().describe('Filter tickets created before this date (ISO format)'),
+      created_after: z
+        .string()
+        .optional()
+        .describe('Filter tickets created after this date (ISO format)'),
+      created_before: z
+        .string()
+        .optional()
+        .describe('Filter tickets created before this date (ISO format)'),
       limit: z.number().min(1).max(100).optional().describe('Maximum number of tickets to return'),
     },
     async (args) => {
       const result = await executeListTickets(api, args, { redact: options.redact });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
-    }
+      return wrapToolResult(result);
+    },
   );
 
   server.tool(
@@ -419,8 +521,8 @@ export function registerGorgiasTools(server: McpServer, gorgias: GorgiasConfig, 
     },
     async (args) => {
       const result = await executeGetTicket(api, args, { redact: options.redact });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
-    }
+      return wrapToolResult(result);
+    },
   );
 
   server.tool(
@@ -432,8 +534,8 @@ export function registerGorgiasTools(server: McpServer, gorgias: GorgiasConfig, 
     },
     async (args) => {
       const result = await executeCloseTicket(api, args, { allowApply: options.allowApply });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
-    }
+      return wrapToolResult(result);
+    },
   );
 
   server.tool(
@@ -448,8 +550,8 @@ export function registerGorgiasTools(server: McpServer, gorgias: GorgiasConfig, 
     },
     async (args) => {
       const result = await executeEscalateTicket(api, args, { allowApply: options.allowApply });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
-    }
+      return wrapToolResult(result);
+    },
   );
 
   server.tool(
@@ -458,13 +560,16 @@ export function registerGorgiasTools(server: McpServer, gorgias: GorgiasConfig, 
     {
       ticket_id: z.number().describe('The Gorgias ticket ID'),
       macro_id: z.number().optional().describe('The macro ID to apply'),
-      macro_name: z.string().optional().describe('The macro name to apply (alternative to macro_id)'),
+      macro_name: z
+        .string()
+        .optional()
+        .describe('The macro name to apply (alternative to macro_id)'),
       close_after: z.boolean().optional().describe('Close the ticket after sending'),
     },
     async (args) => {
       const result = await executeRespondWithMacro(api, args, { allowApply: options.allowApply });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
-    }
+      return wrapToolResult(result);
+    },
   );
 
   server.tool(
@@ -476,8 +581,8 @@ export function registerGorgiasTools(server: McpServer, gorgias: GorgiasConfig, 
     },
     async (args) => {
       const result = await executeAddTags(api, args, { allowApply: options.allowApply });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
-    }
+      return wrapToolResult(result);
+    },
   );
 
   server.tool(
@@ -489,8 +594,8 @@ export function registerGorgiasTools(server: McpServer, gorgias: GorgiasConfig, 
     },
     async (args) => {
       const result = await executeMergeTickets(api, args, { allowApply: options.allowApply });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
-    }
+      return wrapToolResult(result);
+    },
   );
 
   server.tool(
@@ -503,8 +608,8 @@ export function registerGorgiasTools(server: McpServer, gorgias: GorgiasConfig, 
     },
     async (args) => {
       const result = await executeBatchCloseTickets(api, args, { allowApply: options.allowApply });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
-    }
+      return wrapToolResult(result);
+    },
   );
 
   server.tool(
@@ -516,28 +621,23 @@ export function registerGorgiasTools(server: McpServer, gorgias: GorgiasConfig, 
     },
     async (args) => {
       const result = await executeBatchTagTickets(api, args, { allowApply: options.allowApply });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
-    }
+      return wrapToolResult(result);
+    },
   );
 
-  server.tool(
-    'gorgias_list_macros',
-    'List available Gorgias macros.',
-    {},
-    async () => {
-      const response = await api.listMacros();
-      const data = response?.data || response || [];
-      const macros = Array.isArray(data) ? data : [];
-      const safeMacros = options.redact ? macros.map(redactPii) : macros;
-      const result = {
-        success: true,
-        total_macros: safeMacros.length,
-        macros: safeMacros.slice(0, 50),
-        has_more: safeMacros.length > 50,
-      };
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
-    }
-  );
+  server.tool('gorgias_list_macros', 'List available Gorgias macros.', {}, async () => {
+    const response = await api.listMacros();
+    const data = response?.data || response || [];
+    const macros = Array.isArray(data) ? data : [];
+    const safeMacros = options.redact ? macros.map(redactPii) : macros;
+    const result = {
+      success: true,
+      total_macros: safeMacros.length,
+      macros: safeMacros.slice(0, 50),
+      has_more: safeMacros.length > 50,
+    };
+    return wrapToolResult(result);
+  });
 
   server.tool(
     'gorgias_get_macro',
@@ -546,83 +646,64 @@ export function registerGorgiasTools(server: McpServer, gorgias: GorgiasConfig, 
     async (args) => {
       const macro = await api.getMacro(args.macro_id);
       const safeMacro = options.redact ? redactPii(macro) : macro;
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, macro: safeMacro }, null, 2) }] };
-    }
+      return wrapToolResult({ success: true, macro: safeMacro });
+    },
   );
 
-  server.tool(
-    'gorgias_list_users',
-    'List Gorgias users (agents).',
-    {},
-    async () => {
-      const response = await api.listUsers();
-      const data = response?.data || response || [];
-      const users = Array.isArray(data) ? data : [];
-      const safeUsers = options.redact ? users.map(redactPii) : users;
-      const result = {
-        success: true,
-        total_users: safeUsers.length,
-        users: safeUsers.slice(0, 50),
-        has_more: safeUsers.length > 50,
-      };
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
-    }
-  );
+  server.tool('gorgias_list_users', 'List Gorgias users (agents).', {}, async () => {
+    const response = await api.listUsers();
+    const data = response?.data || response || [];
+    const users = Array.isArray(data) ? data : [];
+    const safeUsers = options.redact ? users.map(redactPii) : users;
+    const result = {
+      success: true,
+      total_users: safeUsers.length,
+      users: safeUsers.slice(0, 50),
+      has_more: safeUsers.length > 50,
+    };
+    return wrapToolResult(result);
+  });
 
-  server.tool(
-    'gorgias_list_teams',
-    'List Gorgias teams.',
-    {},
-    async () => {
-      const response = await api.listTeams();
-      const data = response?.data || response || [];
-      const teams = Array.isArray(data) ? data : [];
-      const safeTeams = options.redact ? teams.map(redactPii) : teams;
-      const result = {
-        success: true,
-        total_teams: safeTeams.length,
-        teams: safeTeams.slice(0, 50),
-        has_more: safeTeams.length > 50,
-      };
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
-    }
-  );
+  server.tool('gorgias_list_teams', 'List Gorgias teams.', {}, async () => {
+    const response = await api.listTeams();
+    const data = response?.data || response || [];
+    const teams = Array.isArray(data) ? data : [];
+    const safeTeams = options.redact ? teams.map(redactPii) : teams;
+    const result = {
+      success: true,
+      total_teams: safeTeams.length,
+      teams: safeTeams.slice(0, 50),
+      has_more: safeTeams.length > 50,
+    };
+    return wrapToolResult(result);
+  });
 
   server.tool(
     'gorgias_request',
     'Execute a raw Gorgias API request. Non-GET methods require --apply or STATESET_ALLOW_APPLY.',
     {
-      method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH']).describe('HTTP method'),
-      endpoint: z.string().describe('API endpoint path (e.g., /tickets, /customers/123)'),
-      query: z.record(z.union([z.string(), z.number(), z.boolean()])).optional().describe('Optional query params'),
-      body: z.record(z.any()).optional().describe('Optional JSON body'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      method: RawRequestSchema.method,
+      endpoint: RawRequestSchema.endpoint,
+      query: RawRequestSchema.query,
+      body: RawRequestSchema.body,
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
       const method = String(args.method || '').toUpperCase();
-      if (method !== 'GET' && !options.allowApply) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify({
-              error: 'Write operation not allowed. The --apply flag or STATESET_ALLOW_APPLY must be set.',
-              hint: 'Use GET requests when writes are disabled.',
-            }, null, 2),
-          }],
-        };
+      if (method !== 'GET') {
+        const blocked = guardWrite(options);
+        if (blocked) return blocked;
       }
 
       const response = await api.requestRaw(
         method,
         args.endpoint as string,
         args.query as Record<string, string | number | boolean> | undefined,
-        args.body as Record<string, unknown> | undefined
+        args.body as Record<string, unknown> | undefined,
       );
 
       const data = options.redact ? redactPii(response) : response;
-      const payload = { success: true, data };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult({ success: true, data }, args.max_chars as number | undefined);
+    },
   );
 }

@@ -45,9 +45,7 @@ export const sampleRule = {
       { field: 'message', operator: 'contains', value: 'hi' },
     ],
   },
-  actions: [
-    { type: 'send_message', params: { message: 'Hello! How can I help you?' } },
-  ],
+  actions: [{ type: 'send_message', params: { message: 'Hello! How can I help you?' } }],
   metadata: { category: 'greeting' },
   created_at: '2024-01-01T00:00:00.000Z',
   updated_at: '2024-01-01T00:00:00.000Z',
@@ -63,13 +61,9 @@ export const sampleSkill = {
   agent_id: TEST_AGENT_ID,
   org_id: TEST_ORG_ID,
   conditions: {
-    all: [
-      { field: 'intent', operator: 'eq', value: 'order_status' },
-    ],
+    all: [{ field: 'intent', operator: 'eq', value: 'order_status' }],
   },
-  actions: [
-    { type: 'call_function', params: { function_name: 'get_order' } },
-  ],
+  actions: [{ type: 'call_function', params: { function_name: 'get_order' } }],
   metadata: {},
   created_at: '2024-01-01T00:00:00.000Z',
   updated_at: '2024-01-01T00:00:00.000Z',
@@ -85,11 +79,9 @@ export const sampleFunction = {
   org_id: TEST_ORG_ID,
   endpoint: 'https://api.example.com/orders/{order_id}',
   method: 'GET',
-  parameters: [
-    { name: 'order_id', type: 'string', required: true, description: 'Order ID' },
-  ],
+  parameters: [{ name: 'order_id', type: 'string', required: true, description: 'Order ID' }],
   authentication: { type: 'bearer' },
-  headers: { 'Accept': 'application/json' },
+  headers: { Accept: 'application/json' },
   request_transform: { body: {} },
   response_handling: {
     success_condition: 'status_code == 200',
@@ -200,14 +192,10 @@ export const graphqlResponses = {
 // ============================================================================
 
 export const validConditions = {
-  any: [
-    { field: 'message', operator: 'contains' as const, value: 'hello' },
-  ],
+  any: [{ field: 'message', operator: 'contains' as const, value: 'hello' }],
 };
 
-export const validActions = [
-  { type: 'send_message', params: { message: 'Hi!' } },
-];
+export const validActions = [{ type: 'send_message', params: { message: 'Hi!' } }];
 
 export const validMetadata = {
   category: 'test',

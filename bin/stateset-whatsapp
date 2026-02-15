@@ -3,6 +3,10 @@
 import { WhatsAppGateway } from '../dist/whatsapp/gateway.js';
 import { clearAuth } from '../dist/whatsapp/session.js';
 import { configExists, getAnthropicApiKey, getCurrentOrg, resolveModel } from '../dist/config.js';
+import { logger } from '../dist/lib/logger.js';
+import { installGlobalErrorHandlers } from '../dist/lib/errors.js';
+
+installGlobalErrorHandlers();
 
 // ---------------------------------------------------------------------------
 // CLI argument parsing
@@ -10,10 +14,11 @@ import { configExists, getAnthropicApiKey, getCurrentOrg, resolveModel } from '.
 
 const args = process.argv.slice(2);
 const options = {
-  model: undefined as string | undefined,
-  allow: undefined as string[] | undefined,
+  model: undefined,
+  allow: undefined,
   groups: false,
-  authDir: undefined as string | undefined,
+  selfChat: false,
+  authDir: undefined,
   reset: false,
   verbose: false,
 };
@@ -28,6 +33,9 @@ for (let i = 0; i < args.length; i++) {
       break;
     case '--groups':
       options.groups = true;
+      break;
+    case '--self-chat':
+      options.selfChat = true;
       break;
     case '--auth-dir':
       options.authDir = args[++i];
@@ -50,6 +58,7 @@ Options:
   --model <name>     Model to use (sonnet, haiku, opus)       [default: config]
   --allow <phones>   Comma-separated allowlist of phone numbers
   --groups           Allow messages from group chats           [default: false]
+  --self-chat        Only respond to messages you send to yourself
   --auth-dir <path>  WhatsApp auth credential directory        [default: ~/.stateset/whatsapp-auth]
   --reset            Clear stored WhatsApp auth and re-scan QR
   --verbose, -v      Enable debug logging
@@ -59,11 +68,18 @@ Examples:
   response-whatsapp                           Start with default settings
   response-whatsapp --model haiku             Use Claude Haiku
   response-whatsapp --allow 14155551234       Only accept from one number
+  response-whatsapp --self-chat               Only respond to your self-chat
   response-whatsapp --reset                   Re-authenticate with QR scan
 `);
       process.exit(0);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Logger
+// ---------------------------------------------------------------------------
+
+logger.configure({ level: options.verbose ? 'debug' : 'info' });
 
 // ---------------------------------------------------------------------------
 // Validation
@@ -119,6 +135,7 @@ console.log(`
 ║  Organization: ${orgId.padEnd(34)}║
 ║  Model:        ${(options.model ?? 'default').padEnd(34)}║
 ║  Groups:       ${(options.groups ? 'allowed' : 'disabled').padEnd(34)}║
+║  Self chat:    ${(options.selfChat ? 'enabled' : 'disabled').padEnd(34)}║
 ${options.allow ? `║  Allowlist:    ${options.allow.length + ' number(s)'.padEnd(30)}     ║\n` : ''}╚═══════════════════════════════════════════════════╝
 `);
 
@@ -130,6 +147,7 @@ const gateway = new WhatsAppGateway({
   model: options.model,
   allowList: options.allow,
   allowGroups: options.groups,
+  selfChatOnly: options.selfChat,
   authDir: options.authDir,
   verbose: options.verbose,
 });

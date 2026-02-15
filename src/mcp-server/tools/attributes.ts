@@ -19,7 +19,6 @@ const ATTRIBUTE_FIELDS = `
 `;
 
 export function registerAttributeTools(server: McpServer, client: GraphQLClient, orgId: string) {
-
   server.tool(
     'list_attributes',
     'List all attributes for the current organization',
@@ -41,8 +40,10 @@ export function registerAttributeTools(server: McpServer, client: GraphQLClient,
         limit: limit ?? 100,
         offset: offset ?? 0,
       });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.attributes, null, 2) }] };
-    }
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(data.attributes, null, 2) }],
+      };
+    },
   );
 
   server.tool(
@@ -50,16 +51,32 @@ export function registerAttributeTools(server: McpServer, client: GraphQLClient,
     'Create a new attribute for an agent',
     {
       attribute_name: z.string().max(MAX_NAME_LENGTH).describe('Name of the attribute'),
-      attribute_type: z.enum(['string', 'number', 'boolean', 'enum', 'scale']).describe('Attribute type'),
+      attribute_type: z
+        .enum(['string', 'number', 'boolean', 'enum', 'scale'])
+        .describe('Attribute type'),
       agent_id: z.string().uuid().describe('UUID of the agent this attribute belongs to'),
       value: attributeValueSchema,
-      max_value: z.number().min(-1000000).max(1000000).optional().describe('Maximum value (for numeric/scale types)'),
-      min_value: z.number().min(-1000000).max(1000000).optional().describe('Minimum value (for numeric/scale types)'),
+      max_value: z
+        .number()
+        .min(-1000000)
+        .max(1000000)
+        .optional()
+        .describe('Maximum value (for numeric/scale types)'),
+      min_value: z
+        .number()
+        .min(-1000000)
+        .max(1000000)
+        .optional()
+        .describe('Minimum value (for numeric/scale types)'),
       category: z.string().max(100).optional().describe('Category of the attribute'),
       description: z.string().max(MAX_DESCRIPTION_LENGTH).optional().describe('Description'),
       modifiable: z.boolean().optional().describe('Whether the attribute can be modified'),
       impact: z.string().max(500).optional().describe('Impact description'),
-      enum_values: z.array(z.string().max(100)).max(50).optional().describe('Possible values for enum type'),
+      enum_values: z
+        .array(z.string().max(100))
+        .max(50)
+        .optional()
+        .describe('Possible values for enum type'),
       metadata: metadataSchema,
       activated: z.boolean().optional().describe('Whether the attribute is activated'),
     },
@@ -74,7 +91,7 @@ export function registerAttributeTools(server: McpServer, client: GraphQLClient,
         attribute_name: args.attribute_name,
         attribute_type: args.attribute_type,
         agent_id: args.agent_id,
-        value: args.value !== undefined ? args.value : (args.attribute_type === 'scale' ? 50 : null),
+        value: args.value !== undefined ? args.value : args.attribute_type === 'scale' ? 50 : null,
         max_value: args.max_value !== undefined ? args.max_value : 100,
         min_value: args.min_value !== undefined ? args.min_value : 0,
         category: args.category || '',
@@ -87,9 +104,20 @@ export function registerAttributeTools(server: McpServer, client: GraphQLClient,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
-      const data = await executeQuery<{ insert_attributes: { returning: unknown[] } }>(client, mutation, { attribute });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.insert_attributes.returning[0], null, 2) }] };
-    }
+      const data = await executeQuery<{ insert_attributes: { returning: unknown[] } }>(
+        client,
+        mutation,
+        { attribute },
+      );
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(data.insert_attributes.returning[0], null, 2),
+          },
+        ],
+      };
+    },
   );
 
   server.tool(
@@ -98,7 +126,10 @@ export function registerAttributeTools(server: McpServer, client: GraphQLClient,
     {
       id: z.string().uuid().describe('UUID of the attribute to update'),
       attribute_name: z.string().max(MAX_NAME_LENGTH).optional().describe('New name'),
-      attribute_type: z.enum(['string', 'number', 'boolean', 'enum', 'scale']).optional().describe('New type'),
+      attribute_type: z
+        .enum(['string', 'number', 'boolean', 'enum', 'scale'])
+        .optional()
+        .describe('New type'),
       value: attributeValueSchema,
       max_value: z.number().min(-1000000).max(1000000).optional().describe('New max value'),
       min_value: z.number().min(-1000000).max(1000000).optional().describe('New min value'),
@@ -111,7 +142,10 @@ export function registerAttributeTools(server: McpServer, client: GraphQLClient,
     },
     async (args) => {
       const { id, ...updates } = args;
-      const setFields: Record<string, unknown> = { ...updates, updated_at: new Date().toISOString() };
+      const setFields: Record<string, unknown> = {
+        ...updates,
+        updated_at: new Date().toISOString(),
+      };
       for (const key of Object.keys(setFields)) {
         if (setFields[key] === undefined) delete setFields[key];
       }
@@ -120,12 +154,23 @@ export function registerAttributeTools(server: McpServer, client: GraphQLClient,
           returning { ${ATTRIBUTE_FIELDS} }
         }
       }`;
-      const data = await executeQuery<{ update_attributes: { returning: unknown[] } }>(client, mutation, { id, org_id: orgId, set: setFields });
+      const data = await executeQuery<{ update_attributes: { returning: unknown[] } }>(
+        client,
+        mutation,
+        { id, org_id: orgId, set: setFields },
+      );
       if (!data.update_attributes.returning.length) {
         return { content: [{ type: 'text' as const, text: 'Attribute not found' }], isError: true };
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.update_attributes.returning[0], null, 2) }] };
-    }
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(data.update_attributes.returning[0], null, 2),
+          },
+        ],
+      };
+    },
   );
 
   server.tool(
@@ -138,31 +183,47 @@ export function registerAttributeTools(server: McpServer, client: GraphQLClient,
           returning { id attribute_name }
         }
       }`;
-      const data = await executeQuery<{ delete_attributes: { returning: unknown[] } }>(client, mutation, { id, org_id: orgId });
+      const data = await executeQuery<{ delete_attributes: { returning: unknown[] } }>(
+        client,
+        mutation,
+        { id, org_id: orgId },
+      );
       if (!data.delete_attributes.returning.length) {
         return { content: [{ type: 'text' as const, text: 'Attribute not found' }], isError: true };
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ deleted: data.delete_attributes.returning[0] }, null, 2) }] };
-    }
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({ deleted: data.delete_attributes.returning[0] }, null, 2),
+          },
+        ],
+      };
+    },
   );
 
   server.tool(
     'import_attributes',
     'Bulk import attributes (upserts on primary key conflict)',
     {
-      attributes: z.array(z.object({
-        attribute_name: z.string().max(MAX_NAME_LENGTH),
-        attribute_type: z.enum(['string', 'number', 'boolean', 'enum', 'scale']),
-        agent_id: z.string().uuid(),
-        value: attributeValueSchema,
-        max_value: z.number().min(-1000000).max(1000000).optional(),
-        min_value: z.number().min(-1000000).max(1000000).optional(),
-        category: z.string().max(100).optional(),
-        description: z.string().max(MAX_DESCRIPTION_LENGTH).optional(),
-        modifiable: z.boolean().optional(),
-        impact: z.string().max(500).optional(),
-        activated: z.boolean().optional(),
-      })).max(MAX_ARRAY_LENGTH).describe('Array of attributes to import (max 100)'),
+      attributes: z
+        .array(
+          z.object({
+            attribute_name: z.string().max(MAX_NAME_LENGTH),
+            attribute_type: z.enum(['string', 'number', 'boolean', 'enum', 'scale']),
+            agent_id: z.string().uuid(),
+            value: attributeValueSchema,
+            max_value: z.number().min(-1000000).max(1000000).optional(),
+            min_value: z.number().min(-1000000).max(1000000).optional(),
+            category: z.string().max(100).optional(),
+            description: z.string().max(MAX_DESCRIPTION_LENGTH).optional(),
+            modifiable: z.boolean().optional(),
+            impact: z.string().max(500).optional(),
+            activated: z.boolean().optional(),
+          }),
+        )
+        .max(MAX_ARRAY_LENGTH)
+        .describe('Array of attributes to import (max 100)'),
     },
     async ({ attributes }) => {
       const mutation = `mutation ($attributes: [attributes_insert_input!]!) {
@@ -175,7 +236,7 @@ export function registerAttributeTools(server: McpServer, client: GraphQLClient,
         }
       }`;
       const timestamp = new Date().toISOString();
-      const prepared = attributes.map(a => ({
+      const prepared = attributes.map((a) => ({
         ...a,
         org_id: orgId,
         activated: a.activated !== undefined ? a.activated : true,
@@ -191,8 +252,24 @@ export function registerAttributeTools(server: McpServer, client: GraphQLClient,
         created_at: timestamp,
         updated_at: timestamp,
       }));
-      const data = await executeQuery<{ insert_attributes: { returning: unknown[]; affected_rows: number } }>(client, mutation, { attributes: prepared });
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ affected_rows: data.insert_attributes.affected_rows, attributes: data.insert_attributes.returning }, null, 2) }] };
-    }
+      const data = await executeQuery<{
+        insert_attributes: { returning: unknown[]; affected_rows: number };
+      }>(client, mutation, { attributes: prepared });
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(
+              {
+                affected_rows: data.insert_attributes.affected_rows,
+                attributes: data.insert_attributes.returning,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    },
   );
 }

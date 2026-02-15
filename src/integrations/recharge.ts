@@ -1,5 +1,6 @@
-import { requestJsonWithRetry } from './http.js';
+import { requestJsonWithRetry, normalizePath, applyQueryParams, throwOnHttpError } from './http.js';
 import type { RechargeConfig } from './config.js';
+import { ValidationError } from '../lib/errors.js';
 
 const BASE_URL = 'https://api.rechargeapps.com';
 
@@ -12,36 +13,19 @@ export interface RechargeRequestOptions {
   version?: string | null;
 }
 
-function normalizePath(rawPath: string): string {
-  let path = String(rawPath || '').trim();
-  if (!path) {
-    throw new Error('Path is required');
-  }
-  if (path.startsWith('http://') || path.startsWith('https://')) {
-    throw new Error('Path must be relative (e.g., /subscriptions, /customers/123)');
-  }
-  if (!path.startsWith('/')) {
-    path = `/${path}`;
-  }
-  return path;
-}
-
-export async function rechargeRequest(options: RechargeRequestOptions): Promise<{ status: number; data: unknown }> {
+export async function rechargeRequest(
+  options: RechargeRequestOptions,
+): Promise<{ status: number; data: unknown }> {
   const method = String(options.method || '').toUpperCase();
-  if (!method) throw new Error('Method is required');
+  if (!method) throw new ValidationError('Method is required');
 
-  const path = normalizePath(options.path);
+  const path = normalizePath(options.path, '/subscriptions, /customers/123');
   const url = new URL(`${BASE_URL}${path}`);
 
-  if (options.query) {
-    for (const [key, value] of Object.entries(options.query)) {
-      if (value === undefined || value === null) continue;
-      url.searchParams.set(key, String(value));
-    }
-  }
+  applyQueryParams(url, options.query);
 
   const headers: Record<string, string> = {
-    'Accept': 'application/json',
+    Accept: 'application/json',
     'Content-Type': 'application/json',
     'X-Recharge-Access-Token': options.recharge.accessToken,
   };
@@ -58,10 +42,7 @@ export async function rechargeRequest(options: RechargeRequestOptions): Promise<
     timeoutMs: 30_000,
   });
 
-  if (status >= 400) {
-    const msg = typeof data === 'string' ? data : JSON.stringify(data);
-    throw new Error(`Recharge API error (${status}): ${msg}`);
-  }
+  throwOnHttpError(status, data, 'Recharge');
 
   return { status, data };
 }

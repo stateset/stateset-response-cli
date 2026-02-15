@@ -11,9 +11,12 @@ export function stringifyToolResult(payload: unknown, maxChars = 12000): Stringi
   }
 
   const truncatedPayload = {
-    success: typeof payload === 'object' && payload !== null && 'success' in (payload as Record<string, unknown>)
-      ? (payload as Record<string, unknown>).success
-      : true,
+    success:
+      typeof payload === 'object' &&
+      payload !== null &&
+      'success' in (payload as Record<string, unknown>)
+        ? (payload as Record<string, unknown>).success
+        : true,
     truncated: true,
     max_chars: safeMax,
     preview: json.slice(0, safeMax),

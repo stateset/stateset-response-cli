@@ -10,7 +10,6 @@ const RESPONSE_FIELDS = `
 `;
 
 export function registerResponseTools(server: McpServer, client: GraphQLClient, orgId: string) {
-
   server.tool(
     'list_responses',
     'List responses for the current organization, ordered by most recent first',
@@ -39,9 +38,8 @@ export function registerResponseTools(server: McpServer, client: GraphQLClient, 
 
       const channelParam = channel ? ', $channel: String!' : '';
       const ratingParam = rating ? ', $rating: String!' : '';
-      const whereClause = conditions.length === 1
-        ? conditions[0]
-        : `{ _and: [${conditions.join(', ')}] }`;
+      const whereClause =
+        conditions.length === 1 ? conditions[0] : `{ _and: [${conditions.join(', ')}] }`;
 
       const query = `query ($org_id: String!, $limit: Int!, $offset: Int!${channelParam}${ratingParam}) {
         responses(
@@ -52,8 +50,10 @@ export function registerResponseTools(server: McpServer, client: GraphQLClient, 
       }`;
 
       const data = await executeQuery<{ responses: unknown[] }>(client, query, variables);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.responses, null, 2) }] };
-    }
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(data.responses, null, 2) }],
+      };
+    },
   );
 
   server.tool(
@@ -66,12 +66,17 @@ export function registerResponseTools(server: McpServer, client: GraphQLClient, 
           ${RESPONSE_FIELDS}
         }
       }`;
-      const data = await executeQuery<{ responses: unknown[] }>(client, query, { id, org_id: orgId });
+      const data = await executeQuery<{ responses: unknown[] }>(client, query, {
+        id,
+        org_id: orgId,
+      });
       if (!data.responses.length) {
         return { content: [{ type: 'text' as const, text: 'Response not found' }], isError: true };
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.responses[0], null, 2) }] };
-    }
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(data.responses[0], null, 2) }],
+      };
+    },
   );
 
   server.tool(
@@ -85,15 +90,19 @@ export function registerResponseTools(server: McpServer, client: GraphQLClient, 
         }
       }`;
       const data = await executeQuery<{ responses_aggregate: { aggregate: { count: number } } }>(
-        client, query, { org_id: orgId }
+        client,
+        query,
+        { org_id: orgId },
       );
       return {
-        content: [{
-          type: 'text' as const,
-          text: JSON.stringify(data.responses_aggregate, null, 2),
-        }],
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(data.responses_aggregate, null, 2),
+          },
+        ],
       };
-    }
+    },
   );
 
   server.tool(
@@ -124,16 +133,22 @@ export function registerResponseTools(server: McpServer, client: GraphQLClient, 
       }>(client, mutation, { ids: response_ids, rating, org_id: orgId });
 
       return {
-        content: [{
-          type: 'text' as const,
-          text: JSON.stringify({
-            success: true,
-            affected_rows: data.update_responses.affected_rows,
-            updated_responses: data.update_responses.returning,
-          }, null, 2),
-        }],
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(
+              {
+                success: true,
+                affected_rows: data.update_responses.affected_rows,
+                updated_responses: data.update_responses.returning,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
       };
-    }
+    },
   );
 
   server.tool(
@@ -162,7 +177,9 @@ export function registerResponseTools(server: McpServer, client: GraphQLClient, 
         search: `%${searchQuery}%`,
         limit: limit ?? 20,
       });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.responses, null, 2) }] };
-    }
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(data.responses, null, 2) }],
+      };
+    },
   );
 }

@@ -18,6 +18,7 @@ import {
   getConfiguredModel,
   type ModelId,
 } from '../config.js';
+import { logger } from '../lib/logger.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -43,12 +44,19 @@ interface SlackApp {
     chat: { postMessage: (opts: Record<string, unknown>) => Promise<unknown> };
   };
   message: (handler: (args: { event: SlackMessageEvent }) => Promise<void>) => void;
-  action: (pattern: RegExp, handler: (args: {
-    action: { action_id?: string; value?: string };
-    body: { user?: { id?: string }; channel?: { id?: string }; message?: { thread_ts?: string; ts?: string } };
-    ack: () => Promise<void>;
-    respond: (msg: { text: string; replace_original?: boolean }) => Promise<void>;
-  }) => Promise<void>) => void;
+  action: (
+    pattern: RegExp,
+    handler: (args: {
+      action: { action_id?: string; value?: string };
+      body: {
+        user?: { id?: string };
+        channel?: { id?: string };
+        message?: { thread_ts?: string; ts?: string };
+      };
+      ack: () => Promise<void>;
+      respond: (msg: { text: string; replace_original?: boolean }) => Promise<void>;
+    }) => Promise<void>,
+  ) => void;
   start: () => Promise<void>;
   stop: () => Promise<void>;
 }
@@ -89,11 +97,9 @@ export class SlackGateway {
 
   constructor(options: SlackGatewayOptions = {}) {
     this.model = options.model
-      ? resolveModel(options.model) ?? getConfiguredModel()
+      ? (resolveModel(options.model) ?? getConfiguredModel())
       : getConfiguredModel();
-    this.allowList = options.allowList?.length
-      ? new Set(options.allowList)
-      : null;
+    this.allowList = options.allowList?.length ? new Set(options.allowList) : null;
     this.verbose = options.verbose ?? false;
     this.botToken = process.env.SLACK_BOT_TOKEN || '';
   }
@@ -116,13 +122,13 @@ export class SlackGateway {
     if (!botToken) {
       throw new Error(
         'SLACK_BOT_TOKEN environment variable is required.\n' +
-        'Get one from your Slack app settings: https://api.slack.com/apps'
+          'Get one from your Slack app settings: https://api.slack.com/apps',
       );
     }
     if (!appToken) {
       throw new Error(
         'SLACK_APP_TOKEN environment variable is required (starts with xapp-).\n' +
-        'Enable Socket Mode and generate an app-level token in your Slack app settings.'
+          'Enable Socket Mode and generate an app-level token in your Slack app settings.',
       );
     }
 
@@ -132,15 +138,14 @@ export class SlackGateway {
     let AppCtor: new (opts: Record<string, unknown>) => SlackApp;
     try {
       const bolt = await import('@slack/bolt');
-      AppCtor = (bolt as { default?: { App: typeof AppCtor }; App?: typeof AppCtor }).default?.App
-        ?? (bolt as { App: typeof AppCtor }).App;
+      AppCtor =
+        (bolt as { default?: { App: typeof AppCtor }; App?: typeof AppCtor }).default?.App ??
+        (bolt as { App: typeof AppCtor }).App;
     } catch {
-      throw new Error(
-        '@slack/bolt is not installed. Install it with: npm install @slack/bolt'
-      );
+      throw new Error('@slack/bolt is not installed. Install it with: npm install @slack/bolt');
     }
 
-    this.log('Starting Slack gateway...');
+    this.log.info('Starting Slack gateway...');
 
     this.app = new AppCtor({
       token: botToken,
@@ -152,9 +157,9 @@ export class SlackGateway {
     try {
       const auth = await this.app.client.auth.test({ token: botToken });
       this.botUserId = auth.user_id ?? null;
-      this.debugLog(`Bot user ID: ${this.botUserId}`);
+      this.log.debug(`Bot user ID: ${this.botUserId}`);
     } catch {
-      this.log('Warning: could not resolve bot user ID. Mention detection may not work.');
+      this.log.info('Warning: could not resolve bot user ID. Mention detection may not work.');
     }
 
     this.setupEventHandlers();
@@ -163,7 +168,7 @@ export class SlackGateway {
     this.startCleanupTimer();
 
     await this.app.start();
-    this.log('Slack bot connected. Gateway is ready for messages.');
+    this.log.info('Slack bot connected. Gateway is ready for messages.');
   }
 
   async stop(): Promise<void> {
@@ -180,11 +185,13 @@ export class SlackGateway {
     if (this.app) {
       try {
         await this.app.stop();
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
       this.app = null;
     }
 
-    this.log('Gateway stopped.');
+    this.log.info('Gateway stopped.');
   }
 
   // -------------------------------------------------------------------------
@@ -199,8 +206,8 @@ export class SlackGateway {
       try {
         await this.onMessage(event);
       } catch (err) {
-        this.log(`Error handling message: ${err instanceof Error ? err.message : err}`);
-        if (this.verbose && err instanceof Error) console.error(err);
+        this.log.error(`Error handling message: ${err instanceof Error ? err.message : err}`);
+        if (this.verbose && err instanceof Error) this.log.error(String(err));
       }
     });
 
@@ -228,10 +235,15 @@ export class SlackGateway {
           });
         }
       } catch (err) {
-        this.log(`Error handling action: ${err instanceof Error ? err.message : err}`);
+        this.log.error(`Error handling action: ${err instanceof Error ? err.message : err}`);
         try {
-          await respond({ text: 'Sorry, I encountered an error processing that action.', replace_original: false });
-        } catch { /* ignore */ }
+          await respond({
+            text: 'Sorry, I encountered an error processing that action.',
+            replace_original: false,
+          });
+        } catch {
+          /* ignore */
+        }
       }
     });
   }
@@ -250,7 +262,7 @@ export class SlackGateway {
 
     // Allowlist check
     if (this.allowList && !this.allowList.has(userId)) {
-      this.debugLog(`Filtered message from ${userId} (not in allowlist)`);
+      this.log.debug(`Filtered message from ${userId} (not in allowlist)`);
       return;
     }
 
@@ -270,7 +282,7 @@ export class SlackGateway {
 
     if (!text) return;
 
-    this.debugLog(`${userId}: ${text.substring(0, 100)}${text.length > 100 ? '...' : ''}`);
+    this.log.debug(`${userId}: ${text.substring(0, 100)}${text.length > 100 ? '...' : ''}`);
 
     const session = this.getOrCreateSession(userId);
     session.queue.push({ text, channel, threadTs: event.thread_ts ?? event.ts });
@@ -289,15 +301,26 @@ export class SlackGateway {
       try {
         await this.handleMessage(item.channel, item.text, session, item.threadTs);
       } catch (err) {
-        this.log(`Error processing message from ${userId}: ${err instanceof Error ? err.message : err}`);
-        await this.sendText(item.channel, 'Sorry, something went wrong processing your message. Please try again.', item.threadTs);
+        this.log.error(
+          `Error processing message from ${userId}: ${err instanceof Error ? err.message : err}`,
+        );
+        await this.sendText(
+          item.channel,
+          'Sorry, something went wrong processing your message. Please try again.',
+          item.threadTs,
+        );
       }
     }
 
     session.processing = false;
   }
 
-  private async handleMessage(channel: string, text: string, session: SenderSession, threadTs?: string): Promise<void> {
+  private async handleMessage(
+    channel: string,
+    text: string,
+    session: SenderSession,
+    threadTs?: string,
+  ): Promise<void> {
     // Handle built-in commands
     const commandResponse = this.handleCommand(text, session);
     if (commandResponse !== null) {
@@ -311,7 +334,7 @@ export class SlackGateway {
       response = await session.agent.chat(text);
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      this.log(`Agent error for ${channel}: ${errMsg}`);
+      this.log.error(`Agent error for ${channel}: ${errMsg}`);
       response = 'I encountered an error processing your request. Please try again.';
     }
 
@@ -389,13 +412,15 @@ export class SlackGateway {
   private getOrCreateSession(userId: string): SenderSession {
     let session = this.sessions.get(userId);
 
-    if (!session || (Date.now() - session.lastActivity > SESSION_TTL_MS)) {
-      this.debugLog(`Creating new session for ${userId}`);
+    if (!session || Date.now() - session.lastActivity > SESSION_TTL_MS) {
+      this.log.debug(`Creating new session for ${userId}`);
       const apiKey = getAnthropicApiKey();
       const agent = new StateSetAgent(apiKey, this.model);
 
-      agent.connect().catch(err => {
-        this.log(`Failed to connect agent for ${userId}: ${err instanceof Error ? err.message : err}`);
+      agent.connect().catch((err) => {
+        this.log.error(
+          `Failed to connect agent for ${userId}: ${err instanceof Error ? err.message : err}`,
+        );
       });
 
       session = {
@@ -426,7 +451,7 @@ export class SlackGateway {
     const now = Date.now();
     for (const [userId, session] of this.sessions) {
       if (now - session.lastActivity > SESSION_TTL_MS && !session.processing) {
-        this.debugLog(`Cleaning up expired session for ${userId}`);
+        this.log.debug(`Cleaning up expired session for ${userId}`);
         session.agent.disconnect().catch(() => {});
         this.sessions.delete(userId);
       }
@@ -450,7 +475,9 @@ export class SlackGateway {
       }
       await this.app.client.chat.postMessage(opts);
     } catch (err) {
-      this.log(`Failed to send message to ${channel}: ${err instanceof Error ? err.message : err}`);
+      this.log.error(
+        `Failed to send message to ${channel}: ${err instanceof Error ? err.message : err}`,
+      );
     }
   }
 
@@ -458,16 +485,7 @@ export class SlackGateway {
   // Logging
   // -------------------------------------------------------------------------
 
-  private log(message: string): void {
-    const ts = new Date().toISOString().slice(11, 19);
-    console.log(`[${ts}] ${message}`);
-  }
-
-  private debugLog(message: string): void {
-    if (this.verbose) {
-      this.log(`[debug] ${message}`);
-    }
-  }
+  private readonly log = logger.child('slack');
 }
 
 // ---------------------------------------------------------------------------

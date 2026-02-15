@@ -1,0 +1,158 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { handleConfigCommand } from '../cli/commands-config.js';
+import type { ChatContext } from '../cli/types.js';
+
+vi.mock('../memory.js', () => ({
+  loadMemory: vi.fn(() => ''),
+}));
+
+vi.mock('../prompt.js', () => ({
+  buildSystemPrompt: vi.fn(() => 'system prompt'),
+}));
+
+vi.mock('../config.js', () => ({
+  resolveModel: vi.fn((input: string) => {
+    const map: Record<string, string> = {
+      sonnet: 'claude-sonnet-4-20250514',
+      haiku: 'claude-haiku-35-20241022',
+      opus: 'claude-opus-4-20250514',
+    };
+    return map[input.toLowerCase()] ?? null;
+  }),
+}));
+
+function createMockCtx(overrides: Partial<ChatContext> = {}): ChatContext {
+  return {
+    agent: {
+      getModel: vi.fn(() => 'claude-sonnet-4-20250514'),
+      setModel: vi.fn(),
+      setSystemPrompt: vi.fn(),
+    } as any,
+    cwd: '/tmp/test',
+    rl: { prompt: vi.fn() } as any,
+    sessionId: 'test-session',
+    activeSkills: [],
+    showUsage: false,
+    reconnectAgent: vi.fn(async () => {}),
+    ...overrides,
+  } as unknown as ChatContext;
+}
+
+describe('handleConfigCommand', () => {
+  const savedEnv: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    savedEnv.STATESET_ALLOW_APPLY = process.env.STATESET_ALLOW_APPLY;
+    savedEnv.STATESET_REDACT = process.env.STATESET_REDACT;
+    savedEnv.STATESET_SHOW_USAGE = process.env.STATESET_SHOW_USAGE;
+  });
+
+  afterEach(() => {
+    process.env.STATESET_ALLOW_APPLY = savedEnv.STATESET_ALLOW_APPLY;
+    process.env.STATESET_REDACT = savedEnv.STATESET_REDACT;
+    process.env.STATESET_SHOW_USAGE = savedEnv.STATESET_SHOW_USAGE;
+    vi.restoreAllMocks();
+  });
+
+  it('returns null for non-config commands', async () => {
+    const ctx = createMockCtx();
+    expect(await handleConfigCommand('/help', ctx)).toBeNull();
+    expect(await handleConfigCommand('/clear', ctx)).toBeNull();
+  });
+
+  // /apply tests
+  it('/apply shows current state when no arg given', async () => {
+    process.env.STATESET_ALLOW_APPLY = 'true';
+    const ctx = createMockCtx();
+    const result = await handleConfigCommand('/apply', ctx);
+    expect(result).toEqual({ handled: true });
+    expect(ctx.rl.prompt).toHaveBeenCalled();
+  });
+
+  it('/apply on enables writes', async () => {
+    process.env.STATESET_ALLOW_APPLY = 'false';
+    const ctx = createMockCtx();
+    const result = await handleConfigCommand('/apply on', ctx);
+    expect(result).toEqual({ handled: true });
+    expect(process.env.STATESET_ALLOW_APPLY).toBe('true');
+  });
+
+  it('/apply off disables writes', async () => {
+    process.env.STATESET_ALLOW_APPLY = 'true';
+    const ctx = createMockCtx();
+    const result = await handleConfigCommand('/apply off', ctx);
+    expect(result).toEqual({ handled: true });
+    expect(process.env.STATESET_ALLOW_APPLY).toBe('false');
+  });
+
+  it('/apply with invalid arg shows warning', async () => {
+    const ctx = createMockCtx();
+    const result = await handleConfigCommand('/apply banana', ctx);
+    expect(result).toEqual({ handled: true });
+  });
+
+  it('/apply on when already enabled shows already-enabled message', async () => {
+    process.env.STATESET_ALLOW_APPLY = 'true';
+    const ctx = createMockCtx();
+    const result = await handleConfigCommand('/apply on', ctx);
+    expect(result).toEqual({ handled: true });
+    // reconnectAgent should NOT be called since state didn't change
+    expect(ctx.reconnectAgent).not.toHaveBeenCalled();
+  });
+
+  // /redact tests
+  it('/redact on enables redaction', async () => {
+    process.env.STATESET_REDACT = 'false';
+    const ctx = createMockCtx();
+    const result = await handleConfigCommand('/redact on', ctx);
+    expect(result).toEqual({ handled: true });
+    expect(process.env.STATESET_REDACT).toBe('true');
+  });
+
+  it('/redact off disables redaction', async () => {
+    process.env.STATESET_REDACT = 'true';
+    const ctx = createMockCtx();
+    const result = await handleConfigCommand('/redact off', ctx);
+    expect(result).toEqual({ handled: true });
+    expect(process.env.STATESET_REDACT).toBe('false');
+  });
+
+  // /usage tests
+  it('/usage on enables usage summaries', async () => {
+    const ctx = createMockCtx({ showUsage: false });
+    const result = await handleConfigCommand('/usage on', ctx);
+    expect(result).toEqual({ handled: true });
+    expect(ctx.showUsage).toBe(true);
+    expect(process.env.STATESET_SHOW_USAGE).toBe('true');
+  });
+
+  it('/usage off disables usage summaries', async () => {
+    const ctx = createMockCtx({ showUsage: true });
+    const result = await handleConfigCommand('/usage off', ctx);
+    expect(result).toEqual({ handled: true });
+    expect(ctx.showUsage).toBe(false);
+    expect(process.env.STATESET_SHOW_USAGE).toBe('false');
+  });
+
+  // /model tests
+  it('/model shows current model', async () => {
+    const ctx = createMockCtx();
+    const result = await handleConfigCommand('/model', ctx);
+    expect(result).toEqual({ handled: true });
+    expect(ctx.agent.getModel).toHaveBeenCalled();
+  });
+
+  it('/model sonnet switches model', async () => {
+    const ctx = createMockCtx();
+    const result = await handleConfigCommand('/model sonnet', ctx);
+    expect(result).toEqual({ handled: true });
+    expect(ctx.agent.setModel).toHaveBeenCalledWith('claude-sonnet-4-20250514');
+  });
+
+  it('/model invalid shows warning', async () => {
+    const ctx = createMockCtx();
+    const result = await handleConfigCommand('/model gpt-4', ctx);
+    expect(result).toEqual({ handled: true });
+    expect(ctx.agent.setModel).not.toHaveBeenCalled();
+  });
+});

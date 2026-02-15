@@ -158,9 +158,7 @@ describe('actionsSchema', () => {
   });
 
   it('rejects action type too long', () => {
-    const result = actionsSchema.safeParse([
-      { type: 'x'.repeat(51), params: {} },
-    ]);
+    const result = actionsSchema.safeParse([{ type: 'x'.repeat(51), params: {} }]);
     expect(result.success).toBe(false);
   });
 
@@ -246,7 +244,7 @@ describe('headersSchema', () => {
   it('accepts valid headers', () => {
     const result = headersSchema.safeParse({
       'Content-Type': 'application/json',
-      'Accept': 'application/json',
+      Accept: 'application/json',
       'X-Custom-Header': 'value',
     });
     expect(result.success).toBe(true);
@@ -266,7 +264,7 @@ describe('headersSchema', () => {
 
   it('rejects header value too long', () => {
     const result = headersSchema.safeParse({
-      'Header': 'x'.repeat(2001),
+      Header: 'x'.repeat(2001),
     });
     expect(result.success).toBe(false);
   });
@@ -287,11 +285,7 @@ describe('safeUrlSchema', () => {
   });
 
   it('rejects localhost', () => {
-    const urls = [
-      'http://localhost:3000/api',
-      'https://localhost/endpoint',
-      'http://localhost',
-    ];
+    const urls = ['http://localhost:3000/api', 'https://localhost/endpoint', 'http://localhost'];
 
     for (const url of urls) {
       const result = safeUrlSchema.safeParse(url);
@@ -319,11 +313,7 @@ describe('safeUrlSchema', () => {
   });
 
   it('rejects non-http protocols', () => {
-    const urls = [
-      'ftp://example.com/file',
-      'file:///etc/passwd',
-      'javascript:alert(1)',
-    ];
+    const urls = ['ftp://example.com/file', 'file:///etc/passwd', 'javascript:alert(1)'];
 
     for (const url of urls) {
       const result = safeUrlSchema.safeParse(url);

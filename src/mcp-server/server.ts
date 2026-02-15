@@ -1,7 +1,20 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { logger } from '../lib/logger.js';
 import { createGraphQLClient, type GraphQLAuth } from './graphql-client.js';
 import { getCurrentOrg } from '../config.js';
-import { getGorgiasConfigFromEnv, getIntegrationFlagsFromEnv, getKlaviyoConfigFromEnv, getLoopConfigFromEnv, getRechargeConfigFromEnv, getShipFusionConfigFromEnv, getShipHawkConfigFromEnv, getShipHeroConfigFromEnv, getShipStationConfigFromEnv, getShopifyConfigFromEnv, getZendeskConfigFromEnv } from '../integrations/config.js';
+import {
+  getGorgiasConfigFromEnv,
+  getIntegrationFlagsFromEnv,
+  getKlaviyoConfigFromEnv,
+  getLoopConfigFromEnv,
+  getRechargeConfigFromEnv,
+  getShipFusionConfigFromEnv,
+  getShipHawkConfigFromEnv,
+  getShipHeroConfigFromEnv,
+  getShipStationConfigFromEnv,
+  getShopifyConfigFromEnv,
+  getZendeskConfigFromEnv,
+} from '../integrations/config.js';
 import { registerAgentTools } from './tools/agents.js';
 import { registerRuleTools } from './tools/rules.js';
 import { registerSkillTools } from './tools/skills.js';
@@ -41,7 +54,7 @@ export function createServer(): McpServer {
     { name: 'stateset-response', version: '1.0.0' },
     {
       capabilities: { tools: {} },
-    }
+    },
   );
 
   registerAgentTools(server, graphqlClient, orgId);
@@ -70,8 +83,8 @@ export function createServer(): McpServer {
       registerShopifyAdvancedTools(server, shopify, integrationFlags);
     }
   } catch (error) {
-    console.error(
-      `Shopify tools disabled: ${error instanceof Error ? error.message : String(error)}`
+    logger.warn(
+      `Shopify tools disabled: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 
@@ -81,8 +94,8 @@ export function createServer(): McpServer {
       registerGorgiasTools(server, gorgias, integrationFlags);
     }
   } catch (error) {
-    console.error(
-      `Gorgias tools disabled: ${error instanceof Error ? error.message : String(error)}`
+    logger.warn(
+      `Gorgias tools disabled: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 
@@ -92,8 +105,8 @@ export function createServer(): McpServer {
       registerRechargeTools(server, recharge, integrationFlags);
     }
   } catch (error) {
-    console.error(
-      `Recharge tools disabled: ${error instanceof Error ? error.message : String(error)}`
+    logger.warn(
+      `Recharge tools disabled: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 
@@ -103,8 +116,8 @@ export function createServer(): McpServer {
       registerKlaviyoTools(server, klaviyo, integrationFlags);
     }
   } catch (error) {
-    console.error(
-      `Klaviyo tools disabled: ${error instanceof Error ? error.message : String(error)}`
+    logger.warn(
+      `Klaviyo tools disabled: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 
@@ -114,8 +127,8 @@ export function createServer(): McpServer {
       registerLoopTools(server, loop, integrationFlags);
     }
   } catch (error) {
-    console.error(
-      `Loop Returns tools disabled: ${error instanceof Error ? error.message : String(error)}`
+    logger.warn(
+      `Loop Returns tools disabled: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 
@@ -125,8 +138,8 @@ export function createServer(): McpServer {
       registerShipStationTools(server, shipstation, integrationFlags);
     }
   } catch (error) {
-    console.error(
-      `ShipStation tools disabled: ${error instanceof Error ? error.message : String(error)}`
+    logger.warn(
+      `ShipStation tools disabled: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 
@@ -136,8 +149,8 @@ export function createServer(): McpServer {
       registerShipHeroTools(server, shiphero, integrationFlags);
     }
   } catch (error) {
-    console.error(
-      `ShipHero tools disabled: ${error instanceof Error ? error.message : String(error)}`
+    logger.warn(
+      `ShipHero tools disabled: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 
@@ -147,8 +160,8 @@ export function createServer(): McpServer {
       registerShipFusionTools(server, shipfusion, integrationFlags);
     }
   } catch (error) {
-    console.error(
-      `ShipFusion tools disabled: ${error instanceof Error ? error.message : String(error)}`
+    logger.warn(
+      `ShipFusion tools disabled: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 
@@ -158,8 +171,8 @@ export function createServer(): McpServer {
       registerShipHawkTools(server, shiphawk, integrationFlags);
     }
   } catch (error) {
-    console.error(
-      `ShipHawk tools disabled: ${error instanceof Error ? error.message : String(error)}`
+    logger.warn(
+      `ShipHawk tools disabled: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 
@@ -169,8 +182,8 @@ export function createServer(): McpServer {
       registerZendeskTools(server, zendesk, integrationFlags);
     }
   } catch (error) {
-    console.error(
-      `Zendesk tools disabled: ${error instanceof Error ? error.message : String(error)}`
+    logger.warn(
+      `Zendesk tools disabled: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 

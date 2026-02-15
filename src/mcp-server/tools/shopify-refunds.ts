@@ -10,13 +10,14 @@ import {
   type ShopifyOrderDetail,
 } from '../../integrations/shopify.js';
 import { formatMoney } from '../../integrations/format.js';
+import { type IntegrationToolOptions, wrapToolResult } from './helpers.js';
 
-export interface ShopifyRefundToolOptions {
-  allowApply: boolean;
-  redact: boolean;
-}
+export type ShopifyRefundToolOptions = IntegrationToolOptions;
 
-function formatOrderSummary(order: ShopifyOrderDetail, { redact = false }: { redact?: boolean } = {}) {
+function formatOrderSummary(
+  order: ShopifyOrderDetail,
+  { redact = false }: { redact?: boolean } = {},
+) {
   const summary: Record<string, unknown> = {
     id: order.id,
     name: order.name,
@@ -34,8 +35,12 @@ function formatOrderSummary(order: ShopifyOrderDetail, { redact = false }: { red
       sku: li.sku,
       quantity: li.quantity,
       current_quantity: li.currentQuantity,
-      unit_price: li.unitPrice ? `${formatMoney(li.unitPrice.amount)} ${li.unitPrice.currencyCode}` : null,
-      total_price: li.totalPrice ? `${formatMoney(li.totalPrice.amount)} ${li.totalPrice.currencyCode}` : null,
+      unit_price: li.unitPrice
+        ? `${formatMoney(li.unitPrice.amount)} ${li.unitPrice.currencyCode}`
+        : null,
+      total_price: li.totalPrice
+        ? `${formatMoney(li.totalPrice.amount)} ${li.totalPrice.currencyCode}`
+        : null,
     })),
   };
 
@@ -49,7 +54,7 @@ function formatOrderSummary(order: ShopifyOrderDetail, { redact = false }: { red
 async function executeLookupOrder(
   shopify: ShopifyConfig,
   input: { order_number: string },
-  { redact = false }: { redact?: boolean } = {}
+  { redact = false }: { redact?: boolean } = {},
 ) {
   const orderNumber = String(input.order_number || '').trim();
   if (!orderNumber) throw new Error('Order number is required');
@@ -69,7 +74,7 @@ async function executePreviewRefund(
     line_item_ids?: string[];
     quantity?: number;
   },
-  { redact = false }: { redact?: boolean } = {}
+  { redact = false }: { redact?: boolean } = {},
 ) {
   const orderNumber = String(input.order_number || '').trim();
   if (!orderNumber) throw new Error('Order number is required');
@@ -119,7 +124,7 @@ async function executePreviewRefund(
 
   const totalRefund = calculation.transactions.reduce(
     (sum, t) => sum + parseFloat(t.amount || '0'),
-    0
+    0,
   );
 
   return {
@@ -131,7 +136,9 @@ async function executePreviewRefund(
       name: li.name,
       sku: li.sku,
       quantity_to_refund: input.quantity || li.currentQuantity || li.quantity,
-      unit_price: li.unitPrice ? `${formatMoney(li.unitPrice.amount)} ${li.unitPrice.currencyCode}` : null,
+      unit_price: li.unitPrice
+        ? `${formatMoney(li.unitPrice.amount)} ${li.unitPrice.currencyCode}`
+        : null,
     })),
     calculated_refund: {
       total_amount: formatMoney(totalRefund),
@@ -158,11 +165,12 @@ async function executeProcessRefund(
     note?: string;
     add_tag?: string;
   },
-  { allowApply = false }: { allowApply?: boolean } = {}
+  { allowApply = false }: { allowApply?: boolean } = {},
 ) {
   if (!allowApply) {
     return {
-      error: 'Refund operation not allowed. The --apply flag or STATESET_ALLOW_APPLY must be set to enable refunds.',
+      error:
+        'Refund operation not allowed. The --apply flag or STATESET_ALLOW_APPLY must be set to enable refunds.',
       hint: 'Run preview_refund first to see what would be refunded.',
     };
   }
@@ -225,7 +233,10 @@ async function executeProcessRefund(
     }
   }
 
-  const totalRefunded = refund.transactions.reduce((sum, t) => sum + parseFloat(t.amount || '0'), 0);
+  const totalRefunded = refund.transactions.reduce(
+    (sum, t) => sum + parseFloat(t.amount || '0'),
+    0,
+  );
 
   return {
     success: true,
@@ -243,7 +254,7 @@ async function executeProcessRefund(
 async function executeBatchPreviewRefunds(
   shopify: ShopifyConfig,
   input: { order_numbers: string[]; sku_pattern: string },
-  { redact = false }: { redact?: boolean } = {}
+  { redact: _redact = false }: { redact?: boolean } = {},
 ) {
   const orderNumbers = input.order_numbers || [];
   const skuPattern = String(input.sku_pattern || '').trim();
@@ -281,7 +292,7 @@ async function executeBatchPreviewRefunds(
 
       const refundAmount = calculation.transactions.reduce(
         (sum, t) => sum + parseFloat(t.amount || '0'),
-        0
+        0,
       );
       totalRefundAmount += refundAmount;
 
@@ -325,11 +336,12 @@ async function executeBatchProcessRefunds(
     note?: string;
     add_tag?: string;
   },
-  { allowApply = false }: { allowApply?: boolean } = {}
+  { allowApply = false }: { allowApply?: boolean } = {},
 ) {
   if (!allowApply) {
     return {
-      error: 'Refund operation not allowed. The --apply flag or STATESET_ALLOW_APPLY must be set to enable refunds.',
+      error:
+        'Refund operation not allowed. The --apply flag or STATESET_ALLOW_APPLY must be set to enable refunds.',
       hint: 'Run batch_preview_refunds first to see what would be refunded.',
     };
   }
@@ -372,7 +384,7 @@ async function executeBatchProcessRefunds(
 
       const refundAmount = refund.transactions.reduce(
         (sum, t) => sum + parseFloat(t.amount || '0'),
-        0
+        0,
       );
       totalRefunded += refundAmount;
 
@@ -419,7 +431,7 @@ async function executeBatchProcessRefunds(
 export function registerShopifyRefundTools(
   server: McpServer,
   shopify: ShopifyConfig,
-  options: ShopifyRefundToolOptions
+  options: ShopifyRefundToolOptions,
 ) {
   server.tool(
     'shopify_lookup_order',
@@ -429,8 +441,8 @@ export function registerShopifyRefundTools(
     },
     async (args) => {
       const result = await executeLookupOrder(shopify, args, { redact: options.redact });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
-    }
+      return wrapToolResult(result);
+    },
   );
 
   server.tool(
@@ -438,14 +450,23 @@ export function registerShopifyRefundTools(
     'Preview a partial refund for an order without actually processing it. Shows the calculated refund amount.',
     {
       order_number: z.string().describe('Order number (e.g., "#26417" or "26417")'),
-      sku_pattern: z.string().optional().describe('SKU pattern to match for refund (e.g., "SY-MIR-004" or "MINI-BAG")'),
-      line_item_ids: z.array(z.string()).optional().describe('Specific line item IDs to refund (alternative to sku_pattern)'),
-      quantity: z.number().optional().describe('Quantity to refund per line item (default: full quantity)'),
+      sku_pattern: z
+        .string()
+        .optional()
+        .describe('SKU pattern to match for refund (e.g., "SY-MIR-004" or "MINI-BAG")'),
+      line_item_ids: z
+        .array(z.string())
+        .optional()
+        .describe('Specific line item IDs to refund (alternative to sku_pattern)'),
+      quantity: z
+        .number()
+        .optional()
+        .describe('Quantity to refund per line item (default: full quantity)'),
     },
     async (args) => {
       const result = await executePreviewRefund(shopify, args, { redact: options.redact });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
-    }
+      return wrapToolResult(result);
+    },
   );
 
   server.tool(
@@ -462,8 +483,8 @@ export function registerShopifyRefundTools(
     },
     async (args) => {
       const result = await executeProcessRefund(shopify, args, { allowApply: options.allowApply });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
-    }
+      return wrapToolResult(result);
+    },
   );
 
   server.tool(
@@ -475,8 +496,8 @@ export function registerShopifyRefundTools(
     },
     async (args) => {
       const result = await executeBatchPreviewRefunds(shopify, args, { redact: options.redact });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
-    }
+      return wrapToolResult(result);
+    },
   );
 
   server.tool(
@@ -490,8 +511,10 @@ export function registerShopifyRefundTools(
       add_tag: z.string().optional().describe('Tag to add to orders after refund'),
     },
     async (args) => {
-      const result = await executeBatchProcessRefunds(shopify, args, { allowApply: options.allowApply });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
-    }
+      const result = await executeBatchProcessRefunds(shopify, args, {
+        allowApply: options.allowApply,
+      });
+      return wrapToolResult(result);
+    },
   );
 }

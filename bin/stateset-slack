@@ -2,6 +2,10 @@
 
 import { SlackGateway } from '../dist/slack/gateway.js';
 import { configExists, getAnthropicApiKey, getCurrentOrg, resolveModel } from '../dist/config.js';
+import { logger } from '../dist/lib/logger.js';
+import { installGlobalErrorHandlers } from '../dist/lib/errors.js';
+
+installGlobalErrorHandlers();
 
 // ---------------------------------------------------------------------------
 // CLI argument parsing
@@ -9,8 +13,8 @@ import { configExists, getAnthropicApiKey, getCurrentOrg, resolveModel } from '.
 
 const args = process.argv.slice(2);
 const options = {
-  model: undefined as string | undefined,
-  allow: undefined as string[] | undefined,
+  model: undefined,
+  allow: undefined,
   verbose: false,
 };
 
@@ -69,6 +73,12 @@ Examples:
       process.exit(0);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Logger
+// ---------------------------------------------------------------------------
+
+logger.configure({ level: options.verbose ? 'debug' : 'info' });
 
 // ---------------------------------------------------------------------------
 // Validation

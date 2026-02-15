@@ -8,12 +8,15 @@ declare module '@slack/bolt' {
       chat: { postMessage: (opts: Record<string, unknown>) => Promise<unknown> };
     };
     message(handler: (args: { event: Record<string, unknown> }) => Promise<void>): void;
-    action(pattern: RegExp, handler: (args: {
-      action: Record<string, unknown>;
-      body: Record<string, unknown>;
-      ack: () => Promise<void>;
-      respond: (msg: Record<string, unknown>) => Promise<void>;
-    }) => Promise<void>): void;
+    action(
+      pattern: RegExp,
+      handler: (args: {
+        action: Record<string, unknown>;
+        body: Record<string, unknown>;
+        ack: () => Promise<void>;
+        respond: (msg: Record<string, unknown>) => Promise<void>;
+      }) => Promise<void>,
+    ): void;
     start(): Promise<void>;
     stop(): Promise<void>;
   }

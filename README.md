@@ -190,6 +190,7 @@ On first run, scan the QR code with WhatsApp (Settings > Linked Devices > Link a
 --model <name>     Model to use (sonnet, haiku, opus)
 --allow <phones>   Comma-separated allowlist of phone numbers
 --groups           Allow messages from group chats
+--self-chat        Only respond to messages you send to yourself
 --auth-dir <path>  WhatsApp auth credential directory
 --reset            Clear stored auth and re-scan QR
 --verbose, -v      Enable debug logging
@@ -200,8 +201,11 @@ On first run, scan the QR code with WhatsApp (Settings > Linked Devices > Link a
 ```bash
 response-whatsapp --model haiku
 response-whatsapp --allow 14155551234,14155559999
+response-whatsapp --self-chat
 response-whatsapp --reset
 ```
+
+When `--self-chat` is enabled, responses are prefixed with `[agent]`, and any incoming `[agent]` messages are ignored to prevent loops.
 
 ### Slack Gateway
 
@@ -272,6 +276,25 @@ Run Slack and WhatsApp gateways together:
 response-gateway
 ```
 
+**Channel Startup**
+
+Slack via the gateway requires the Slack env vars, then run the gateway (optionally disabling WhatsApp):
+
+```bash
+export SLACK_BOT_TOKEN=xoxb-...
+export SLACK_APP_TOKEN=xapp-...
+response-gateway --no-whatsapp
+```
+
+WhatsApp via the gateway requires the Baileys package, then run the gateway (optionally disabling Slack):
+
+```bash
+npm install @whiskeysockets/baileys
+response-gateway --no-slack
+```
+
+On first WhatsApp run, scan the QR code (Settings > Linked Devices > Link a Device). Auth state is stored in `~/.stateset/whatsapp-auth/` or the path provided by `--whatsapp-auth-dir`.
+
 **Options:**
 
 ```
@@ -281,6 +304,7 @@ response-gateway
 --slack-allow <ids>        Comma-separated Slack user ID allowlist
 --whatsapp-allow <phones>  Comma-separated phone number allowlist
 --whatsapp-groups          Allow WhatsApp group messages
+--whatsapp-self-chat       Only respond to messages you send to yourself
 --whatsapp-auth-dir <path> WhatsApp auth credential directory
 --verbose, -v              Enable debug logging
 ```

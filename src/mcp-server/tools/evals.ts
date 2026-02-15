@@ -11,7 +11,6 @@ const EVAL_FIELDS = `
 `;
 
 export function registerEvalTools(server: McpServer, client: GraphQLClient, orgId: string) {
-
   server.tool(
     'list_evals',
     'List all evaluations for the current organization',
@@ -34,7 +33,7 @@ export function registerEvalTools(server: McpServer, client: GraphQLClient, orgI
         offset: offset ?? 0,
       });
       return { content: [{ type: 'text' as const, text: JSON.stringify(data.evals, null, 2) }] };
-    }
+    },
   );
 
   server.tool(
@@ -74,9 +73,17 @@ export function registerEvalTools(server: McpServer, client: GraphQLClient, orgI
         customer_impact: args.customer_impact || '',
         created_at: new Date().toISOString(),
       };
-      const data = await executeQuery<{ insert_evals: { returning: unknown[] } }>(client, mutation, { eval_object: evalObj });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.insert_evals.returning[0], null, 2) }] };
-    }
+      const data = await executeQuery<{ insert_evals: { returning: unknown[] } }>(
+        client,
+        mutation,
+        { eval_object: evalObj },
+      );
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(data.insert_evals.returning[0], null, 2) },
+        ],
+      };
+    },
   );
 
   server.tool(
@@ -105,12 +112,20 @@ export function registerEvalTools(server: McpServer, client: GraphQLClient, orgI
           returning { ${EVAL_FIELDS} }
         }
       }`;
-      const data = await executeQuery<{ update_evals: { returning: unknown[] } }>(client, mutation, { id, org_id: orgId, set: setFields });
+      const data = await executeQuery<{ update_evals: { returning: unknown[] } }>(
+        client,
+        mutation,
+        { id, org_id: orgId, set: setFields },
+      );
       if (!data.update_evals.returning.length) {
         return { content: [{ type: 'text' as const, text: 'Eval not found' }], isError: true };
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data.update_evals.returning[0], null, 2) }] };
-    }
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(data.update_evals.returning[0], null, 2) },
+        ],
+      };
+    },
   );
 
   server.tool(
@@ -123,19 +138,33 @@ export function registerEvalTools(server: McpServer, client: GraphQLClient, orgI
           returning { id eval_name }
         }
       }`;
-      const data = await executeQuery<{ delete_evals: { returning: unknown[] } }>(client, mutation, { id, org_id: orgId });
+      const data = await executeQuery<{ delete_evals: { returning: unknown[] } }>(
+        client,
+        mutation,
+        { id, org_id: orgId },
+      );
       if (!data.delete_evals.returning.length) {
         return { content: [{ type: 'text' as const, text: 'Eval not found' }], isError: true };
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ deleted: data.delete_evals.returning[0] }, null, 2) }] };
-    }
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({ deleted: data.delete_evals.returning[0] }, null, 2),
+          },
+        ],
+      };
+    },
   );
 
   server.tool(
     'export_evals_for_finetuning',
     'Export evaluations in fine-tuning format (OpenAI/Anthropic messages format)',
     {
-      eval_ids: z.array(z.string()).optional().describe('Optional list of specific eval UUIDs to export. If empty, exports all.'),
+      eval_ids: z
+        .array(z.string())
+        .optional()
+        .describe('Optional list of specific eval UUIDs to export. If empty, exports all.'),
     },
     async ({ eval_ids }) => {
       const ids = eval_ids || [];
@@ -155,10 +184,20 @@ export function registerEvalTools(server: McpServer, client: GraphQLClient, orgI
       const variables: Record<string, unknown> = { org_id: orgId };
       if (ids.length > 0) variables.evalIds = ids;
 
-      const data = await executeQuery<{ evals: Array<{ id: string; eval_name: string; eval_type: string; user_message: string; preferred_output: string; reason_type: string; customer_impact: string }> }>(client, query, variables);
+      const data = await executeQuery<{
+        evals: Array<{
+          id: string;
+          eval_name: string;
+          eval_type: string;
+          user_message: string;
+          preferred_output: string;
+          reason_type: string;
+          customer_impact: string;
+        }>;
+      }>(client, query, variables);
       const evals = data.evals || [];
 
-      const fineTuningData = evals.map(evalData => {
+      const fineTuningData = evals.map((evalData) => {
         let systemPrompt = 'You are a helpful customer service AI assistant.';
         if (evalData.eval_type || evalData.reason_type) {
           systemPrompt += ` This is a ${evalData.eval_type || 'general'} conversation`;
@@ -176,11 +215,17 @@ export function registerEvalTools(server: McpServer, client: GraphQLClient, orgI
       });
 
       return {
-        content: [{
-          type: 'text' as const,
-          text: JSON.stringify({ fineTuningData, count: fineTuningData.length, evalIds: evals.map(e => e.id) }, null, 2),
-        }],
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(
+              { fineTuningData, count: fineTuningData.length, evalIds: evals.map((e) => e.id) },
+              null,
+              2,
+            ),
+          },
+        ],
       };
-    }
+    },
   );
 }

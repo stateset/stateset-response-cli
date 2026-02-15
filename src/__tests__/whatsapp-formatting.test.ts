@@ -17,7 +17,9 @@ describe('cleanForWhatsApp', () => {
   });
 
   it('converts markdown links to plain text', () => {
-    expect(cleanForWhatsApp('[click here](https://example.com)')).toBe('click here (https://example.com)');
+    expect(cleanForWhatsApp('[click here](https://example.com)')).toBe(
+      'click here (https://example.com)',
+    );
   });
 
   it('strips language from code blocks', () => {

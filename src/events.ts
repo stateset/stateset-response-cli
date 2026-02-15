@@ -1,7 +1,17 @@
 import { Cron } from 'croner';
-import { appendFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync, watch, type FSWatcher } from 'node:fs';
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  statSync,
+  unlinkSync,
+  watch,
+  type FSWatcher,
+} from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { logger } from './lib/logger.js';
 import { getAnthropicApiKey, getConfiguredModel, getCurrentOrg, type ModelId } from './config.js';
 import { StateSetAgent, type ChatCallbacks } from './agent.js';
 import { SessionStore, getStateSetDir, sanitizeSessionId } from './session.js';
@@ -9,16 +19,69 @@ import { buildSystemPrompt } from './prompt.js';
 import { loadMemory } from './memory.js';
 import { formatUsage } from './utils/display.js';
 
+const DEBOUNCE_MS = 100;
+const RETRY_BASE_MS = 100;
+
+/** An event that triggers an agent run: immediately, at a specific time, or on a cron schedule. */
 export type ResponseEvent =
   | { type: 'immediate'; text: string; session?: string }
   | { type: 'one-shot'; text: string; at: string; session?: string }
   | { type: 'periodic'; text: string; schedule: string; timezone: string; session?: string };
 
+/** Configuration for the events runner: model override, fallback session, and output flags. */
 export interface EventsRunnerOptions {
   model?: ModelId;
   defaultSession: string;
   showUsage?: boolean;
   stdout?: boolean;
+}
+
+/** Validates and parses a JSON string into a typed ResponseEvent, throwing on invalid input. */
+export function parseEvent(content: string, filename: string): ResponseEvent {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(content);
+  } catch (e) {
+    throw new Error(
+      `Invalid JSON in event file ${filename}: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+  if (!raw || typeof raw !== 'object') {
+    throw new Error(`Invalid event data in ${filename}`);
+  }
+  const data = raw as Record<string, unknown>;
+
+  if (!data.type || typeof data.text !== 'string') {
+    throw new Error(`Missing required fields (type, text) in ${filename}`);
+  }
+
+  const session = typeof data.session === 'string' ? data.session : undefined;
+
+  switch (data.type) {
+    case 'immediate':
+      return { type: 'immediate', text: data.text, session };
+    case 'one-shot': {
+      if (typeof data.at !== 'string') {
+        throw new Error(`Missing 'at' for one-shot event in ${filename}`);
+      }
+      return { type: 'one-shot', text: data.text, at: data.at, session };
+    }
+    case 'periodic': {
+      if (typeof data.schedule !== 'string')
+        throw new Error(`Missing 'schedule' for periodic event in ${filename}`);
+      if (typeof data.timezone !== 'string')
+        throw new Error(`Missing 'timezone' for periodic event in ${filename}`);
+      return {
+        type: 'periodic',
+        text: data.text,
+        schedule: data.schedule,
+        timezone: data.timezone,
+        session,
+      };
+    }
+    default:
+      throw new Error(`Unknown event type "${String(data.type)}" in ${filename}`);
+  }
 }
 
 interface QueuedEvent {
@@ -55,10 +118,12 @@ class SessionAgentRunner {
   }
 
   enqueue(event: QueuedEvent): void {
-    this.queue = this.queue.then(() => this.run(event)).catch((err) => {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`Event error (${this.store.getSessionId()}): ${msg}`);
-    });
+    this.queue = this.queue
+      .then(() => this.run(event))
+      .catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error(`Event error (${this.store.getSessionId()}): ${msg}`);
+      });
   }
 
   private async run({ filename, event }: QueuedEvent): Promise<void> {
@@ -69,11 +134,12 @@ class SessionAgentRunner {
     const systemPrompt = buildSystemPrompt({ sessionId, memory });
     this.agent.setSystemPrompt(systemPrompt);
 
-    const scheduleInfo = event.type === 'one-shot'
-      ? event.at
-      : event.type === 'periodic'
-        ? event.schedule
-        : 'immediate';
+    const scheduleInfo =
+      event.type === 'one-shot'
+        ? event.at
+        : event.type === 'periodic'
+          ? event.schedule
+          : 'immediate';
 
     const message = `[EVENT:${filename}:${event.type}:${scheduleInfo}] ${event.text}`;
 
@@ -110,6 +176,10 @@ class SessionAgentRunner {
   }
 }
 
+/**
+ * Watches ~/.stateset/events/ for JSON event files and schedules agent runs.
+ * Supports immediate execution, one-shot timers, and cron-based periodic runs.
+ */
 export class EventsRunner {
   private eventsDir: string;
   private watcher: FSWatcher | null = null;
@@ -139,7 +209,7 @@ export class EventsRunner {
       this.debounce(filename, () => this.handleFileChange(filename));
     });
 
-    console.log(`Events watcher started: ${this.eventsDir}`);
+    logger.info(`Events watcher started: ${this.eventsDir}`);
   }
 
   async stop(): Promise<void> {
@@ -179,7 +249,7 @@ export class EventsRunner {
       setTimeout(() => {
         this.debounceTimers.delete(filename);
         fn();
-      }, 100)
+      }, DEBOUNCE_MS),
     );
   }
 
@@ -244,13 +314,13 @@ export class EventsRunner {
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
         if (i < 2) {
-          await new Promise((resolve) => setTimeout(resolve, 100 * 2 ** i));
+          await new Promise((resolve) => setTimeout(resolve, RETRY_BASE_MS * 2 ** i));
         }
       }
     }
 
     if (!event) {
-      console.error(`Failed to parse event file: ${filename}. ${lastError?.message ?? ''}`);
+      logger.error(`Failed to parse event file: ${filename}`, { error: lastError?.message ?? '' });
       this.deleteFile(filename);
       return;
     }
@@ -271,21 +341,7 @@ export class EventsRunner {
   }
 
   private parseEvent(content: string, filename: string): ResponseEvent {
-    const data = JSON.parse(content) as ResponseEvent & { session?: string };
-    if (!data.type || !data.text) {
-      throw new Error(`Missing required fields (type, text) in ${filename}`);
-    }
-
-    if (data.type === 'one-shot' && !(data as any).at) {
-      throw new Error(`Missing 'at' for one-shot event in ${filename}`);
-    }
-
-    if (data.type === 'periodic') {
-      if (!(data as any).schedule) throw new Error(`Missing 'schedule' for periodic event in ${filename}`);
-      if (!(data as any).timezone) throw new Error(`Missing 'timezone' for periodic event in ${filename}`);
-    }
-
-    return data;
+    return parseEvent(content, filename);
   }
 
   private handleImmediate(filename: string, event: ResponseEvent & { type: 'immediate' }): void {
@@ -327,8 +383,8 @@ export class EventsRunner {
         this.execute(filename, event, false);
       });
       this.crons.set(filename, cron);
-    } catch (err) {
-      console.error(`Invalid cron schedule for ${filename}: ${event.schedule}`);
+    } catch {
+      logger.error(`Invalid cron schedule for ${filename}: ${event.schedule}`);
       this.deleteFile(filename);
     }
   }
@@ -348,7 +404,12 @@ export class EventsRunner {
     if (existing) return existing;
 
     const model = this.options.model ?? getConfiguredModel();
-    const runner = new SessionAgentRunner(sessionId, model, Boolean(this.options.showUsage), Boolean(this.options.stdout));
+    const runner = new SessionAgentRunner(
+      sessionId,
+      model,
+      Boolean(this.options.showUsage),
+      Boolean(this.options.stdout),
+    );
     this.sessionRunners.set(sessionId, runner);
     return runner;
   }
@@ -395,6 +456,7 @@ function logEventResult(entry: {
   }
 }
 
+/** Validates that org credentials and an Anthropic API key are configured before starting the runner. */
 export function validateEventsPrereqs(): void {
   getCurrentOrg();
   getAnthropicApiKey();

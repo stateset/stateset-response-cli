@@ -14,10 +14,10 @@ describe('resolveExportFilePath', () => {
 
   it('rejects traversal attempts', () => {
     expect(() => resolveExportFilePath('default', '../secrets.txt')).toThrow(
-      /Invalid export filename/
+      /Invalid export filename/,
     );
     expect(() => resolveExportFilePath('default', '/etc/passwd')).toThrow(
-      /Invalid export filename/
+      /Invalid export filename/,
     );
   });
 

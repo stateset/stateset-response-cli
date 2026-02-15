@@ -1,7 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { z } from 'zod';
 import { encryptSecret, decryptSecret, isEncrypted } from './lib/secrets.js';
+import { ConfigurationError } from './lib/errors.js';
 
 export interface OrgConfig {
   name: string;
@@ -30,9 +32,27 @@ export interface StateSetConfig {
   organizations: Record<string, OrgConfig>;
 }
 
+// Zod schemas for runtime validation
+const OrgConfigSchema = z.object({
+  name: z.string().min(1),
+  graphqlEndpoint: z.string().min(1),
+  adminSecret: z.string().optional(),
+  cliToken: z.string().optional(),
+});
+
+const StateSetConfigSchema = z.object({
+  currentOrg: z.string().min(1),
+  anthropicApiKey: z.string().optional(),
+  model: z
+    .enum(['claude-sonnet-4-20250514', 'claude-haiku-35-20241022', 'claude-opus-4-20250514'])
+    .optional(),
+  organizations: z.record(z.string(), OrgConfigSchema),
+});
+
 const CONFIG_DIR = path.join(os.homedir(), '.stateset');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
+/** Returns the absolute path to ~/.stateset/config.json. */
 export function getConfigPath(): string {
   return CONFIG_FILE;
 }
@@ -52,14 +72,41 @@ export function configExists(): boolean {
   return fs.existsSync(CONFIG_FILE);
 }
 
+/** Reads, validates, and decrypts the config from disk. Throws ConfigurationError on failure. */
 export function loadConfig(): StateSetConfig {
   if (!configExists()) {
-    throw new Error(
-      'No configuration found. Run "response auth login" to set up your credentials.'
+    throw new ConfigurationError(
+      'No configuration found. Run "response auth login" to set up your credentials.',
     );
   }
-  const raw = fs.readFileSync(CONFIG_FILE, 'utf-8');
-  const config = JSON.parse(raw) as StateSetConfig;
+  let raw: string;
+  try {
+    raw = fs.readFileSync(CONFIG_FILE, 'utf-8');
+  } catch (e) {
+    throw new ConfigurationError(
+      `Failed to read config file: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    throw new ConfigurationError(
+      `Invalid JSON in config file: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+
+  const result = StateSetConfigSchema.safeParse(parsed);
+  if (!result.success) {
+    const issues = result.error.issues
+      .map((i) => `  - ${i.path.join('.')}: ${i.message}`)
+      .join('\n');
+    throw new ConfigurationError(
+      `Invalid configuration:\n${issues}\n\nFix the config at ${CONFIG_FILE} or run "response auth login".`,
+    );
+  }
+
+  const config = result.data as StateSetConfig;
 
   // Decrypt secrets on load
   if (config.anthropicApiKey) {
@@ -78,6 +125,7 @@ export function loadConfig(): StateSetConfig {
   return config;
 }
 
+/** Encrypts secrets and writes config to disk with restrictive file permissions (0o600). */
 export function saveConfig(config: StateSetConfig): void {
   ensureConfigDir();
 
@@ -101,10 +149,16 @@ export function saveConfig(config: StateSetConfig): void {
     configToSave.organizations[orgId] = org;
   }
 
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(configToSave, null, 2), {
-    encoding: 'utf-8',
-    mode: 0o600,
-  });
+  try {
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(configToSave, null, 2), {
+      encoding: 'utf-8',
+      mode: 0o600,
+    });
+  } catch (e) {
+    throw new ConfigurationError(
+      `Failed to write config file: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
   try {
     fs.chmodSync(CONFIG_FILE, 0o600);
   } catch {
@@ -112,22 +166,24 @@ export function saveConfig(config: StateSetConfig): void {
   }
 }
 
+/** Returns the currently active org ID and its config. Throws if credentials are missing. */
 export function getCurrentOrg(): { orgId: string; config: OrgConfig } {
   const cfg = loadConfig();
   const orgConfig = cfg.organizations[cfg.currentOrg];
   if (!orgConfig) {
     throw new Error(
-      `Organization "${cfg.currentOrg}" not found in config. Run "response auth login" or "response auth switch <org-id>".`
+      `Organization "${cfg.currentOrg}" not found in config. Run "response auth login" or "response auth switch <org-id>".`,
     );
   }
   if (!orgConfig.cliToken && !orgConfig.adminSecret) {
     throw new Error(
-      `Organization "${cfg.currentOrg}" is missing credentials. Run "response auth login" to set up your credentials.`
+      `Organization "${cfg.currentOrg}" is missing credentials. Run "response auth login" to set up your credentials.`,
     );
   }
   return { orgId: cfg.currentOrg, config: orgConfig };
 }
 
+/** Returns the Anthropic API key from ANTHROPIC_API_KEY env var, falling back to config. */
 export function getAnthropicApiKey(): string {
   const envKey = process.env.ANTHROPIC_API_KEY;
   if (envKey) return envKey;
@@ -138,10 +194,11 @@ export function getAnthropicApiKey(): string {
   }
 
   throw new Error(
-    'No Anthropic API key found. Set ANTHROPIC_API_KEY env var or run "response auth login".'
+    'No Anthropic API key found. Set ANTHROPIC_API_KEY env var or run "response auth login".',
   );
 }
 
+/** Returns the model from config, defaulting to DEFAULT_MODEL if unset. */
 export function getConfiguredModel(): ModelId {
   if (configExists()) {
     const cfg = loadConfig();
@@ -150,6 +207,7 @@ export function getConfiguredModel(): ModelId {
   return DEFAULT_MODEL;
 }
 
+/** Maps a model alias (e.g. "sonnet", "opus") or full ID to a valid ModelId. Returns null if unrecognized. */
 export function resolveModel(input: string): ModelId | null {
   const lower = input.toLowerCase().trim();
   if (MODEL_ALIASES[lower]) return MODEL_ALIASES[lower];
@@ -173,7 +231,12 @@ export function migrateConfigSecrets(): boolean {
   }
 
   const raw = fs.readFileSync(CONFIG_FILE, 'utf-8');
-  const config = JSON.parse(raw) as StateSetConfig;
+  let config: StateSetConfig;
+  try {
+    config = JSON.parse(raw) as StateSetConfig;
+  } catch {
+    return false;
+  }
   let migrated = false;
 
   // Check if any secrets need encryption

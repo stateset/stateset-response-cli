@@ -3,13 +3,20 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { getStateSetDir } from './session.js';
 
+/** Return type for extension command handlers: void for no-op, string for display, `send` to chat, or `handled` to suppress further processing. */
 export type ExtensionCommandResult = void | string | { send: string } | { handled: true };
 
 export interface ExtensionCommandContext {
   cwd: string;
   sessionId: string;
   setSession: (sessionId: string) => void;
-  listSessions: () => Array<{ id: string; messageCount: number; updatedAtMs: number; tags?: string[]; archived?: boolean }>;
+  listSessions: () => Array<{
+    id: string;
+    messageCount: number;
+    updatedAtMs: number;
+    tags?: string[];
+    archived?: boolean;
+  }>;
   log: (message: string) => void;
   success: (message: string) => void;
   warn: (message: string) => void;
@@ -20,7 +27,10 @@ export interface ExtensionCommand {
   name: string;
   description?: string;
   usage?: string;
-  handler: (args: string, ctx: ExtensionCommandContext) => Promise<ExtensionCommandResult> | ExtensionCommandResult;
+  handler: (
+    args: string,
+    ctx: ExtensionCommandContext,
+  ) => Promise<ExtensionCommandResult> | ExtensionCommandResult;
 }
 
 export interface ToolCallInfo {
@@ -41,6 +51,7 @@ export interface ToolHookContext {
   error: (message: string) => void;
 }
 
+/** A tool hook's verdict: allow (optionally rewriting args), deny with reason, or respond with canned content. */
 export type ToolHookDecision =
   | { action: 'allow'; args?: Record<string, unknown> }
   | { action: 'deny'; reason?: string; hookName?: string; hookSource?: string }
@@ -52,7 +63,10 @@ export interface ToolHook {
   tools?: string[];
   policy?: 'allow' | 'deny';
   tags?: string[];
-  handler: (call: ToolCallInfo, ctx: ToolHookContext) => Promise<ToolHookDecision | void> | ToolHookDecision | void;
+  handler: (
+    call: ToolCallInfo,
+    ctx: ToolHookContext,
+  ) => Promise<ToolHookDecision | void> | ToolHookDecision | void;
 }
 
 export interface ToolResultInfo {
@@ -108,6 +122,10 @@ function listExtensionFiles(dir: string): string[] {
     .map((name) => path.join(dir, name));
 }
 
+/**
+ * Discovers and loads CLI extensions from ~/.stateset/extensions/ and
+ * .stateset/extensions/, registering slash commands, tool hooks, and result hooks.
+ */
 export class ExtensionManager {
   private commands = new Map<string, ExtensionCommand & { source: string }>();
   private toolHooks: Array<ToolHook & { source: string }> = [];
@@ -217,12 +235,13 @@ export class ExtensionManager {
       try {
         const cacheBust = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
         const moduleUrl = `${pathToFileURL(filePath).href}?t=${cacheBust}`;
-        const mod: any = await import(moduleUrl);
-        const register = typeof mod?.default === 'function'
-          ? mod.default
-          : typeof mod?.register === 'function'
-            ? mod.register
-            : null;
+        const mod = (await import(moduleUrl)) as Record<string, unknown>;
+        const register =
+          typeof mod?.default === 'function'
+            ? mod.default
+            : typeof mod?.register === 'function'
+              ? mod.register
+              : null;
 
         if (!register) {
           if (Array.isArray(mod?.commands)) {
@@ -245,7 +264,11 @@ export class ExtensionManager {
         });
       }
 
-      if (registeredCommands.length > 0 || registeredToolHooks.length > 0 || registeredToolResultHooks.length > 0) {
+      if (
+        registeredCommands.length > 0 ||
+        registeredToolHooks.length > 0 ||
+        registeredToolResultHooks.length > 0
+      ) {
         this.extensions.push({
           name: extensionName,
           path: filePath,
@@ -352,9 +375,7 @@ function matchesToolList(name: string, patterns: string[]): boolean {
 
 function matchPattern(value: string, pattern: string): boolean {
   if (pattern === '*') return true;
-  const escaped = pattern
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*/g, '.*');
+  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
   const regex = new RegExp(`^${escaped}$`, 'i');
   return regex.test(value);
 }
@@ -368,7 +389,10 @@ function matchesTags(sessionTags: string[], hookTags: string[]): boolean {
   return hookTags.some((tag) => sessionSet.has(normalizeTag(tag)));
 }
 
-function loadPolicyOverrides(cwd: string, diagnostics: ExtensionDiagnostic[]): Record<string, string> {
+function loadPolicyOverrides(
+  cwd: string,
+  diagnostics: ExtensionDiagnostic[],
+): Record<string, string> {
   const overrides: Record<string, string> = {};
   const globalPath = path.join(getStateSetDir(), 'policies.json');
   const projectPath = path.join(cwd, '.stateset', 'policies.json');

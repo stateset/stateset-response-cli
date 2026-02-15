@@ -16,7 +16,9 @@ describe('cleanForSlack', () => {
   });
 
   it('converts markdown links to Slack format', () => {
-    expect(cleanForSlack('[click here](https://example.com)')).toBe('<https://example.com|click here>');
+    expect(cleanForSlack('[click here](https://example.com)')).toBe(
+      '<https://example.com|click here>',
+    );
   });
 
   it('strips language from code blocks', () => {

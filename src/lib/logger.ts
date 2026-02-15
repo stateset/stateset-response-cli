@@ -19,8 +19,8 @@ const LOG_LEVEL_PRIORITY: Record<LogLevel, number> = {
 
 const LOG_LEVEL_COLORS: Record<LogLevel, string> = {
   debug: '\x1b[36m', // cyan
-  info: '\x1b[32m',  // green
-  warn: '\x1b[33m',  // yellow
+  info: '\x1b[32m', // green
+  warn: '\x1b[33m', // yellow
   error: '\x1b[31m', // red
 };
 
@@ -128,9 +128,8 @@ class Logger {
       const color = LOG_LEVEL_COLORS[level];
       const levelTag = `[${level.toUpperCase().padEnd(5)}]`;
       const corrId = this.correlationId ? ` [${this.correlationId}]` : '';
-      const ctxStr = context && Object.keys(context).length > 0
-        ? ` ${JSON.stringify(context)}`
-        : '';
+      const ctxStr =
+        context && Object.keys(context).length > 0 ? ` ${JSON.stringify(context)}` : '';
 
       console.log(`${ts} ${color}${levelTag}${RESET}${corrId} ${message}${ctxStr}`);
     }
@@ -173,56 +172,29 @@ class Logger {
 }
 
 /**
- * Child logger that maintains its own correlation ID
+ * Child logger with a prefix. Safe for concurrent use — does not
+ * mutate parent state.
  */
 class ChildLogger {
   constructor(
     private parent: Logger,
-    private correlationId: string
+    private prefix: string,
   ) {}
 
   debug(message: string, context?: Record<string, unknown>): void {
-    const savedId = this.parent.getCorrelationId();
-    this.parent.setCorrelationId(this.correlationId);
-    this.parent.debug(message, context);
-    if (savedId) {
-      this.parent.setCorrelationId(savedId);
-    } else {
-      this.parent.clearCorrelationId();
-    }
+    this.parent.debug(`[${this.prefix}] ${message}`, context);
   }
 
   info(message: string, context?: Record<string, unknown>): void {
-    const savedId = this.parent.getCorrelationId();
-    this.parent.setCorrelationId(this.correlationId);
-    this.parent.info(message, context);
-    if (savedId) {
-      this.parent.setCorrelationId(savedId);
-    } else {
-      this.parent.clearCorrelationId();
-    }
+    this.parent.info(`[${this.prefix}] ${message}`, context);
   }
 
   warn(message: string, context?: Record<string, unknown>): void {
-    const savedId = this.parent.getCorrelationId();
-    this.parent.setCorrelationId(this.correlationId);
-    this.parent.warn(message, context);
-    if (savedId) {
-      this.parent.setCorrelationId(savedId);
-    } else {
-      this.parent.clearCorrelationId();
-    }
+    this.parent.warn(`[${this.prefix}] ${message}`, context);
   }
 
   error(message: string, context?: Record<string, unknown>): void {
-    const savedId = this.parent.getCorrelationId();
-    this.parent.setCorrelationId(this.correlationId);
-    this.parent.error(message, context);
-    if (savedId) {
-      this.parent.setCorrelationId(savedId);
-    } else {
-      this.parent.clearCorrelationId();
-    }
+    this.parent.error(`[${this.prefix}] ${message}`, context);
   }
 }
 

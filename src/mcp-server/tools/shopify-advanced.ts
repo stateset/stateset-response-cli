@@ -3,12 +3,17 @@ import { z } from 'zod';
 import type { ShopifyConfig } from '../../integrations/config.js';
 import { shopifyGraphqlRaw, shopifyRestRequest } from '../../integrations/shopify.js';
 import { redactPii } from '../../integrations/redact.js';
-import { stringifyToolResult } from './output.js';
+import {
+  type IntegrationToolOptions,
+  MaxCharsSchema,
+  QueryParamsSchema,
+  BodySchema,
+  HttpMethodSchema,
+  writeNotAllowed,
+  wrapToolResult,
+} from './helpers.js';
 
-export interface ShopifyAdvancedToolOptions {
-  allowApply: boolean;
-  redact: boolean;
-}
+export type ShopifyAdvancedToolOptions = IntegrationToolOptions;
 
 function isMutation(query: string): boolean {
   return /\bmutation\b/i.test(query);
@@ -17,29 +22,21 @@ function isMutation(query: string): boolean {
 export function registerShopifyAdvancedTools(
   server: McpServer,
   shopify: ShopifyConfig,
-  options: ShopifyAdvancedToolOptions
+  options: ShopifyAdvancedToolOptions,
 ) {
   server.tool(
     'shopify_graphql',
     'Execute a raw Shopify Admin GraphQL query or mutation. Mutations require --apply or STATESET_ALLOW_APPLY.',
     {
       query: z.string().describe('GraphQL query or mutation string'),
-      variables: z.record(z.any()).optional().describe('Optional GraphQL variables object'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      variables: z.record(z.unknown()).optional().describe('Optional GraphQL variables object'),
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
       const query = String(args.query || '').trim();
       if (!query) throw new Error('Query is required');
       if (isMutation(query) && !options.allowApply) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify({
-              error: 'Mutation not allowed. The --apply flag or STATESET_ALLOW_APPLY must be set.',
-              hint: 'Use query operations when writes are disabled.',
-            }, null, 2),
-          }],
-        };
+        return writeNotAllowed();
       }
 
       const data = await shopifyGraphqlRaw({
@@ -50,34 +47,27 @@ export function registerShopifyAdvancedTools(
 
       const result = options.redact ? redactPii(data) : data;
       const payload = { success: true, data: result };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult(payload, args.max_chars as number | undefined);
+    },
   );
 
   server.tool(
     'shopify_rest',
     'Execute a raw Shopify Admin REST request. Non-GET methods require --apply or STATESET_ALLOW_APPLY.',
     {
-      method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH']).describe('HTTP method'),
-      path: z.string().describe('REST path relative to /admin/api/{version}, e.g. /orders/123.json'),
-      query: z.record(z.union([z.string(), z.number(), z.boolean()])).optional().describe('Optional query params'),
-      body: z.record(z.any()).optional().describe('Optional JSON body'),
-      max_chars: z.number().min(2000).max(20000).optional().describe('Max characters in response (default 12000)'),
+      method: HttpMethodSchema,
+      path: z
+        .string()
+        .describe('REST path relative to /admin/api/{version}, e.g. /orders/123.json'),
+      query: QueryParamsSchema,
+      body: BodySchema,
+      max_chars: MaxCharsSchema,
     },
     async (args) => {
       const method = String(args.method || '').toUpperCase();
       if (!method) throw new Error('Method is required');
       if (method !== 'GET' && !options.allowApply) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify({
-              error: 'Write operation not allowed. The --apply flag or STATESET_ALLOW_APPLY must be set.',
-              hint: 'Use GET requests when writes are disabled.',
-            }, null, 2),
-          }],
-        };
+        return writeNotAllowed();
       }
 
       const result = await shopifyRestRequest({
@@ -90,8 +80,7 @@ export function registerShopifyAdvancedTools(
 
       const data = options.redact ? redactPii(result.data) : result.data;
       const payload = { success: true, status: result.status, data };
-      const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
-      return { content: [{ type: 'text' as const, text }] };
-    }
+      return wrapToolResult(payload, args.max_chars as number | undefined);
+    },
   );
 }
