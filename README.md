@@ -3,6 +3,7 @@
 AI-powered CLI for managing the [StateSet ResponseCX](https://response.cx) platform. Chat with an AI agent that can manage your agents, rules, skills, knowledge base, channels, messages, and more — all from the terminal.
 
 Includes optional WhatsApp and Slack gateways for connecting your agent to messaging platforms.
+Current version: `1.3.2`.
 
 ## Install
 
@@ -518,6 +519,10 @@ User  <-->  CLI (Anthropic SDK)  <-->  MCP Server  <-->  StateSet GraphQL API
 ```
 
 The WhatsApp and Slack gateways create per-user agent sessions with the same architecture. Sessions have a 30-minute TTL and are automatically cleaned up.
+
+## Changelog
+
+- [CHANGELOG.md](CHANGELOG.md)
 
 ## Development
 
