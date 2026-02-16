@@ -116,12 +116,21 @@ describe('handleSessionCommand', () => {
     expect(await handleSessionCommand('/help', ctx)).toBe(false);
     expect(await handleSessionCommand('/apply on', ctx)).toBe(false);
     expect(await handleSessionCommand('hello', ctx)).toBe(false);
+    expect(await handleSessionCommand('/searchx', ctx)).toBe(false);
+    expect(await handleSessionCommand('/archivex', ctx)).toBe(false);
   });
 
   // /session
   it('/session shows current session info', async () => {
     const ctx = createMockCtx();
     const result = await handleSessionCommand('/session', ctx);
+    expect(result).toBe(true);
+    expect(ctx.rl.prompt).toHaveBeenCalled();
+  });
+
+  it('/session accepts trailing whitespace', async () => {
+    const ctx = createMockCtx();
+    const result = await handleSessionCommand('/session   ', ctx);
     expect(result).toBe(true);
     expect(ctx.rl.prompt).toHaveBeenCalled();
   });
@@ -202,6 +211,62 @@ describe('handleSessionCommand', () => {
     expect(result).toBe(true);
   });
 
+  it('/search rejects invalid role filter', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const ctx = createMockCtx();
+    const result = await handleSessionCommand('/search role=system target', ctx);
+    expect(result).toBe(true);
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) =>
+          typeof line === 'string' &&
+          line.includes('Invalid role filter. Use role=user or role=assistant.'),
+      ),
+    ).toBe(true);
+  });
+
+  it('/search rejects invalid limit', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const ctx = createMockCtx();
+    const result = await handleSessionCommand('/search target limit=0', ctx);
+    expect(result).toBe(true);
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) =>
+          typeof line === 'string' && line.includes('Invalid limit. Use a positive number.'),
+      ),
+    ).toBe(true);
+  });
+
+  it('/search caps requested limit above maximum', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const ctx = createMockCtx();
+    const result = await handleSessionCommand('/search target limit=999', ctx);
+    expect(result).toBe(true);
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) => typeof line === 'string' && line.includes('Requested limit 999 exceeds 100.'),
+      ),
+    ).toBe(true);
+  });
+
+  it('/search validates since/until ordering', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const ctx = createMockCtx();
+    const result = await handleSessionCommand(
+      '/search target since=2025-01-02 until=2025-01-01',
+      ctx,
+    );
+    expect(result).toBe(true);
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) =>
+          typeof line === 'string' &&
+          line.includes('Invalid date range. `since` must be earlier than or equal to `until`.'),
+      ),
+    ).toBe(true);
+  });
+
   it('/search role=user filters by role', async () => {
     const ctx = createMockCtx();
     const result = await handleSessionCommand('/search role=user hello', ctx);
@@ -230,12 +295,38 @@ describe('handleSessionCommand', () => {
     mockReadSessionEntries.mockReturnValue([...mockEntries]);
 
     const ctx = createMockCtx();
-    const result = await handleSessionCommand('/search entry', ctx);
+    const result = await handleSessionCommand('/search thisdoesnotexist', ctx);
     expect(result).toBe(true);
     expect(
       consoleSpy.mock.calls.some(
         ([line]) =>
           typeof line === 'string' && line.includes('Search stopped after 5000 scanned entries.'),
+      ),
+    ).toBe(true);
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) =>
+          typeof line === 'string' && line.includes('No matches found in scanned entries.'),
+      ),
+    ).toBe(true);
+  });
+
+  it('/search honors output limit before reaching scan limit', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const mockEntries = Array.from({ length: 5005 }, (_, i) => ({
+      role: 'user' as const,
+      content: `entry-${i}`,
+      ts: '2025-01-01T00:00:00Z',
+    }));
+    mockReadSessionEntries.mockReturnValue([...mockEntries]);
+
+    const ctx = createMockCtx();
+    const result = await handleSessionCommand('/search entry', ctx);
+    expect(result).toBe(true);
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) =>
+          typeof line === 'string' && line.includes('Result limit reached after 25 matches.'),
       ),
     ).toBe(true);
   });

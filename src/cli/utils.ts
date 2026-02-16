@@ -65,6 +65,17 @@ export function ensureDirExists(filePath: string): void {
   }
 }
 
+export function hasCommand(input: string, command: string): boolean {
+  if (input === command) {
+    return true;
+  }
+  if (!input.startsWith(command)) {
+    return false;
+  }
+  const boundary = input.charAt(command.length);
+  return boundary.length > 0 && /\s/.test(boundary);
+}
+
 export function formatTimestamp(ms: number): string {
   if (!Number.isFinite(ms) || ms <= 0) return 'unknown';
   return new Date(ms).toLocaleString();

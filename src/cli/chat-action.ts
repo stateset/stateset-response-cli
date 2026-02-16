@@ -58,6 +58,119 @@ export function resolveSlashRouteAction(routeResult: CommandResult): SlashRouteA
   return 'handled';
 }
 
+export type SlashInputAction = 'send' | 'prompt' | 'handled' | 'exit' | 'unhandled';
+
+const KNOWN_SLASH_COMMANDS = [
+  '/help',
+  '/clear',
+  '/history',
+  '/model',
+  '/apply',
+  '/redact',
+  '/usage',
+  '/audit',
+  '/audit-show',
+  '/audit-clear',
+  '/permissions',
+  '/integrations',
+  '/session-meta',
+  '/policy',
+  '/export',
+  '/export-list',
+  '/export-show',
+  '/export-open',
+  '/export-delete',
+  '/export-prune',
+  '/rename',
+  '/delete',
+  '/sessions',
+  '/session',
+  '/new',
+  '/resume',
+  '/archive',
+  '/unarchive',
+  '/tag',
+  '/search',
+  '/skills',
+  '/skill',
+  '/skill-clear',
+  '/prompts',
+  '/prompt',
+  '/prompt-history',
+  '/prompt-validate',
+  '/extensions',
+  '/reload',
+  '/attach',
+  '/attachments',
+  '/attach-clear',
+  '/exit',
+  '/quit',
+];
+
+function levenshteinDistance(a: string, b: string): number {
+  if (a === b) return 0;
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+
+  const matrix: number[][] = Array.from({ length: a.length + 1 }, () =>
+    Array.from({ length: b.length + 1 }, () => 0),
+  );
+  for (let i = 0; i <= a.length; i++) matrix[i][0] = i;
+  for (let j = 0; j <= b.length; j++) matrix[0][j] = j;
+
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      if (a[i - 1] === b[j - 1]) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = 1 + Math.min(matrix[i - 1][j], matrix[i][j - 1], matrix[i - 1][j - 1]);
+      }
+    }
+  }
+  return matrix[a.length][b.length];
+}
+
+export function getSlashCommandSuggestions(
+  input: string,
+  extensionCommands: string[] = [],
+): string[] {
+  const command = input.split(/\s+/)[0] ?? '';
+  if (!command.startsWith('/')) return [];
+  if (command.length <= 1) return [];
+
+  const normalizedExtensions = extensionCommands.map((name) =>
+    name.startsWith('/') ? name : `/${name}`,
+  );
+  const knownCommands = Array.from(new Set([...KNOWN_SLASH_COMMANDS, ...normalizedExtensions]));
+
+  const exactPrefix = knownCommands.filter((value) => value.startsWith(command));
+  if (exactPrefix.length > 0) {
+    return exactPrefix.slice(0, 6);
+  }
+
+  return knownCommands
+    .map((candidate) => ({
+      candidate,
+      distance: levenshteinDistance(command, candidate),
+    }))
+    .filter((entry) => entry.distance <= 3)
+    .sort((a, b) => a.distance - b.distance || a.candidate.localeCompare(b.candidate))
+    .slice(0, 3)
+    .map((entry) => entry.candidate);
+}
+
+export function resolveSlashInputAction(
+  input: string,
+  routeResult: CommandResult,
+): SlashInputAction {
+  const routeAction = resolveSlashRouteAction(routeResult);
+  if (routeAction === 'send') return 'send';
+  if (routeAction === 'prompt') return 'prompt';
+  if (routeAction === 'handled') return 'handled';
+  if (input === '/exit' || input === '/quit') return 'exit';
+  return 'unhandled';
+}
+
 export interface ChatOptions {
   model?: string;
   session?: string;
@@ -271,7 +384,7 @@ export async function startChatSession(
       rl.prompt();
     } else {
       // Double Ctrl+C to exit
-      console.log(chalk.gray('\n  Press Ctrl+C again or type "exit" to quit.'));
+      console.log(chalk.gray('\n  Press Ctrl+C again or type "/exit" (or "/quit") to quit.'));
       rl.prompt();
       const onSecondSigint = () => {
         shutdown();
@@ -366,6 +479,11 @@ export async function startChatSession(
 
     // Route slash commands to extracted handlers
     if (input.startsWith('/')) {
+      if (input === '/exit' || input === '/quit') {
+        await shutdown();
+        return;
+      }
+
       let routeResult: CommandResult;
       try {
         routeResult = await routeSlashCommand(input, ctx);
@@ -384,7 +502,7 @@ export async function startChatSession(
       auditIncludeExcerpt = ctx.auditIncludeExcerpt;
       permissionStore = ctx.permissionStore;
 
-      const routeAction = resolveSlashRouteAction(routeResult);
+      const routeAction = resolveSlashInputAction(input, routeResult);
       if (routeAction === 'send') {
         finalInput = routeResult.sendMessage as string;
       } else if (routeAction === 'prompt') {
@@ -392,6 +510,20 @@ export async function startChatSession(
         rl.prompt();
         return;
       } else if (routeAction === 'handled') {
+        return;
+      } else {
+        console.log(
+          formatWarning(`Unknown command "${input}". Type /help for available commands.`),
+        );
+        const extensionCommands = ctx.extensions?.listCommands
+          ? ctx.extensions.listCommands().map((command) => command.name)
+          : [];
+        const suggestions = getSlashCommandSuggestions(input, extensionCommands);
+        if (suggestions.length > 0) {
+          console.log(formatWarning(`Did you mean: ${suggestions.join(', ')}?`));
+        }
+        console.log('');
+        rl.prompt();
         return;
       }
     }

@@ -58,6 +58,7 @@ describe('handleConfigCommand', () => {
     const ctx = createMockCtx();
     expect(await handleConfigCommand('/help', ctx)).toEqual({ handled: false });
     expect(await handleConfigCommand('/clear', ctx)).toEqual({ handled: false });
+    expect(await handleConfigCommand('/applyx', ctx)).toEqual({ handled: false });
   });
 
   // /apply tests
@@ -100,6 +101,28 @@ describe('handleConfigCommand', () => {
     expect(ctx.reconnectAgent).not.toHaveBeenCalled();
   });
 
+  it('/apply failure restores previous value and returns handled', async () => {
+    process.env.STATESET_ALLOW_APPLY = 'false';
+    const reconnectAgent = vi.fn(async () => {
+      throw new Error('network down');
+    });
+    const setSystemPrompt = vi.fn();
+    const ctx = createMockCtx({
+      reconnectAgent,
+      agent: {
+        getModel: vi.fn(() => 'claude-sonnet-4-20250514'),
+        setModel: vi.fn(),
+        setSystemPrompt,
+      } as any,
+    });
+
+    const result = await handleConfigCommand('/apply on', ctx);
+    expect(result).toEqual({ handled: true });
+    expect(process.env.STATESET_ALLOW_APPLY).toBe('false');
+    expect(reconnectAgent).toHaveBeenCalled();
+    expect(setSystemPrompt).not.toHaveBeenCalled();
+  });
+
   // /redact tests
   it('/redact on enables redaction', async () => {
     process.env.STATESET_REDACT = 'false';
@@ -107,6 +130,28 @@ describe('handleConfigCommand', () => {
     const result = await handleConfigCommand('/redact on', ctx);
     expect(result).toEqual({ handled: true });
     expect(process.env.STATESET_REDACT).toBe('true');
+  });
+
+  it('/redact failure restores previous value and returns handled', async () => {
+    process.env.STATESET_REDACT = 'false';
+    const reconnectAgent = vi.fn(async () => {
+      throw new Error('network down');
+    });
+    const setSystemPrompt = vi.fn();
+    const ctx = createMockCtx({
+      reconnectAgent,
+      agent: {
+        getModel: vi.fn(() => 'claude-sonnet-4-20250514'),
+        setModel: vi.fn(),
+        setSystemPrompt,
+      } as any,
+    });
+
+    const result = await handleConfigCommand('/redact on', ctx);
+    expect(result).toEqual({ handled: true });
+    expect(process.env.STATESET_REDACT).toBe('false');
+    expect(reconnectAgent).toHaveBeenCalled();
+    expect(setSystemPrompt).not.toHaveBeenCalled();
   });
 
   it('/redact off disables redaction', async () => {

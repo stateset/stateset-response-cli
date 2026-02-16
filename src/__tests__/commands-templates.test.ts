@@ -89,6 +89,9 @@ describe('handleTemplateCommand', () => {
     const ctx = createMockCtx();
     expect(await handleTemplateCommand('/help', ctx)).toEqual({ handled: false });
     expect(await handleTemplateCommand('/audit on', ctx)).toEqual({ handled: false });
+    expect(await handleTemplateCommand('/promptsx', ctx)).toEqual({ handled: false });
+    expect(await handleTemplateCommand('/prompt-historyx', ctx)).toEqual({ handled: false });
+    expect(await handleTemplateCommand('/prompt-validatex', ctx)).toEqual({ handled: false });
   });
 
   it('/prompts shows empty list', async () => {
@@ -96,6 +99,12 @@ describe('handleTemplateCommand', () => {
     const result = await handleTemplateCommand('/prompts', ctx);
     expect(result).toEqual({ handled: true });
     expect(ctx.rl.prompt).toHaveBeenCalled();
+  });
+
+  it('matches prompt commands with trailing whitespace', async () => {
+    const ctx = createMockCtx();
+    expect(await handleTemplateCommand('/prompts ', ctx)).toEqual({ handled: true });
+    expect(await handleTemplateCommand('/prompt-history\t', ctx)).toEqual({ handled: true });
   });
 
   it('/prompt-history shows empty history', async () => {

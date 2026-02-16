@@ -14,6 +14,7 @@ import { handleConfigCommand } from './commands-config.js';
 import { handleAuditCommand } from './commands-audit.js';
 import { handlePolicyCommand } from './commands-policy.js';
 import { handleTemplateCommand } from './commands-templates.js';
+import { hasCommand } from './utils.js';
 
 export async function handleChatCommand(input: string, ctx: ChatContext): Promise<CommandResult> {
   const prefix = input.split(/\s/)[0];
@@ -22,25 +23,34 @@ export async function handleChatCommand(input: string, ctx: ChatContext): Promis
   if (['/apply', '/redact', '/usage', '/model'].includes(prefix)) {
     return await handleConfigCommand(input, ctx);
   }
-  if (prefix.startsWith('/audit')) {
+  if (
+    hasCommand(input, '/audit') ||
+    hasCommand(input, '/audit-show') ||
+    hasCommand(input, '/audit-clear')
+  ) {
     return await handleAuditCommand(input, ctx);
   }
-  if (prefix === '/permissions' || prefix === '/policy') {
+  if (hasCommand(input, '/permissions') || hasCommand(input, '/policy')) {
     return await handlePolicyCommand(input, ctx);
   }
-  if (['/prompts', '/prompt-history', '/prompt-validate', '/prompt'].includes(prefix)) {
+  if (
+    hasCommand(input, '/prompts') ||
+    hasCommand(input, '/prompt-history') ||
+    hasCommand(input, '/prompt-validate') ||
+    hasCommand(input, '/prompt')
+  ) {
     return await handleTemplateCommand(input, ctx);
   }
 
   // /help — show help
-  if (input === '/help') {
+  if (hasCommand(input, '/help')) {
     printHelp();
     ctx.rl.prompt();
     return { handled: true };
   }
 
   // /clear — clear conversation history
-  if (input === '/clear') {
+  if (hasCommand(input, '/clear')) {
     ctx.agent.clearHistory();
     ctx.sessionStore.clear();
     console.log(formatSuccess('Conversation history cleared.'));
@@ -50,7 +60,7 @@ export async function handleChatCommand(input: string, ctx: ChatContext): Promis
   }
 
   // /history — show message count
-  if (input === '/history') {
+  if (hasCommand(input, '/history')) {
     const count = ctx.agent.getHistoryLength();
     console.log(formatSuccess(`Conversation history: ${count} messages.`));
     console.log('');
@@ -59,7 +69,7 @@ export async function handleChatCommand(input: string, ctx: ChatContext): Promis
   }
 
   // /extensions — list loaded extensions
-  if (input === '/extensions') {
+  if (hasCommand(input, '/extensions')) {
     const loaded = ctx.extensions.listExtensions();
     const diagnostics = ctx.extensions.listDiagnostics();
     if (loaded.length === 0) {
@@ -91,7 +101,7 @@ export async function handleChatCommand(input: string, ctx: ChatContext): Promis
   }
 
   // /reload — reload extensions
-  if (input === '/reload') {
+  if (hasCommand(input, '/reload')) {
     try {
       await ctx.extensions.load(ctx.cwd);
       console.log(formatSuccess('Extensions reloaded.'));
@@ -104,7 +114,7 @@ export async function handleChatCommand(input: string, ctx: ChatContext): Promis
   }
 
   // /integrations — show integration status or run setup
-  if (input.startsWith('/integrations')) {
+  if (hasCommand(input, '/integrations')) {
     const tokens = input.split(/\s+/).slice(1);
     const action = tokens[0];
     if (action === 'setup') {
@@ -152,7 +162,7 @@ export async function handleChatCommand(input: string, ctx: ChatContext): Promis
   }
 
   // /skills — list available skills
-  if (input === '/skills') {
+  if (hasCommand(input, '/skills')) {
     const skills = listSkills(ctx.cwd);
     if (skills.length === 0) {
       console.log(formatSuccess('No skills found.'));
@@ -173,7 +183,7 @@ export async function handleChatCommand(input: string, ctx: ChatContext): Promis
   }
 
   // /skill <name> — activate a skill
-  if (input.startsWith('/skill ') && !input.startsWith('/skill-clear')) {
+  if (hasCommand(input, '/skill') && !hasCommand(input, '/skill-clear')) {
     const skillName = input.slice('/skill '.length).trim();
     if (!skillName) {
       console.log(formatWarning('Usage: /skill <name>'));
@@ -196,7 +206,7 @@ export async function handleChatCommand(input: string, ctx: ChatContext): Promis
   }
 
   // /skill-clear — deactivate all skills
-  if (input === '/skill-clear') {
+  if (hasCommand(input, '/skill-clear')) {
     ctx.activeSkills.splice(0, ctx.activeSkills.length);
     console.log(formatSuccess('Active skills cleared.'));
     console.log('');
@@ -206,9 +216,9 @@ export async function handleChatCommand(input: string, ctx: ChatContext): Promis
 
   // /attach <path> — stage a file attachment
   if (
-    input.startsWith('/attach ') &&
-    !input.startsWith('/attach-clear') &&
-    !input.startsWith('/attachments')
+    hasCommand(input, '/attach') &&
+    !hasCommand(input, '/attach-clear') &&
+    !hasCommand(input, '/attachments')
   ) {
     const pathInput = input.slice('/attach '.length).trim();
     if (!pathInput) {
@@ -223,7 +233,7 @@ export async function handleChatCommand(input: string, ctx: ChatContext): Promis
   }
 
   // /attachments — list staged attachments
-  if (input === '/attachments') {
+  if (hasCommand(input, '/attachments')) {
     if (ctx.pendingAttachments.length === 0) {
       console.log(formatSuccess('No attachments staged.'));
     } else {
@@ -238,7 +248,7 @@ export async function handleChatCommand(input: string, ctx: ChatContext): Promis
   }
 
   // /attach-clear — clear all staged attachments
-  if (input === '/attach-clear') {
+  if (hasCommand(input, '/attach-clear')) {
     ctx.pendingAttachments.length = 0;
     console.log(formatSuccess('Attachments cleared.'));
     console.log('');

@@ -186,7 +186,7 @@ export function printWelcome(orgId: string, version?: string, model?: string): v
   console.log(chalk.gray('    /prompt   - Use a prompt template'));
   console.log(chalk.gray('    /prompt-history - Show recent prompt templates'));
   console.log(chalk.gray('    /prompt-validate - Validate prompt templates'));
-  console.log(chalk.gray('    exit      - End the session'));
+  console.log(chalk.gray('    /exit /quit - End the session'));
   console.log('');
 }
 
@@ -265,8 +265,8 @@ export function printHelp(): void {
   );
   console.log(
     chalk.cyan(
-      '    /search <text> [all] [role=user|assistant] [since=YYYY-MM-DD] [until=YYYY-MM-DD] [regex=/.../] [limit=50]',
-    ) + chalk.gray('Search session transcripts'),
+      '    /search <text> [all] [role=user|assistant] [since=YYYY-MM-DD] [until=YYYY-MM-DD] [regex=/.../] [limit=100]',
+    ) + chalk.gray('Search session transcripts (scans up to 5000 entries)'),
   );
   console.log(
     chalk.cyan('    /session-meta [session] [json|md] [out=path]') +
@@ -320,7 +320,7 @@ export function printHelp(): void {
   console.log(chalk.cyan('    /reload               ') + chalk.gray('Reload extensions'));
   console.log('');
 
-  console.log(chalk.cyan('    exit / quit            ') + chalk.gray('End the session'));
+  console.log(chalk.cyan('    /exit /quit         ') + chalk.gray('End the session'));
   console.log('');
   console.log(chalk.gray('  Multi-line input: end a line with \\ to continue on the next line.'));
   console.log(chalk.gray('  Press Ctrl+C to cancel the current request.'));

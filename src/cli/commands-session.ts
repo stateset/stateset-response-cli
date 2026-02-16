@@ -6,7 +6,7 @@ import { sanitizeSessionId, getSessionsDir, getSessionDir } from '../session.js'
 import { loadMemory } from '../memory.js';
 import { formatSuccess, formatWarning, formatError, formatTable } from '../utils/display.js';
 import type { ChatContext } from './types.js';
-import { formatTimestamp, normalizeTag, ensureDirExists } from './utils.js';
+import { formatTimestamp, normalizeTag, ensureDirExists, hasCommand } from './utils.js';
 import {
   readSessionMeta,
   writeSessionMeta,
@@ -20,7 +20,6 @@ const MAX_SEARCH_LIMIT = 100;
 const MAX_SEARCH_ENTRIES = 5_000;
 const MAX_REGEX_PATTERN_LENGTH = 160;
 const MAX_REGEX_CONTENT_LENGTH = 12_000;
-
 function isUnsafeRegexPattern(pattern: string): string | null {
   if (pattern.length > MAX_REGEX_PATTERN_LENGTH) {
     return `Regex pattern exceeds ${MAX_REGEX_PATTERN_LENGTH} characters`;
@@ -41,7 +40,7 @@ function isUnsafeRegexPattern(pattern: string): string | null {
 
 export async function handleSessionCommand(input: string, ctx: ChatContext): Promise<boolean> {
   // /session — show current session info
-  if (input === '/session') {
+  if (hasCommand(input, '/session')) {
     const memory = loadMemory(ctx.sessionId);
     const meta = readSessionMeta(ctx.sessionStore.getSessionDir());
     const tags = Array.isArray(meta.tags) ? meta.tags : [];
@@ -57,7 +56,7 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
   }
 
   // /sessions — list sessions
-  if (input === '/sessions' || input.startsWith('/sessions ')) {
+  if (hasCommand(input, '/sessions')) {
     const tokens = input.split(/\s+/).slice(1);
     const includeArchived = tokens.includes('all') || tokens.includes('archived');
     const tagFilterToken = tokens.find((t) => t.startsWith('tag='));
@@ -88,7 +87,7 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
   }
 
   // /new — create or switch to a new session
-  if (input.startsWith('/new')) {
+  if (hasCommand(input, '/new')) {
     const provided = input.slice(4).trim();
     let nextId = provided;
     if (!nextId) {
@@ -144,7 +143,7 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
   }
 
   // /resume — interactive session picker
-  if (input === '/resume') {
+  if (hasCommand(input, '/resume')) {
     const sessions = listSessionSummaries({ includeArchived: true });
     if (sessions.length === 0) {
       console.log(formatSuccess('No sessions found.'));
@@ -197,7 +196,7 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
   }
 
   // /rename — rename current session
-  if (input.startsWith('/rename')) {
+  if (hasCommand(input, '/rename')) {
     const newId = input.slice('/rename'.length).trim();
     if (!newId) {
       console.log(formatWarning('Usage: /rename <new-session-id>'));
@@ -236,7 +235,7 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
   }
 
   // /delete — delete a session
-  if (input.startsWith('/delete')) {
+  if (hasCommand(input, '/delete')) {
     const arg = input.slice('/delete'.length).trim();
     const target = sanitizeSessionId(arg || ctx.sessionId);
     const targetDir = path.join(getSessionsDir(), target);
@@ -281,7 +280,7 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
   }
 
   // /archive — archive a session
-  if (input.startsWith('/archive')) {
+  if (hasCommand(input, '/archive')) {
     const target = sanitizeSessionId(input.slice('/archive'.length).trim() || ctx.sessionId);
     const targetDir = path.join(getSessionsDir(), target);
     if (!fs.existsSync(targetDir)) {
@@ -300,7 +299,7 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
   }
 
   // /unarchive — unarchive a session
-  if (input.startsWith('/unarchive')) {
+  if (hasCommand(input, '/unarchive')) {
     const target = sanitizeSessionId(input.slice('/unarchive'.length).trim() || ctx.sessionId);
     const targetDir = path.join(getSessionsDir(), target);
     if (!fs.existsSync(targetDir)) {
@@ -319,7 +318,7 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
   }
 
   // /tag — manage session tags
-  if (input.startsWith('/tag')) {
+  if (hasCommand(input, '/tag')) {
     const tokens = input.split(/\s+/).slice(1);
     const action = tokens[0];
     if (!action) {
@@ -393,7 +392,7 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
   }
 
   // /search — search across sessions
-  if (input.startsWith('/search')) {
+  if (hasCommand(input, '/search')) {
     const tokens = input.split(/\s+/).slice(1);
     const includeArchived = tokens.includes('all') || tokens.includes('archived');
     let roleFilter: 'user' | 'assistant' | null = null;
@@ -408,7 +407,14 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
       if (token === 'all' || token === 'archived') continue;
       if (token.startsWith('role=')) {
         const val = token.slice('role='.length).toLowerCase();
-        if (val === 'user' || val === 'assistant') roleFilter = val;
+        if (val === 'user' || val === 'assistant') {
+          roleFilter = val;
+        } else {
+          console.log(formatWarning('Invalid role filter. Use role=user or role=assistant.'));
+          console.log('');
+          ctx.rl.prompt();
+          return true;
+        }
         continue;
       }
       if (token.startsWith('since=')) {
@@ -438,9 +444,18 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
       }
       if (token.startsWith('limit=')) {
         const val = Number(token.slice('limit='.length));
-        if (Number.isFinite(val) && val > 0) {
-          limit = Math.min(MAX_SEARCH_LIMIT, Math.floor(val));
+        if (!Number.isFinite(val) || val <= 0) {
+          console.log(formatWarning('Invalid limit. Use a positive number.'));
+          console.log('');
+          ctx.rl.prompt();
+          return true;
         }
+        if (val > MAX_SEARCH_LIMIT) {
+          console.log(
+            formatWarning(`Requested limit ${Math.floor(val)} exceeds ${MAX_SEARCH_LIMIT}.`),
+          );
+        }
+        limit = Math.min(MAX_SEARCH_LIMIT, Math.floor(val));
         continue;
       }
       termParts.push(token);
@@ -481,6 +496,14 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
         return true;
       }
     }
+    if (sinceMs !== null && untilMs !== null && sinceMs > untilMs) {
+      console.log(
+        formatWarning('Invalid date range. `since` must be earlier than or equal to `until`.'),
+      );
+      console.log('');
+      ctx.rl.prompt();
+      return true;
+    }
 
     const sessions = listSessionSummaries({ includeArchived });
     if (sessions.length === 0) {
@@ -512,6 +535,7 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
     }
     let scannedEntries = 0;
     let scanLimitReached = false;
+    let outputLimitReached = false;
     for (const session of sessions) {
       const entries = readSessionEntries(session.id);
       for (const entry of entries) {
@@ -555,7 +579,10 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
           excerpt: (start > 0 ? '...' : '') + excerpt + (end < content.length ? '...' : ''),
           ts: entry.ts,
         });
-        if (results.length >= limit) break;
+        if (results.length >= limit) {
+          outputLimitReached = true;
+          break;
+        }
       }
       if (scanLimitReached) {
         break;
@@ -566,10 +593,19 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
     if (scanLimitReached) {
       console.log(formatWarning(`Search stopped after ${MAX_SEARCH_ENTRIES} scanned entries.`));
       console.log(formatWarning('Use narrower filters to inspect additional matches.'));
+    } else if (outputLimitReached) {
+      console.log(formatWarning(`Result limit reached after ${results.length} matches.`));
+      console.log(
+        formatWarning(`Increase limit (max ${MAX_SEARCH_LIMIT}) to view more if available.`),
+      );
     }
 
     if (results.length === 0) {
-      console.log(formatSuccess('No matches found.'));
+      if (scanLimitReached) {
+        console.log(formatWarning('No matches found in scanned entries.'));
+      } else {
+        console.log(formatSuccess('No matches found.'));
+      }
     } else {
       const label = regexPattern ? `/${regexPattern}/${regexFlags || ''}` : `"${term}"`;
       console.log(formatSuccess(`Matches for ${label} (showing ${results.length}):`));
@@ -587,7 +623,7 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
   }
 
   // /session-meta — detailed session metadata
-  if (input.startsWith('/session-meta')) {
+  if (hasCommand(input, '/session-meta')) {
     const tokens = input.split(/\s+/).slice(1);
     let target = ctx.sessionId;
     let format: 'text' | 'json' | 'md' = 'text';

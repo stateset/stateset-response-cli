@@ -28,6 +28,7 @@ interface SenderSession {
   lastActivity: number;
   processing: boolean;
   queue: Array<{ text: string; jid: string; messageId: string }>;
+  connectPromise?: Promise<void>;
 }
 
 export interface GatewayOptions {
@@ -362,7 +363,11 @@ export class WhatsAppGateway {
     session.lastActivity = Date.now();
 
     if (!session.processing) {
-      this.processQueue(jid, session);
+      void this.processQueue(jid, session).catch((err) => {
+        this.log.error(
+          `Unhandled queue error for ${jidToPhone(jid)}: ${err instanceof Error ? err.message : err}`,
+        );
+      });
     }
   }
 
@@ -392,6 +397,15 @@ export class WhatsAppGateway {
     const commandResponse = this.handleCommand(text, session);
     if (commandResponse !== null) {
       await this.sendText(jid, commandResponse);
+      return;
+    }
+
+    try {
+      await this.ensureAgentConnected(session, jid);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      this.log.error(`Failed to connect agent for ${jidToPhone(jid)}: ${errMsg}`);
+      await this.sendText(jid, 'I encountered an error processing your request. Please try again.');
       return;
     }
 
@@ -459,8 +473,9 @@ export class WhatsAppGateway {
       ].join('\n');
     }
 
-    if (lower.startsWith('/model')) {
-      const arg = text.slice(6).trim();
+    const modelMatch = /^\/model(?:\s+(.*))?$/.exec(lower);
+    if (modelMatch) {
+      const arg = modelMatch[1] ? modelMatch[1].trim() : '';
       if (!arg) {
         return `Current model: ${session.agent.getModel()}`;
       }
@@ -504,25 +519,39 @@ export class WhatsAppGateway {
       const apiKey = getAnthropicApiKey();
       const agent = new StateSetAgent(apiKey, this.model);
 
-      // Connect agent asynchronously — it will be ready by the time we need it
-      // since the queue processing is also async
-      agent.connect().catch((err) => {
-        this.log.error(
-          `Failed to connect agent for ${phone}: ${err instanceof Error ? err.message : err}`,
-        );
-      });
-
       session = {
         agent,
         lastActivity: Date.now(),
         processing: false,
         queue: [],
       };
+      session.connectPromise = this.connectAgent(agent, phone);
       this.sessions.set(phone, session);
     }
 
     session.lastActivity = Date.now();
     return session;
+  }
+
+  private connectAgent(agent: StateSetAgent, phone: string): Promise<void> {
+    return agent.connect().catch((err) => {
+      this.log.error(
+        `Failed to connect agent for ${phone}: ${err instanceof Error ? err.message : err}`,
+      );
+      throw err;
+    });
+  }
+
+  private async ensureAgentConnected(session: SenderSession, jid: string): Promise<void> {
+    if (!session.connectPromise) {
+      session.connectPromise = this.connectAgent(session.agent, jidToPhone(jid));
+    }
+    try {
+      await session.connectPromise;
+    } catch (err) {
+      session.connectPromise = undefined;
+      throw err;
+    }
   }
 
   private evictOldestSessions(limit = 1): void {

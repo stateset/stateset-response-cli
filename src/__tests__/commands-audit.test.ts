@@ -42,6 +42,7 @@ describe('handleAuditCommand', () => {
     const ctx = createMockCtx();
     expect(await handleAuditCommand('/help', ctx)).toEqual({ handled: false });
     expect(await handleAuditCommand('/apply on', ctx)).toEqual({ handled: false });
+    expect(await handleAuditCommand('/auditx', ctx)).toEqual({ handled: false });
   });
 
   it('/audit shows current status', async () => {

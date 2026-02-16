@@ -5,6 +5,7 @@ import {
   normalizeTag,
   formatTimestamp,
   readBooleanEnv,
+  hasCommand,
 } from '../cli/utils.js';
 
 describe('parseToggleValue', () => {
@@ -124,5 +125,28 @@ describe('readBooleanEnv', () => {
     process.env.TEST_BOOL_VAR = 'maybe';
     expect(readBooleanEnv('TEST_BOOL_VAR')).toBe(false);
     delete process.env.TEST_BOOL_VAR;
+  });
+});
+
+describe('hasCommand', () => {
+  it('matches exact command', () => {
+    expect(hasCommand('/help', '/help')).toBe(true);
+    expect(hasCommand('/sessions', '/sessions')).toBe(true);
+  });
+
+  it('matches command with spaces or tabs', () => {
+    expect(hasCommand('/help me', '/help')).toBe(true);
+    expect(hasCommand('/help\tme', '/help')).toBe(true);
+  });
+
+  it('does not match command-like prefixes', () => {
+    expect(hasCommand('/helpme', '/help')).toBe(false);
+    expect(hasCommand('/help-else', '/help')).toBe(false);
+    expect(hasCommand('/sessionsx', '/sessions')).toBe(false);
+  });
+
+  it('ignores collisions with command extensions', () => {
+    expect(hasCommand('/skill-clear', '/skill')).toBe(false);
+    expect(hasCommand('/prompt-validate', '/prompt')).toBe(false);
   });
 });

@@ -4,16 +4,12 @@ import fs from 'node:fs';
 import { sanitizeSessionId } from '../session.js';
 import { formatError, formatSuccess, formatWarning, formatTable } from '../utils/display.js';
 import type { ChatContext, CommandResult } from './types.js';
-import { parseToggleValue } from './utils.js';
+import { parseToggleValue, hasCommand } from './utils.js';
 import { readToolAudit, getToolAuditPath } from './audit.js';
 
 export async function handleAuditCommand(input: string, ctx: ChatContext): Promise<CommandResult> {
   // /audit — toggle or show audit status
-  if (
-    input.startsWith('/audit') &&
-    !input.startsWith('/audit-show') &&
-    !input.startsWith('/audit-clear')
-  ) {
+  if (hasCommand(input, '/audit')) {
     const args = input.split(/\s+/).slice(1);
     const mode = args[0];
     if (!mode) {
@@ -51,7 +47,7 @@ export async function handleAuditCommand(input: string, ctx: ChatContext): Promi
   }
 
   // /audit-show — show audit log entries
-  if (input.startsWith('/audit-show')) {
+  if (hasCommand(input, '/audit-show')) {
     const tokens = input.split(/\s+/).slice(1);
     let targetSession = ctx.sessionId;
     let toolFilter: string | null = null;
@@ -120,7 +116,7 @@ export async function handleAuditCommand(input: string, ctx: ChatContext): Promi
   }
 
   // /audit-clear — clear audit log
-  if (input.startsWith('/audit-clear')) {
+  if (hasCommand(input, '/audit-clear')) {
     const target = sanitizeSessionId(input.slice('/audit-clear'.length).trim() || ctx.sessionId);
     const auditPath = getToolAuditPath(target);
     if (!fs.existsSync(auditPath)) {

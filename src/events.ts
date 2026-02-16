@@ -241,7 +241,7 @@ export class EventsRunner {
       mkdirSync(this.eventsDir, { recursive: true, mode: 0o700 });
     }
 
-    this.scanExisting();
+    void this.scanExisting();
     this.startSessionCleanup();
 
     this.watcher = watch(this.eventsDir, (_eventType, filename) => {
@@ -354,7 +354,10 @@ export class EventsRunner {
     }
 
     for (const filename of files) {
-      this.handleFile(filename);
+      void this.handleFile(filename).catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error(`Failed to process event file ${filename}: ${msg}`);
+      });
     }
   }
 
@@ -370,7 +373,10 @@ export class EventsRunner {
       this.cancelScheduled(filename);
     }
 
-    this.handleFile(filename);
+    void this.handleFile(filename).catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`Failed to process event file ${filename}: ${msg}`);
+    });
   }
 
   private handleDelete(filename: string): void {

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { formatError, formatSuccess, formatWarning, formatTable } from '../utils/display.js';
 import type { ChatContext, CommandResult } from './types.js';
-import { ensureDirExists } from './utils.js';
+import { hasCommand, ensureDirExists } from './utils.js';
 import {
   writePermissionStore,
   readPolicyOverridesDetailed,
@@ -14,7 +14,7 @@ import {
 
 export async function handlePolicyCommand(input: string, ctx: ChatContext): Promise<CommandResult> {
   // /permissions — manage stored tool hook permissions
-  if (input.startsWith('/permissions')) {
+  if (hasCommand(input, '/permissions')) {
     const tokens = input.split(/\s+/).slice(1);
     const action = tokens[0];
     if (!action || action === 'list') {
@@ -66,7 +66,7 @@ export async function handlePolicyCommand(input: string, ctx: ChatContext): Prom
   }
 
   // /policy — manage policy overrides
-  if (input.startsWith('/policy')) {
+  if (hasCommand(input, '/policy')) {
     const tokens = input.split(/\s+/).slice(1);
     const action = tokens[0];
     if (!action || action === 'list') {

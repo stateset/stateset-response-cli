@@ -6,7 +6,7 @@ import { sanitizeSessionId } from '../session.js';
 import { getSessionExportPath, resolveExportFilePath } from '../utils/session-exports.js';
 import { formatSuccess, formatWarning, formatError, formatTable } from '../utils/display.js';
 import type { ChatContext } from './types.js';
-import { formatTimestamp, ensureDirExists } from './utils.js';
+import { formatTimestamp, ensureDirExists, hasCommand } from './utils.js';
 import {
   readSessionEntries,
   exportSessionToMarkdown,
@@ -16,7 +16,7 @@ import {
 
 export async function handleExportCommand(input: string, ctx: ChatContext): Promise<boolean> {
   // /export-list — list export files for a session
-  if (input.startsWith('/export-list')) {
+  if (hasCommand(input, '/export-list')) {
     const target = sanitizeSessionId(input.slice('/export-list'.length).trim() || ctx.sessionId);
     const files = listExportFiles(target);
     if (files.length === 0) {
@@ -37,7 +37,7 @@ export async function handleExportCommand(input: string, ctx: ChatContext): Prom
   }
 
   // /export-show — show contents of an export file
-  if (input.startsWith('/export-show')) {
+  if (hasCommand(input, '/export-show')) {
     const tokens = input.split(/\s+/).slice(1);
     if (tokens.length === 0) {
       console.log(formatWarning('Usage: /export-show <filename> [session] [head=40]'));
@@ -86,7 +86,7 @@ export async function handleExportCommand(input: string, ctx: ChatContext): Prom
   }
 
   // /export-open — show the path of an export file
-  if (input.startsWith('/export-open')) {
+  if (hasCommand(input, '/export-open')) {
     const tokens = input.split(/\s+/).slice(1);
     if (tokens.length === 0) {
       console.log(formatWarning('Usage: /export-open <filename> [session]'));
@@ -118,7 +118,7 @@ export async function handleExportCommand(input: string, ctx: ChatContext): Prom
   }
 
   // /export-delete — delete an export file
-  if (input.startsWith('/export-delete')) {
+  if (hasCommand(input, '/export-delete')) {
     const tokens = input.split(/\s+/).slice(1);
     if (tokens.length === 0) {
       console.log(formatWarning('Usage: /export-delete <filename> [session]'));
@@ -171,7 +171,7 @@ export async function handleExportCommand(input: string, ctx: ChatContext): Prom
   }
 
   // /export-prune — prune old export files
-  if (input.startsWith('/export-prune')) {
+  if (hasCommand(input, '/export-prune')) {
     const tokens = input.split(/\s+/).slice(1);
     let target = ctx.sessionId;
     let keep = 5;
@@ -231,7 +231,7 @@ export async function handleExportCommand(input: string, ctx: ChatContext): Prom
   }
 
   // /export — export session messages
-  if (input.startsWith('/export')) {
+  if (hasCommand(input, '/export')) {
     const tokens = input.split(/\s+/).slice(1);
     const formats = new Set(['md', 'json', 'jsonl']);
     let targetSession = ctx.sessionId;

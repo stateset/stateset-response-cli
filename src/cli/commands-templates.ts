@@ -4,6 +4,7 @@ import { formatError, formatSuccess, formatWarning, formatTable } from '../utils
 import { getPromptTemplate, listPromptTemplates, getPromptTemplateFile } from '../resources.js';
 import type { ChatContext, CommandResult } from './types.js';
 import { readPromptHistory, appendPromptHistory } from './audit.js';
+import { hasCommand } from './utils.js';
 
 export function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -33,7 +34,7 @@ export async function handleTemplateCommand(
   ctx: ChatContext,
 ): Promise<CommandResult> {
   // /prompts — list prompt templates
-  if (input === '/prompts') {
+  if (hasCommand(input, '/prompts')) {
     const templates = listPromptTemplates(ctx.cwd);
     if (templates.length === 0) {
       console.log(formatSuccess('No prompt templates found.'));
@@ -55,7 +56,7 @@ export async function handleTemplateCommand(
   }
 
   // /prompt-history — show recent prompt template usage
-  if (input === '/prompt-history') {
+  if (hasCommand(input, '/prompt-history')) {
     const history = readPromptHistory();
     if (history.length === 0) {
       console.log(formatSuccess('No prompt history yet.'));
@@ -78,7 +79,7 @@ export async function handleTemplateCommand(
   }
 
   // /prompt-validate — validate prompt templates
-  if (input.startsWith('/prompt-validate')) {
+  if (hasCommand(input, '/prompt-validate')) {
     const tokens = input.split(/\s+/).slice(1);
     const target = tokens[0];
     if (!target) {
@@ -241,7 +242,7 @@ export async function handleTemplateCommand(
   }
 
   // /prompt <name> — expand and optionally send a prompt template
-  if (input.startsWith('/prompt ') && !input.startsWith('/prompt-')) {
+  if (hasCommand(input, '/prompt') && !hasCommand(input, '/prompt-')) {
     const templateName = input.slice('/prompt '.length).trim();
     if (!templateName) {
       console.log(formatWarning('Usage: /prompt <name>'));

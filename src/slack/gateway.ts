@@ -29,6 +29,7 @@ interface SenderSession {
   lastActivity: number;
   processing: boolean;
   queue: Array<{ text: string; channel: string; threadTs?: string }>;
+  connectPromise?: Promise<void>;
 }
 
 export interface SlackGatewayOptions {
@@ -313,7 +314,7 @@ export class SlackGateway {
     while (session.queue.length > 0) {
       const item = session.queue.shift()!;
       try {
-        await this.handleMessage(item.channel, item.text, session, item.threadTs);
+        await this.handleMessage(item.channel, item.text, session, userId, item.threadTs);
       } catch (err) {
         this.log.error(
           `Error processing message from ${userId}: ${err instanceof Error ? err.message : err}`,
@@ -333,12 +334,27 @@ export class SlackGateway {
     channel: string,
     text: string,
     session: SenderSession,
+    userId: string,
     threadTs?: string,
   ): Promise<void> {
     // Handle built-in commands
     const commandResponse = this.handleCommand(text, session);
     if (commandResponse !== null) {
       await this.sendText(channel, commandResponse, threadTs);
+      return;
+    }
+
+    try {
+      await this.ensureAgentConnected(session, userId);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      this.log.error(`Failed to connect agent for ${userId}: ${errMsg}`);
+      const response = 'I encountered an error processing your request. Please try again.';
+      const formatted = cleanForSlack(response);
+      const chunks = chunkMessage(formatted);
+      for (const chunk of chunks) {
+        await this.sendText(channel, chunk, threadTs);
+      }
       return;
     }
 
@@ -403,8 +419,9 @@ export class SlackGateway {
       ].join('\n');
     }
 
-    if (lower.startsWith('/model')) {
-      const arg = text.slice(6).trim();
+    const modelMatch = /^\/model(?:\s+(.*))?$/.exec(lower);
+    if (modelMatch) {
+      const arg = modelMatch[1] ? modelMatch[1].trim() : '';
       if (!arg) {
         return `Current model: \`${session.agent.getModel()}\``;
       }
@@ -447,23 +464,39 @@ export class SlackGateway {
       const apiKey = getAnthropicApiKey();
       const agent = new StateSetAgent(apiKey, this.model);
 
-      agent.connect().catch((err) => {
-        this.log.error(
-          `Failed to connect agent for ${userId}: ${err instanceof Error ? err.message : err}`,
-        );
-      });
-
       session = {
         agent,
         lastActivity: Date.now(),
         processing: false,
         queue: [],
       };
+      session.connectPromise = this.connectAgent(agent, userId);
       this.sessions.set(userId, session);
     }
 
     session.lastActivity = Date.now();
     return session;
+  }
+
+  private connectAgent(agent: StateSetAgent, userId: string): Promise<void> {
+    return agent.connect().catch((err) => {
+      this.log.error(
+        `Failed to connect agent for ${userId}: ${err instanceof Error ? err.message : err}`,
+      );
+      throw err;
+    });
+  }
+
+  private async ensureAgentConnected(session: SenderSession, userId: string): Promise<void> {
+    if (!session.connectPromise) {
+      session.connectPromise = this.connectAgent(session.agent, userId);
+    }
+    try {
+      await session.connectPromise;
+    } catch (err) {
+      session.connectPromise = undefined;
+      throw err;
+    }
   }
 
   private evictOldestSessions(limit = 1): void {

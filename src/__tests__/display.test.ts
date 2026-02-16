@@ -6,6 +6,8 @@ import {
   formatRelativeTime,
   formatBytes,
   formatDuration,
+  printHelp,
+  printWelcome,
 } from '../utils/display.js';
 
 describe('formatElapsed', () => {
@@ -161,5 +163,25 @@ describe('formatDuration', () => {
 
   it('returns 0ms for NaN', () => {
     expect(formatDuration(NaN)).toBe('0ms');
+  });
+});
+
+describe('cli help text', () => {
+  it('includes /exit and /quit in printHelp', () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    printHelp();
+    const output = spy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(output).toContain('/exit /quit');
+    expect(output).toContain('[limit=100]');
+    expect(output).toContain('scans up to 5000 entries');
+    spy.mockRestore();
+  });
+
+  it('includes /exit and /quit in printWelcome', () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    printWelcome('org-id', '1.2.3', 'model-id');
+    const output = spy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(output).toContain('/exit /quit');
+    spy.mockRestore();
   });
 });

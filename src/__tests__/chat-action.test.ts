@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { resolveSlashRouteAction } from '../cli/chat-action.js';
+import {
+  resolveSlashInputAction,
+  resolveSlashRouteAction,
+  getSlashCommandSuggestions,
+} from '../cli/chat-action.js';
 
 describe('resolveSlashRouteAction', () => {
   it('returns send when handled with non-empty message', () => {
@@ -61,5 +65,43 @@ describe('resolveSlashRouteAction', () => {
       sendMessage: '   ',
     });
     expect(result).toEqual('handled');
+  });
+
+  it('resolves /exit slash command to exit action', () => {
+    expect(resolveSlashInputAction('/exit', { handled: false })).toEqual('exit');
+  });
+
+  it('resolves /quit slash command to exit action', () => {
+    expect(resolveSlashInputAction('/quit', { handled: false })).toEqual('exit');
+  });
+
+  it('resolves unknown slash input to unhandled', () => {
+    expect(resolveSlashInputAction('/unknown', { handled: false })).toEqual('unhandled');
+  });
+
+  it('resolves handled command to handled action', () => {
+    expect(resolveSlashInputAction('/help', { handled: true })).toEqual('handled');
+  });
+
+  it('suggests commands by prefix when possible', () => {
+    const suggestions = getSlashCommandSuggestions('/se');
+    expect(suggestions).toContain('/search');
+    expect(suggestions).toContain('/session-meta');
+    expect(suggestions).toContain('/sessions');
+    expect(suggestions).toContain('/session');
+  });
+
+  it('suggests near-miss slash commands', () => {
+    expect(getSlashCommandSuggestions('/hlp')).toEqual(['/help']);
+  });
+
+  it('suggests extension commands when provided', () => {
+    const suggestions = getSlashCommandSuggestions('/ext', ['ext-demo', '/export']);
+    expect(suggestions).toContain('/ext-demo');
+    expect(suggestions).toContain('/export');
+  });
+
+  it('does not suggest for bare "/" input', () => {
+    expect(getSlashCommandSuggestions('/')).toEqual([]);
   });
 });

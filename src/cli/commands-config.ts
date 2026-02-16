@@ -7,9 +7,11 @@ import type { ChatContext, CommandResult } from './types.js';
 import { parseToggleValue } from './utils.js';
 
 export async function handleConfigCommand(input: string, ctx: ChatContext): Promise<CommandResult> {
+  const applyMatch = /^\/apply(?:\s+(.*))?$/.exec(input);
+
   // /apply — toggle write operations
-  if (input.startsWith('/apply')) {
-    const arg = input.slice('/apply'.length).trim();
+  if (applyMatch) {
+    const arg = applyMatch[1] ? applyMatch[1].trim() : '';
     const parsed = parseToggleValue(arg);
     const current = process.env.STATESET_ALLOW_APPLY === 'true';
     if (!arg) {
@@ -37,8 +39,17 @@ export async function handleConfigCommand(input: string, ctx: ChatContext): Prom
       await ctx.reconnectAgent();
     } catch (err) {
       process.env.STATESET_ALLOW_APPLY = current ? 'true' : 'false';
-      console.error(formatError(err instanceof Error ? err.message : String(err)));
+      console.error(
+        formatError(
+          `Unable to apply writes toggle: ${err instanceof Error ? err.message : String(err)}`,
+        ),
+      );
+      console.log(chalk.gray('  Writes setting unchanged.'));
+      console.log('');
+      ctx.rl.prompt();
+      return { handled: true };
     }
+
     const memory = loadMemory(ctx.sessionId);
     ctx.agent.setSystemPrompt(
       buildSystemPrompt({
@@ -54,9 +65,11 @@ export async function handleConfigCommand(input: string, ctx: ChatContext): Prom
     return { handled: true };
   }
 
+  const redactMatch = /^\/redact(?:\s+(.*))?$/.exec(input);
+
   // /redact — toggle redaction
-  if (input.startsWith('/redact')) {
-    const arg = input.slice('/redact'.length).trim();
+  if (redactMatch) {
+    const arg = redactMatch[1] ? redactMatch[1].trim() : '';
     const parsed = parseToggleValue(arg);
     const current = process.env.STATESET_REDACT === 'true';
     if (!arg) {
@@ -84,8 +97,17 @@ export async function handleConfigCommand(input: string, ctx: ChatContext): Prom
       await ctx.reconnectAgent();
     } catch (err) {
       process.env.STATESET_REDACT = current ? 'true' : 'false';
-      console.error(formatError(err instanceof Error ? err.message : String(err)));
+      console.error(
+        formatError(
+          `Unable to apply redaction toggle: ${err instanceof Error ? err.message : String(err)}`,
+        ),
+      );
+      console.log(chalk.gray('  Redaction setting unchanged.'));
+      console.log('');
+      ctx.rl.prompt();
+      return { handled: true };
     }
+
     const memory = loadMemory(ctx.sessionId);
     ctx.agent.setSystemPrompt(
       buildSystemPrompt({
@@ -101,9 +123,11 @@ export async function handleConfigCommand(input: string, ctx: ChatContext): Prom
     return { handled: true };
   }
 
+  const usageMatch = /^\/usage(?:\s+(.*))?$/.exec(input);
+
   // /usage — toggle usage summaries
-  if (input.startsWith('/usage')) {
-    const arg = input.slice('/usage'.length).trim();
+  if (usageMatch) {
+    const arg = usageMatch[1] ? usageMatch[1].trim() : '';
     const parsed = parseToggleValue(arg);
     if (!arg) {
       console.log(formatSuccess(`Usage summaries: ${ctx.showUsage ? 'enabled' : 'disabled'}`));
@@ -127,8 +151,9 @@ export async function handleConfigCommand(input: string, ctx: ChatContext): Prom
   }
 
   // /model — show or change model
-  if (input.startsWith('/model')) {
-    const modelArg = input.slice(6).trim();
+  const modelMatch = /^\/model(?:\s+(.*))?$/.exec(input);
+  if (modelMatch) {
+    const modelArg = modelMatch[1] ? modelMatch[1].trim() : '';
     if (!modelArg) {
       console.log(formatSuccess(`Current model: ${ctx.agent.getModel()}`));
       console.log(chalk.gray('  Usage: /model <sonnet|haiku|opus>'));
