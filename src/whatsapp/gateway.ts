@@ -10,11 +10,10 @@ import {
 } from './session.js';
 import { StateSetAgent } from '../agent.js';
 import {
-  getAnthropicApiKey,
-  configExists,
-  getCurrentOrg,
-  resolveModel,
+  resolveModelOrThrow,
+  formatUnknownModelError,
   getConfiguredModel,
+  getRuntimeContext,
   type ModelId,
 } from '../config.js';
 import { logger } from '../lib/logger.js';
@@ -80,11 +79,11 @@ export class WhatsAppGateway {
   private ownJid: string | null = null;
   private ownPhone: string | null = null;
   private sentMessageIds = new Map<string, number>();
+  private anthropicApiKey: string | null = null;
+  private orgId = 'unknown';
 
   constructor(options: GatewayOptions = {}) {
-    this.model = options.model
-      ? (resolveModel(options.model) ?? getConfiguredModel())
-      : getConfiguredModel();
+    this.model = options.model ? resolveModelOrThrow(options.model, 'valid') : getConfiguredModel();
     this.allowList = options.allowList?.length
       ? new Set(options.allowList.map((p) => p.replace(/[^0-9]/g, '')))
       : null;
@@ -99,13 +98,9 @@ export class WhatsAppGateway {
   // -------------------------------------------------------------------------
 
   async start(): Promise<void> {
-    if (!configExists()) {
-      throw new Error('No configuration found. Run "response auth login" first.');
-    }
-
-    // Validate credentials upfront
-    getAnthropicApiKey();
-    getCurrentOrg();
+    const runtime = getRuntimeContext();
+    this.orgId = runtime.orgId;
+    this.anthropicApiKey = runtime.anthropicApiKey;
 
     this.running = true;
     this.startCleanupTimer();
@@ -463,10 +458,9 @@ export class WhatsAppGateway {
     }
 
     if (lower === '/status') {
-      const { orgId } = getCurrentOrg();
       return [
         '*Session Status*',
-        `Organization: ${orgId}`,
+        `Organization: ${this.orgId}`,
         `Model: ${session.agent.getModel()}`,
         `History: ${session.agent.getHistoryLength()} messages`,
         `Active sessions: ${this.sessions.size}`,
@@ -479,12 +473,13 @@ export class WhatsAppGateway {
       if (!arg) {
         return `Current model: ${session.agent.getModel()}`;
       }
-      const resolved = resolveModel(arg);
-      if (!resolved) {
-        return `Unknown model "${arg}". Valid: sonnet, haiku, opus`;
+      try {
+        const resolved = resolveModelOrThrow(arg, 'valid');
+        session.agent.setModel(resolved);
+        return `Model changed to: ${resolved}`;
+      } catch {
+        return formatUnknownModelError(arg, 'valid');
       }
-      session.agent.setModel(resolved);
-      return `Model changed to: ${resolved}`;
     }
 
     return null; // Not a command
@@ -516,7 +511,10 @@ export class WhatsAppGateway {
       }
 
       this.log.debug(`Creating new session for ${phone}`);
-      const apiKey = getAnthropicApiKey();
+      const apiKey = this.anthropicApiKey;
+      if (!apiKey) {
+        return null;
+      }
       const agent = new StateSetAgent(apiKey, this.model);
 
       session = {

@@ -1,5 +1,32 @@
-import { describe, it, expect } from 'vitest';
-import { parseEvent } from '../events.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as config from '../config.js';
+import type { RuntimeContext } from '../config.js';
+import { parseEvent, validateEventsPrereqs } from '../events.js';
+
+const mockRuntimeContext: RuntimeContext = {
+  orgId: 'org-1',
+  orgConfig: {
+    name: 'Org',
+    graphqlEndpoint: 'https://api.example.com',
+  },
+  anthropicApiKey: 'sk-ant-test',
+};
+
+beforeEach(() => {
+  vi.restoreAllMocks();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe('validateEventsPrereqs', () => {
+  it('returns runtime context from config', () => {
+    vi.spyOn(config, 'getRuntimeContext').mockReturnValue(mockRuntimeContext);
+    expect(validateEventsPrereqs()).toEqual(mockRuntimeContext);
+    expect(config.getRuntimeContext).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('parseEvent', () => {
   it('parses a valid immediate event', () => {

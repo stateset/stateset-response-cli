@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 import { loadMemory } from '../memory.js';
 import { buildSystemPrompt } from '../prompt.js';
-import { resolveModel } from '../config.js';
+import { resolveModelOrThrow, formatUnknownModelError, getModelAliasText } from '../config.js';
 import { formatError, formatSuccess, formatWarning } from '../utils/display.js';
 import type { ChatContext, CommandResult } from './types.js';
 import { parseToggleValue } from './utils.js';
@@ -156,14 +156,16 @@ export async function handleConfigCommand(input: string, ctx: ChatContext): Prom
     const modelArg = modelMatch[1] ? modelMatch[1].trim() : '';
     if (!modelArg) {
       console.log(formatSuccess(`Current model: ${ctx.agent.getModel()}`));
-      console.log(chalk.gray('  Usage: /model <sonnet|haiku|opus>'));
+      console.log(
+        chalk.gray(`  Usage: /model <${getModelAliasText('list').replace(/,\s*/g, '|')}>`),
+      );
     } else {
-      const resolved = resolveModel(modelArg);
-      if (resolved) {
+      try {
+        const resolved = resolveModelOrThrow(modelArg);
         ctx.agent.setModel(resolved);
         console.log(formatSuccess(`Model switched to: ${resolved}`));
-      } else {
-        console.log(formatWarning(`Unknown model "${modelArg}". Use sonnet, haiku, or opus.`));
+      } catch {
+        console.log(formatWarning(formatUnknownModelError(modelArg)));
       }
     }
     console.log('');

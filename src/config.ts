@@ -12,18 +12,48 @@ export interface OrgConfig {
   cliToken?: string;
 }
 
-export type ModelId =
-  | 'claude-sonnet-4-20250514'
-  | 'claude-haiku-35-20241022'
-  | 'claude-opus-4-20250514';
+export const MODEL_IDS = [
+  'claude-sonnet-4-20250514',
+  'claude-haiku-35-20241022',
+  'claude-opus-4-20250514',
+] as const;
 
-export const DEFAULT_MODEL: ModelId = 'claude-sonnet-4-20250514';
+export type ModelId = (typeof MODEL_IDS)[number];
 
-export const MODEL_ALIASES: Record<string, ModelId> = {
+export const DEFAULT_MODEL: ModelId = MODEL_IDS[0];
+export const MODEL_ALIAS_NAMES = ['sonnet', 'haiku', 'opus'] as const;
+
+export const MODEL_ALIASES: Record<(typeof MODEL_ALIAS_NAMES)[number], ModelId> = {
   sonnet: 'claude-sonnet-4-20250514',
   haiku: 'claude-haiku-35-20241022',
   opus: 'claude-opus-4-20250514',
 };
+const MODEL_ID_SET = new Set<ModelId>(MODEL_IDS);
+
+export function getModelAliasText(style: 'or' | 'list' = 'or'): string {
+  if (style === 'list') {
+    return MODEL_ALIAS_NAMES.join(', ');
+  }
+  if (MODEL_ALIAS_NAMES.length === 1) {
+    return MODEL_ALIAS_NAMES[0];
+  }
+  return `${MODEL_ALIAS_NAMES.slice(0, -1).join(', ')}, or ${MODEL_ALIAS_NAMES[MODEL_ALIAS_NAMES.length - 1]}`;
+}
+
+export function formatUnknownModelError(input: string, style: 'use' | 'valid' = 'use'): string {
+  const aliases = getModelAliasText(style === 'use' ? 'or' : 'list');
+  return style === 'valid'
+    ? `Unknown model "${input}". Valid: ${aliases}`
+    : `Unknown model "${input}". Use ${aliases}`;
+}
+
+export function resolveModelOrThrow(input: string, style: 'use' | 'valid' = 'use'): ModelId {
+  const resolved = resolveModel(input);
+  if (!resolved) {
+    throw new Error(formatUnknownModelError(input, style));
+  }
+  return resolved;
+}
 
 export interface StateSetConfig {
   currentOrg: string;
@@ -43,9 +73,7 @@ const OrgConfigSchema = z.object({
 const StateSetConfigSchema = z.object({
   currentOrg: z.string().min(1),
   anthropicApiKey: z.string().optional(),
-  model: z
-    .enum(['claude-sonnet-4-20250514', 'claude-haiku-35-20241022', 'claude-opus-4-20250514'])
-    .optional(),
+  model: z.enum(MODEL_IDS).optional(),
   organizations: z.record(z.string(), OrgConfigSchema),
 });
 
@@ -248,6 +276,18 @@ export function getCurrentOrg(): { orgId: string; config: OrgConfig } {
   return { orgId: cfg.currentOrg, config: orgConfig };
 }
 
+export interface RuntimeContext {
+  orgId: string;
+  orgConfig: OrgConfig;
+  anthropicApiKey: string;
+}
+
+export function getRuntimeContext(): RuntimeContext {
+  const { orgId, config: orgConfig } = getCurrentOrg();
+  const anthropicApiKey = getAnthropicApiKey();
+  return { orgId, orgConfig, anthropicApiKey };
+}
+
 /** Returns the Anthropic API key from ANTHROPIC_API_KEY env var, falling back to config. */
 export function getAnthropicApiKey(): string {
   const envKey = process.env.ANTHROPIC_API_KEY?.trim();
@@ -277,12 +317,7 @@ export function getConfiguredModel(): ModelId {
 export function resolveModel(input: string): ModelId | null {
   const lower = input.toLowerCase().trim();
   if (MODEL_ALIASES[lower]) return MODEL_ALIASES[lower];
-  const valid: ModelId[] = [
-    'claude-sonnet-4-20250514',
-    'claude-haiku-35-20241022',
-    'claude-opus-4-20250514',
-  ];
-  if (valid.includes(lower as ModelId)) return lower as ModelId;
+  if (MODEL_ID_SET.has(lower as ModelId)) return lower as ModelId;
   return null;
 }
 

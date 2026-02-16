@@ -86,7 +86,7 @@ Use `/help` for the full list. Highlights below.
 - `/help` Show available commands
 - `/clear` Reset conversation history
 - `/history` Show conversation turn count
-- `/model <name>` Switch model (sonnet, haiku, opus)
+- `/model <name>` Switch model (sonnet, haiku, opus) or full model ID
 - `/attach <path>` Attach file/image to next message
 - `/attachments` List staged attachments
 - `/attach-clear` Clear staged attachments
@@ -189,7 +189,7 @@ On first run, scan the QR code with WhatsApp (Settings > Linked Devices > Link a
 **Options:**
 
 ```
---model <name>     Model to use (sonnet, haiku, opus)
+--model <name>     Model to use (sonnet|haiku|opus or full model ID)
 --allow <phones>   Comma-separated allowlist of phone numbers
 --groups           Allow messages from group chats
 --self-chat        Only respond to messages you send to yourself
@@ -238,7 +238,7 @@ export SLACK_APP_TOKEN=xapp-...
 **Options:**
 
 ```
---model <name>      Model to use (sonnet, haiku, opus)
+--model <name>      Model to use (sonnet|haiku|opus or full model ID)
 --allow <ids>       Comma-separated allowlist of Slack user IDs
 --verbose, -v       Enable debug logging
 ```
@@ -300,7 +300,7 @@ On first WhatsApp run, scan the QR code (Settings > Linked Devices > Link a Devi
 **Options:**
 
 ```
---model <name>             Model to use (sonnet, haiku, opus)
+--model <name>             Model to use (sonnet|haiku|opus or full model ID)
 --no-slack                 Disable Slack channel
 --no-whatsapp              Disable WhatsApp channel
 --slack-allow <ids>        Comma-separated Slack user ID allowlist

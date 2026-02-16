@@ -6,11 +6,10 @@
  */
 
 import {
-  configExists,
-  getAnthropicApiKey,
-  getCurrentOrg,
-  resolveModel,
+  resolveModelOrThrow,
   getConfiguredModel,
+  getRuntimeContext,
+  type ModelId,
 } from '../config.js';
 import { logger } from '../lib/logger.js';
 
@@ -44,21 +43,10 @@ export class Orchestrator {
 
   async start(): Promise<void> {
     // Validate shared prerequisites
-    if (!configExists()) {
-      throw new Error('No configuration found. Run "response auth login" first.');
-    }
-    getAnthropicApiKey();
-    getCurrentOrg();
+    getRuntimeContext();
 
-    if (this.options.model) {
-      const resolved = resolveModel(this.options.model);
-      if (!resolved) {
-        throw new Error(`Unknown model "${this.options.model}". Valid: sonnet, haiku, opus`);
-      }
-    }
-
-    const model = this.options.model
-      ? (resolveModel(this.options.model) ?? getConfiguredModel())
+    const model: ModelId = this.options.model
+      ? resolveModelOrThrow(this.options.model, 'valid')
       : getConfiguredModel();
 
     const results: Array<{ name: string; status: 'ok' | 'skipped' | 'error'; reason?: string }> =
@@ -67,7 +55,7 @@ export class Orchestrator {
     // Start Slack gateway
     if (this.options.slackEnabled !== false) {
       try {
-        const slack = await this.startSlack(model as string);
+        const slack = await this.startSlack(model);
         if (slack) {
           this.gateways.push(slack);
           results.push({ name: 'Slack', status: 'ok' });
@@ -86,7 +74,7 @@ export class Orchestrator {
     // Start WhatsApp gateway
     if (this.options.whatsappEnabled !== false) {
       try {
-        const wa = await this.startWhatsApp(model as string);
+        const wa = await this.startWhatsApp(model);
         if (wa) {
           this.gateways.push(wa);
           results.push({ name: 'WhatsApp', status: 'ok' });
@@ -133,7 +121,7 @@ export class Orchestrator {
     this.log.info('All channels stopped.');
   }
 
-  private async startSlack(model: string): Promise<ChannelGateway | null> {
+  private async startSlack(model: ModelId): Promise<ChannelGateway | null> {
     if (!process.env.SLACK_BOT_TOKEN || !process.env.SLACK_APP_TOKEN) {
       if (this.options.verbose) {
         this.log.debug('Slack: SLACK_BOT_TOKEN or SLACK_APP_TOKEN not set, skipping.');
@@ -152,7 +140,7 @@ export class Orchestrator {
     return { name: 'Slack', stop: () => gateway.stop() };
   }
 
-  private async startWhatsApp(model: string): Promise<ChannelGateway | null> {
+  private async startWhatsApp(model: ModelId): Promise<ChannelGateway | null> {
     try {
       const { WhatsAppGateway } = await import('../whatsapp/gateway.js');
       const gateway = new WhatsAppGateway({

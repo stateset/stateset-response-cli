@@ -11,14 +11,21 @@ vi.mock('../prompt.js', () => ({
 }));
 
 vi.mock('../config.js', () => ({
-  resolveModel: vi.fn((input: string) => {
+  getModelAliasText: () => 'sonnet, haiku, opus',
+  resolveModelOrThrow: vi.fn((input: string) => {
     const map: Record<string, string> = {
       sonnet: 'claude-sonnet-4-20250514',
       haiku: 'claude-haiku-35-20241022',
       opus: 'claude-opus-4-20250514',
     };
-    return map[input.toLowerCase()] ?? null;
+    const resolved = map[input.toLowerCase()] ?? null;
+    if (!resolved) {
+      throw new Error(`Unknown model "${input}". Use sonnet, haiku, or opus`);
+    }
+    return resolved;
   }),
+  formatUnknownModelError: (input: string) =>
+    `Unknown model "${input}". Valid: sonnet, haiku, opus`,
 }));
 
 function createMockCtx(overrides: Partial<ChatContext> = {}): ChatContext {

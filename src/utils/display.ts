@@ -1,4 +1,5 @@
 import chalk from 'chalk';
+import { getModelAliasText } from '../config.js';
 
 const SENSITIVE_KEY_RE = /(secret|token|authorization|api[-_]?key|password|admin)/i;
 
@@ -151,7 +152,9 @@ export function printWelcome(orgId: string, version?: string, model?: string): v
   console.log(chalk.gray('    /help     - Show available commands'));
   console.log(chalk.gray('    /clear    - Reset conversation history'));
   console.log(chalk.gray('    /history  - Show conversation turn count'));
-  console.log(chalk.gray('    /model    - Switch model (sonnet/haiku/opus)'));
+  console.log(
+    chalk.gray(`    /model    - Switch model (${getModelAliasText('list').replace(/,\s*/g, '/')})`),
+  );
   console.log(chalk.gray('    /apply    - Toggle write operations'));
   console.log(chalk.gray('    /redact   - Toggle redaction'));
   console.log(chalk.gray('    /usage    - Toggle usage summaries'));
@@ -201,7 +204,8 @@ export function printHelp(): void {
     chalk.cyan('    /history               ') + chalk.gray('Show conversation turn count'),
   );
   console.log(
-    chalk.cyan('    /model <name>          ') + chalk.gray('Switch model (sonnet, haiku, opus)'),
+    chalk.cyan('    /model <name>          ') +
+      chalk.gray(`Switch model (${getModelAliasText('list')})`),
   );
   console.log(
     chalk.cyan('    /usage on|off          ') + chalk.gray('Enable or disable usage summaries'),

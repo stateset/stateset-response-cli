@@ -11,11 +11,10 @@
 
 import { StateSetAgent } from '../agent.js';
 import {
-  getAnthropicApiKey,
-  configExists,
-  getCurrentOrg,
-  resolveModel,
+  resolveModelOrThrow,
+  formatUnknownModelError,
   getConfiguredModel,
+  getRuntimeContext,
   type ModelId,
 } from '../config.js';
 import { logger } from '../lib/logger.js';
@@ -92,16 +91,16 @@ export class SlackGateway {
   private app: SlackApp | null = null;
   private running = false;
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
+  private anthropicApiKey: string | null = null;
   private model: ModelId;
   private allowList: Set<string> | null;
   private verbose: boolean;
   private botUserId: string | null = null;
   private botToken: string;
+  private orgId = 'unknown';
 
   constructor(options: SlackGatewayOptions = {}) {
-    this.model = options.model
-      ? (resolveModel(options.model) ?? getConfiguredModel())
-      : getConfiguredModel();
+    this.model = options.model ? resolveModelOrThrow(options.model, 'valid') : getConfiguredModel();
     this.allowList = options.allowList?.length ? new Set(options.allowList) : null;
     this.verbose = options.verbose ?? false;
     this.botToken = process.env.SLACK_BOT_TOKEN || '';
@@ -112,12 +111,9 @@ export class SlackGateway {
   // -------------------------------------------------------------------------
 
   async start(): Promise<void> {
-    if (!configExists()) {
-      throw new Error('No configuration found. Run "response auth login" first.');
-    }
-
-    getAnthropicApiKey();
-    getCurrentOrg();
+    const runtime = getRuntimeContext();
+    this.orgId = runtime.orgId;
+    this.anthropicApiKey = runtime.anthropicApiKey;
 
     const botToken = process.env.SLACK_BOT_TOKEN;
     const appToken = process.env.SLACK_APP_TOKEN;
@@ -409,10 +405,9 @@ export class SlackGateway {
     }
 
     if (lower === '/status') {
-      const { orgId } = getCurrentOrg();
       return [
         '*Session Status*',
-        `Organization: \`${orgId}\``,
+        `Organization: \`${this.orgId}\``,
         `Model: \`${session.agent.getModel()}\``,
         `History: ${session.agent.getHistoryLength()} messages`,
         `Active sessions: ${this.sessions.size}`,
@@ -425,12 +420,13 @@ export class SlackGateway {
       if (!arg) {
         return `Current model: \`${session.agent.getModel()}\``;
       }
-      const resolved = resolveModel(arg);
-      if (!resolved) {
-        return `Unknown model "${arg}". Valid: sonnet, haiku, opus`;
+      try {
+        const resolved = resolveModelOrThrow(arg, 'valid');
+        session.agent.setModel(resolved);
+        return `Model changed to: \`${resolved}\``;
+      } catch {
+        return formatUnknownModelError(arg, 'valid');
       }
-      session.agent.setModel(resolved);
-      return `Model changed to: \`${resolved}\``;
     }
 
     return null;
@@ -461,7 +457,10 @@ export class SlackGateway {
       }
 
       this.log.debug(`Creating new session for ${userId}`);
-      const apiKey = getAnthropicApiKey();
+      const apiKey = this.anthropicApiKey;
+      if (!apiKey) {
+        return null;
+      }
       const agent = new StateSetAgent(apiKey, this.model);
 
       session = {

@@ -12,7 +12,13 @@ import {
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { logger } from './lib/logger.js';
-import { getAnthropicApiKey, getConfiguredModel, getCurrentOrg, type ModelId } from './config.js';
+import {
+  getConfiguredModel,
+  getAnthropicApiKey,
+  getRuntimeContext,
+  type RuntimeContext,
+  type ModelId,
+} from './config.js';
 import { StateSetAgent, type ChatCallbacks } from './agent.js';
 import { SessionStore, getStateSetDir, sanitizeSessionId } from './session.js';
 import { buildSystemPrompt } from './prompt.js';
@@ -39,6 +45,7 @@ export interface EventsRunnerOptions {
   defaultSession: string;
   showUsage?: boolean;
   stdout?: boolean;
+  anthropicApiKey?: string;
 }
 
 /** Validates and parses a JSON string into a typed ResponseEvent, throwing on invalid input. */
@@ -109,9 +116,15 @@ class SessionAgentRunner {
   private showUsage: boolean;
   private stdout: boolean;
 
-  constructor(sessionId: string, model: ModelId, showUsage: boolean, stdout: boolean) {
+  constructor(
+    sessionId: string,
+    model: ModelId,
+    showUsage: boolean,
+    stdout: boolean,
+    apiKey: string,
+  ) {
     this.store = new SessionStore(sessionId);
-    this.agent = new StateSetAgent(getAnthropicApiKey(), model);
+    this.agent = new StateSetAgent(apiKey, model);
     this.agent.useSessionStore(this.store);
     this.showUsage = showUsage;
     this.stdout = stdout;
@@ -228,12 +241,14 @@ export class EventsRunner {
   private oneShotTimer: ReturnType<typeof setInterval> | null = null;
   private startTime: number;
   private options: EventsRunnerOptions;
+  private anthropicApiKey: string;
   private sessionRunners = new Map<string, SessionAgentRunner>();
 
   constructor(options: EventsRunnerOptions) {
     this.options = options;
     this.startTime = Date.now();
     this.eventsDir = path.join(getStateSetDir(), 'events');
+    this.anthropicApiKey = options.anthropicApiKey ?? getAnthropicApiKey();
   }
 
   start(): void {
@@ -523,6 +538,7 @@ export class EventsRunner {
       model,
       Boolean(this.options.showUsage),
       Boolean(this.options.stdout),
+      this.anthropicApiKey,
     );
     this.sessionRunners.set(sessionId, runner);
     void this.enforceSessionRunnerLimit();
@@ -635,7 +651,6 @@ function logEventResult(entry: {
 }
 
 /** Validates that org credentials and an Anthropic API key are configured before starting the runner. */
-export function validateEventsPrereqs(): void {
-  getCurrentOrg();
-  getAnthropicApiKey();
+export function validateEventsPrereqs(): RuntimeContext {
+  return getRuntimeContext();
 }

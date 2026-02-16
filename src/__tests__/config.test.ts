@@ -11,7 +11,16 @@ vi.mock('node:fs', () => ({
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import fs from 'node:fs';
-import { resolveModel, DEFAULT_MODEL, MODEL_ALIASES, getAnthropicApiKey } from '../config.js';
+import {
+  resolveModel,
+  resolveModelOrThrow,
+  formatUnknownModelError,
+  DEFAULT_MODEL,
+  getModelAliasText,
+  MODEL_ALIASES,
+  getRuntimeContext,
+  getAnthropicApiKey,
+} from '../config.js';
 
 const mockedFs = vi.mocked(fs);
 
@@ -48,6 +57,33 @@ describe('getAnthropicApiKey', () => {
   });
 });
 
+describe('getRuntimeContext', () => {
+  it('returns org + API key together', () => {
+    mockedFs.existsSync.mockReturnValue(true);
+    mockedFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        currentOrg: 'org-1',
+        model: DEFAULT_MODEL,
+        organizations: {
+          'org-1': {
+            name: 'Primary Org',
+            graphqlEndpoint: 'https://api.example.com',
+            adminSecret: 'admin',
+            cliToken: 'cli',
+          },
+        },
+        anthropicApiKey: 'sk-anthropic',
+      }),
+    );
+
+    const context = getRuntimeContext();
+    expect(context.orgId).toBe('org-1');
+    expect(context.orgConfig.name).toBe('Primary Org');
+    expect(context.orgConfig.graphqlEndpoint).toBe('https://api.example.com');
+    expect(context.anthropicApiKey).toBe('sk-anthropic');
+  });
+});
+
 describe('resolveModel', () => {
   it('resolves alias "sonnet"', () => {
     expect(resolveModel('sonnet')).toBe('claude-sonnet-4-20250514');
@@ -79,6 +115,18 @@ describe('resolveModel', () => {
   it('trims whitespace', () => {
     expect(resolveModel('  sonnet  ')).toBe('claude-sonnet-4-20250514');
   });
+
+  it('throws for invalid model in strict resolver', () => {
+    expect(() => resolveModelOrThrow('bad-model')).toThrow(
+      'Unknown model "bad-model". Use sonnet, haiku, or opus',
+    );
+  });
+
+  it('formats unknown model errors in valid style', () => {
+    expect(formatUnknownModelError('bad-model', 'valid')).toBe(
+      'Unknown model "bad-model". Valid: sonnet, haiku, opus',
+    );
+  });
 });
 
 describe('constants', () => {
@@ -88,5 +136,13 @@ describe('constants', () => {
 
   it('MODEL_ALIASES has all three aliases', () => {
     expect(Object.keys(MODEL_ALIASES)).toEqual(['sonnet', 'haiku', 'opus']);
+  });
+
+  it('getModelAliasText("list") returns list aliases', () => {
+    expect(getModelAliasText('list')).toBe('sonnet, haiku, opus');
+  });
+
+  it('getModelAliasText("or") returns or-separated aliases', () => {
+    expect(getModelAliasText('or')).toBe('sonnet, haiku, or opus');
   });
 });

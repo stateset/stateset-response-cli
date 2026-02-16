@@ -12,7 +12,8 @@ import {
   getConfiguredModel,
   getConfigPath,
   loadConfig,
-  resolveModel,
+  resolveModelOrThrow,
+  getModelAliasText,
   DEFAULT_MODEL,
   type ModelId,
 } from './config.js';
@@ -236,7 +237,7 @@ program
 program
   .command('events')
   .description('Run the event watcher for scheduled agent runs')
-  .option('--model <model>', 'Model to use (sonnet, haiku, opus)')
+  .option('--model <model>', `Model to use (${getModelAliasText('list')})`)
   .option('--session <name>', 'Default session name', 'default')
   .option('--apply', 'Allow write operations for integration tools')
   .option('--redact', 'Redact customer emails in integration outputs')
@@ -256,11 +257,15 @@ program
         process.exit(1);
       }
 
+      let runtime: ReturnType<typeof validateEventsPrereqs> | null = null;
       try {
-        validateEventsPrereqs();
+        runtime = validateEventsPrereqs();
       } catch (e: unknown) {
         console.error(formatError(e instanceof Error ? e.message : String(e)));
         process.exit(1);
+      }
+      if (!runtime) {
+        return;
       }
 
       if (options.apply) {
@@ -272,25 +277,37 @@ program
 
       let model: ModelId = getConfiguredModel();
       if (options.model) {
-        const resolved = resolveModel(options.model);
-        if (!resolved) {
-          console.error(
-            formatError(`Unknown model "${options.model}". Use sonnet, haiku, or opus.`),
-          );
+        try {
+          model = resolveModelOrThrow(options.model, 'valid');
+        } catch (e: unknown) {
+          console.error(formatError(e instanceof Error ? e.message : String(e)));
           process.exit(1);
         }
-        model = resolved;
       }
 
       const sessionId = sanitizeSessionId(options.session || 'default');
-      const runner = new EventsRunner({
-        model,
-        defaultSession: sessionId,
-        showUsage: Boolean(options.usage),
-        stdout: Boolean(options.stdout),
-      });
+      let runner: EventsRunner;
+      try {
+        runner = new EventsRunner({
+          model,
+          defaultSession: sessionId,
+          showUsage: Boolean(options.usage),
+          stdout: Boolean(options.stdout),
+          anthropicApiKey: runtime.anthropicApiKey,
+        });
+      } catch (e: unknown) {
+        console.error(formatError(e instanceof Error ? e.message : String(e)));
+        process.exit(1);
+        return;
+      }
 
-      runner.start();
+      try {
+        runner.start();
+      } catch (e: unknown) {
+        console.error(formatError(e instanceof Error ? e.message : String(e)));
+        process.exit(1);
+        return;
+      }
 
       const shutdown = async () => {
         console.log('\nStopping events watcher...');
@@ -307,7 +324,7 @@ program
 program
   .command('chat', { isDefault: true })
   .description('Start an interactive AI agent session')
-  .option('--model <model>', 'Model to use (sonnet, haiku, opus)')
+  .option('--model <model>', `Model to use (${getModelAliasText('list')})`)
   .option('--session <name>', 'Session name (default: "default")')
   .option(
     '--file <path>',

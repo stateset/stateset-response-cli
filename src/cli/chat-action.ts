@@ -3,10 +3,9 @@ import ora from 'ora';
 import * as readline from 'node:readline';
 import {
   configExists,
-  getCurrentOrg,
-  getAnthropicApiKey,
+  getRuntimeContext,
   getConfiguredModel,
-  resolveModel,
+  resolveModelOrThrow,
   type ModelId,
 } from '../config.js';
 import { StateSetAgent } from '../agent.js';
@@ -197,17 +196,11 @@ export async function startChatSession(
   }
 
   let orgId: string;
-  try {
-    const org = getCurrentOrg();
-    orgId = org.orgId;
-  } catch (e: unknown) {
-    console.error(formatError(e instanceof Error ? e.message : String(e)));
-    process.exit(1);
-  }
-
   let apiKey: string;
   try {
-    apiKey = getAnthropicApiKey();
+    const runtime = getRuntimeContext();
+    orgId = runtime.orgId;
+    apiKey = runtime.anthropicApiKey;
   } catch (e: unknown) {
     console.error(formatError(e instanceof Error ? e.message : String(e)));
     process.exit(1);
@@ -224,12 +217,12 @@ export async function startChatSession(
   // Resolve model
   let model: ModelId = getConfiguredModel();
   if (options.model) {
-    const resolved = resolveModel(options.model);
-    if (!resolved) {
-      console.error(formatError(`Unknown model "${options.model}". Use sonnet, haiku, or opus.`));
+    try {
+      model = resolveModelOrThrow(options.model);
+    } catch (e: unknown) {
+      console.error(formatError(e instanceof Error ? e.message : String(e)));
       process.exit(1);
     }
-    model = resolved;
   }
 
   let sessionId = sanitizeSessionId(options.session || 'default');
