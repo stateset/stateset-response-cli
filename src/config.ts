@@ -57,6 +57,20 @@ export function getConfigPath(): string {
   return CONFIG_FILE;
 }
 
+type DecryptResult = { value: string | undefined; error?: string };
+
+function tryDecryptConfigSecret(value: string, label: string): DecryptResult {
+  try {
+    const decrypted = decryptSecret(value).trim();
+    return { value: decrypted.length > 0 ? decrypted : undefined };
+  } catch (error) {
+    return {
+      value: undefined,
+      error: `${label}: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
 export function ensureConfigDir(): void {
   if (!fs.existsSync(CONFIG_DIR)) {
     fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
@@ -78,6 +92,11 @@ export function loadConfig(): StateSetConfig {
     throw new ConfigurationError(
       'No configuration found. Run "response auth login" to set up your credentials.',
     );
+  }
+  try {
+    migrateConfigSecrets();
+  } catch {
+    // Keep migration best-effort; config loading should continue even if migration fails.
   }
   let raw: string;
   try {
@@ -110,18 +129,57 @@ export function loadConfig(): StateSetConfig {
 
   // Decrypt secrets on load
   if (config.anthropicApiKey) {
-    const decrypted = decryptSecret(config.anthropicApiKey).trim();
-    config.anthropicApiKey = decrypted.length > 0 ? decrypted : undefined;
-  }
-  for (const orgId of Object.keys(config.organizations)) {
-    const org = config.organizations[orgId];
-    if (org.cliToken) {
-      const decrypted = decryptSecret(org.cliToken).trim();
-      org.cliToken = decrypted.length > 0 ? decrypted : undefined;
+    const decrypted = tryDecryptConfigSecret(config.anthropicApiKey, 'ANTHROPIC API key');
+    if (decrypted.error) {
+      throw new ConfigurationError(decrypted.error);
     }
-    if (org.adminSecret) {
-      const decrypted = decryptSecret(org.adminSecret).trim();
-      org.adminSecret = decrypted.length > 0 ? decrypted : undefined;
+    config.anthropicApiKey = decrypted.value;
+  }
+
+  // Decrypt only the current organization's credentials to avoid failure if unrelated
+  // organizations have legacy or corrupted secret values.
+  const activeOrg = config.organizations[config.currentOrg];
+  if (activeOrg) {
+    const hadActiveOrgCliToken =
+      typeof activeOrg.cliToken === 'string' && activeOrg.cliToken.trim().length > 0;
+    const hadActiveOrgAdminSecret =
+      typeof activeOrg.adminSecret === 'string' && activeOrg.adminSecret.trim().length > 0;
+    const activeOrgErrors: string[] = [];
+
+    if (activeOrg.cliToken) {
+      const decrypted = tryDecryptConfigSecret(
+        activeOrg.cliToken,
+        `cli token for organization "${config.currentOrg}"`,
+      );
+      if (decrypted.error) {
+        activeOrg.cliToken = undefined;
+        activeOrgErrors.push(decrypted.error);
+      } else {
+        activeOrg.cliToken = decrypted.value;
+      }
+    }
+    if (activeOrg.adminSecret) {
+      const decrypted = tryDecryptConfigSecret(
+        activeOrg.adminSecret,
+        `admin secret for organization "${config.currentOrg}"`,
+      );
+      if (decrypted.error) {
+        activeOrg.adminSecret = undefined;
+        activeOrgErrors.push(decrypted.error);
+      } else {
+        activeOrg.adminSecret = decrypted.value;
+      }
+    }
+
+    const hasNoUsableActiveOrgCredentials = !activeOrg.cliToken && !activeOrg.adminSecret;
+    if (
+      hasNoUsableActiveOrgCredentials &&
+      (hadActiveOrgCliToken || hadActiveOrgAdminSecret) &&
+      activeOrgErrors.length > 0
+    ) {
+      throw new ConfigurationError(
+        `Failed to decrypt credentials for organization "${config.currentOrg}": ${activeOrgErrors.join(' ')}`,
+      );
     }
   }
 
@@ -174,7 +232,7 @@ export function getCurrentOrg(): { orgId: string; config: OrgConfig } {
   const cfg = loadConfig();
   const orgConfig = cfg.organizations[cfg.currentOrg];
   if (!orgConfig) {
-    throw new Error(
+    throw new ConfigurationError(
       `Organization "${cfg.currentOrg}" not found in config. Run "response auth login" or "response auth switch <org-id>".`,
     );
   }
@@ -183,7 +241,7 @@ export function getCurrentOrg(): { orgId: string; config: OrgConfig } {
   const hasAdminSecret =
     typeof orgConfig.adminSecret === 'string' && orgConfig.adminSecret.trim().length > 0;
   if (!hasCliToken && !hasAdminSecret) {
-    throw new Error(
+    throw new ConfigurationError(
       `Organization "${cfg.currentOrg}" is missing credentials. Run "response auth login" to set up your credentials.`,
     );
   }
@@ -238,33 +296,64 @@ export function migrateConfigSecrets(): boolean {
     return false;
   }
 
-  const raw = fs.readFileSync(CONFIG_FILE, 'utf-8');
-  let config: StateSetConfig;
+  let raw: string;
   try {
-    config = JSON.parse(raw) as StateSetConfig;
+    raw = fs.readFileSync(CONFIG_FILE, 'utf-8');
   } catch {
     return false;
   }
-  let migrated = false;
 
-  // Check if any secrets need encryption
-  if (config.anthropicApiKey && !isEncrypted(config.anthropicApiKey)) {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return false;
+  }
+
+  const parsedConfig = StateSetConfigSchema.safeParse(parsed);
+  if (!parsedConfig.success) {
+    return false;
+  }
+
+  const config = { ...parsedConfig.data } as StateSetConfig;
+  const normalizedConfig: StateSetConfig = {
+    currentOrg: config.currentOrg,
+    model: config.model,
+    anthropicApiKey: config.anthropicApiKey,
+    organizations: { ...config.organizations },
+  };
+
+  let migrated = false;
+  const next: StateSetConfig = {
+    ...normalizedConfig,
+    anthropicApiKey: normalizedConfig.anthropicApiKey,
+    organizations: { ...normalizedConfig.organizations },
+  };
+
+  if (next.anthropicApiKey && !isEncrypted(next.anthropicApiKey)) {
+    next.anthropicApiKey = encryptSecret(next.anthropicApiKey);
     migrated = true;
   }
-  for (const orgId of Object.keys(config.organizations)) {
-    const org = config.organizations[orgId];
+  for (const orgId of Object.keys(next.organizations)) {
+    const org = next.organizations[orgId];
+    const current = { ...org };
     if (org.cliToken && !isEncrypted(org.cliToken)) {
+      current.cliToken = encryptSecret(org.cliToken);
       migrated = true;
     }
     if (org.adminSecret && !isEncrypted(org.adminSecret)) {
+      current.adminSecret = encryptSecret(org.adminSecret);
       migrated = true;
     }
+    next.organizations[orgId] = current;
   }
 
   if (migrated) {
-    // Load (which decrypts already encrypted values) and save (which encrypts all)
-    const loadedConfig = loadConfig();
-    saveConfig(loadedConfig);
+    try {
+      saveConfig(next);
+    } catch {
+      return false;
+    }
   }
 
   return migrated;

@@ -16,14 +16,17 @@ vi.mock('../lib/secrets.js', () => ({
 }));
 
 import fs from 'node:fs';
+import * as secrets from '../lib/secrets.js';
 import { loadConfig, saveConfig, getConfigPath, migrateConfigSecrets } from '../config.js';
 import { ConfigurationError } from '../lib/errors.js';
 
 const mockedFs = vi.mocked(fs);
+const mockedDecryptSecret = vi.mocked(secrets.decryptSecret);
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockedFs.existsSync.mockReturnValue(true);
+  mockedDecryptSecret.mockImplementation((value: string) => value);
 });
 
 describe('loadConfig validation', () => {
@@ -134,6 +137,110 @@ describe('loadConfig validation', () => {
     );
     const cfg = loadConfig();
     expect(cfg.organizations).toEqual({});
+  });
+
+  it('does not fail when a non-current org secret is undecryptable', () => {
+    mockedDecryptSecret.mockImplementation((value: string) => {
+      if (value === 'bad-other-secret') {
+        throw new Error('undecryptable');
+      }
+      return value;
+    });
+    mockedFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        currentOrg: 'active',
+        organizations: {
+          active: {
+            name: 'Active Org',
+            graphqlEndpoint: 'https://active.local/graphql',
+            cliToken: 'token',
+          },
+          other: {
+            name: 'Other Org',
+            graphqlEndpoint: 'https://other.local/graphql',
+            cliToken: 'bad-other-secret',
+          },
+        },
+      }),
+    );
+
+    const cfg = loadConfig();
+    expect(cfg.currentOrg).toBe('active');
+    expect(cfg.organizations.active.cliToken).toBe('token');
+    expect(cfg.organizations.other.cliToken).toBe('bad-other-secret');
+  });
+
+  it('does not fail if one active credential can still be decrypted', () => {
+    mockedDecryptSecret.mockImplementation((value: string) => {
+      if (value === 'bad-cli-token') {
+        throw new Error('undecryptable');
+      }
+      return value;
+    });
+    mockedFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        currentOrg: 'active',
+        organizations: {
+          active: {
+            name: 'Active Org',
+            graphqlEndpoint: 'https://active.local/graphql',
+            cliToken: 'bad-cli-token',
+            adminSecret: 'admin-secret',
+          },
+        },
+      }),
+    );
+
+    const cfg = loadConfig();
+    expect(cfg.organizations.active.cliToken).toBeUndefined();
+    expect(cfg.organizations.active.adminSecret).toBe('admin-secret');
+  });
+
+  it('throws when all active credentials are undecryptable', () => {
+    mockedDecryptSecret.mockImplementation(() => {
+      throw new Error('undecryptable');
+    });
+    mockedFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        currentOrg: 'active',
+        organizations: {
+          active: {
+            name: 'Active Org',
+            graphqlEndpoint: 'https://active.local/graphql',
+            cliToken: 'bad-cli-token',
+            adminSecret: 'bad-admin-secret',
+          },
+        },
+      }),
+    );
+
+    expect(() => loadConfig()).toThrow(ConfigurationError);
+    expect(() => loadConfig()).toThrow(/Failed to decrypt credentials for organization/);
+  });
+
+  it('throws when ANTHROPIC API key is undecryptable', () => {
+    mockedDecryptSecret.mockImplementation((value: string) => {
+      if (value === 'bad-anthropic-key') {
+        throw new Error('undecryptable');
+      }
+      return value;
+    });
+    mockedFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        currentOrg: 'acme',
+        anthropicApiKey: 'bad-anthropic-key',
+        organizations: {
+          acme: {
+            name: 'Acme',
+            graphqlEndpoint: 'https://x.com',
+            adminSecret: 'secret',
+          },
+        },
+      }),
+    );
+
+    expect(() => loadConfig()).toThrow(ConfigurationError);
+    expect(() => loadConfig()).toThrow(/ANTHROPIC API key/);
   });
 });
 
