@@ -185,12 +185,13 @@ export function getCurrentOrg(): { orgId: string; config: OrgConfig } {
 
 /** Returns the Anthropic API key from ANTHROPIC_API_KEY env var, falling back to config. */
 export function getAnthropicApiKey(): string {
-  const envKey = process.env.ANTHROPIC_API_KEY;
+  const envKey = process.env.ANTHROPIC_API_KEY?.trim();
   if (envKey) return envKey;
 
   if (configExists()) {
     const cfg = loadConfig();
-    if (cfg.anthropicApiKey) return cfg.anthropicApiKey;
+    const trimmed = cfg.anthropicApiKey?.trim();
+    if (trimmed) return trimmed;
   }
 
   throw new Error(

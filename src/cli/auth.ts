@@ -103,7 +103,10 @@ export function registerAuthCommands(program: Command): void {
           type: 'list',
           name: 'loginMethod',
           message: 'Choose an authentication method:',
-          choices: [{ name: 'Browser/device code (recommended)', value: 'device' }],
+          choices: [
+            { name: 'Browser/device code (recommended)', value: 'device' },
+            { name: 'Manual setup (admin secret)', value: 'manual' },
+          ],
         },
       ]);
 
@@ -125,7 +128,8 @@ export function registerAuthCommands(program: Command): void {
             type: 'input',
             name: 'instanceUrl',
             message: 'StateSet ResponseCX instance URL:',
-            default: process.env.STATESET_INSTANCE_URL || '',
+            default: (process.env.STATESET_INSTANCE_URL || '').trim(),
+            filter: (v: string) => v.trim(),
             validate: (v: string) => v.trim().length >= 1 || 'Instance URL is required',
           },
         ]);
@@ -154,31 +158,36 @@ export function registerAuthCommands(program: Command): void {
           graphqlEndpoint: result.graphqlEndpoint,
           cliToken: result.token,
         };
-      } else {
+      } else if (loginMethod === 'manual') {
         const answers = await inquirer.prompt([
           {
             type: 'input',
             name: 'orgId',
             message: 'Organization ID:',
-            validate: (v: string) => v.length >= 1 || 'Organization ID is required',
+            filter: (v: string) => v.trim(),
+            validate: (v: string) => v.trim().length >= 1 || 'Organization ID is required',
           },
           {
             type: 'input',
             name: 'orgName',
             message: 'Organization name:',
-            validate: (v: string) => v.length >= 1 || 'Name is required',
+            filter: (v: string) => v.trim(),
+            validate: (v: string) => v.trim().length >= 1 || 'Name is required',
           },
           {
             type: 'input',
             name: 'graphqlEndpoint',
             message: 'GraphQL endpoint:',
-            default: process.env.STATESET_GRAPHQL_ENDPOINT || '',
+            default: (process.env.STATESET_GRAPHQL_ENDPOINT || '').trim(),
+            filter: (v: string) => v.trim(),
+            validate: (v: string) => v.trim().length >= 1 || 'GraphQL endpoint is required',
           },
           {
             type: 'password',
             name: 'adminSecret',
             message: 'Hasura admin secret:',
-            validate: (v: string) => v.length >= 1 || 'Admin secret is required',
+            filter: (v: string) => v.trim(),
+            validate: (v: string) => v.trim().length >= 1 || 'Admin secret is required',
           },
         ]);
 
@@ -188,10 +197,13 @@ export function registerAuthCommands(program: Command): void {
           graphqlEndpoint: answers.graphqlEndpoint,
           adminSecret: answers.adminSecret,
         };
+      } else {
+        throw new Error('Unknown authentication method selected.');
       }
 
-      if (anthropicApiKey) {
-        existing.anthropicApiKey = anthropicApiKey;
+      const trimmedAnthropicApiKey = anthropicApiKey?.trim();
+      if (trimmedAnthropicApiKey) {
+        existing.anthropicApiKey = trimmedAnthropicApiKey;
       }
 
       saveConfig(existing);

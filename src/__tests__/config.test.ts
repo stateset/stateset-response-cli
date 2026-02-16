@@ -1,5 +1,52 @@
-import { describe, it, expect } from 'vitest';
-import { resolveModel, DEFAULT_MODEL, MODEL_ALIASES } from '../config.js';
+vi.mock('node:fs', () => ({
+  default: {
+    existsSync: vi.fn(),
+    readFileSync: vi.fn(),
+    statSync: vi.fn(),
+    writeFileSync: vi.fn(),
+    mkdirSync: vi.fn(),
+    chmodSync: vi.fn(),
+  },
+}));
+
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import fs from 'node:fs';
+import { resolveModel, DEFAULT_MODEL, MODEL_ALIASES, getAnthropicApiKey } from '../config.js';
+
+const mockedFs = vi.mocked(fs);
+
+beforeEach(() => {
+  mockedFs.existsSync.mockReturnValue(false);
+  mockedFs.readFileSync.mockReturnValue('');
+  delete process.env.ANTHROPIC_API_KEY;
+});
+
+describe('getAnthropicApiKey', () => {
+  it('prefers trimmed ANTHROPIC_API_KEY env var', () => {
+    process.env.ANTHROPIC_API_KEY = '  sk-ant-env  ';
+    expect(getAnthropicApiKey()).toBe('sk-ant-env');
+  });
+
+  it('falls back to trimmed config key when env var is not set', () => {
+    mockedFs.existsSync.mockReturnValue(true);
+    mockedFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        currentOrg: 'org-1',
+        organizations: {
+          org: {
+            name: 'Org',
+            graphqlEndpoint: 'http://localhost',
+            adminSecret: 'admin',
+            cliToken: 'cli',
+          },
+        },
+        anthropicApiKey: '  sk-ant-config  ',
+      }),
+    );
+
+    expect(getAnthropicApiKey()).toBe('sk-ant-config');
+  });
+});
 
 describe('resolveModel', () => {
   it('resolves alias "sonnet"', () => {

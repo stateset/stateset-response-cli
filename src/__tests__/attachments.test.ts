@@ -19,6 +19,7 @@ const mockedFs = vi.mocked(fs);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  delete (mockedFs as unknown as { realpathSync?: typeof fs.realpathSync }).realpathSync;
 });
 
 describe('buildUserContent', () => {
@@ -156,6 +157,15 @@ describe('buildUserContent', () => {
     expect((result.content[0] as any).text).toBe('Hello');
   });
 
+  it('warns when attachment path is blank', () => {
+    const result = buildUserContent('Hello', ['  ']);
+
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toBe('Attachment path is empty');
+    expect(result.content).toHaveLength(1);
+    expect((result.content[0] as any).text).toBe('Hello');
+  });
+
   it('adds warning when file is too large', () => {
     const filePath = '/tmp/huge.txt';
     const resolved = path.resolve(filePath);
@@ -169,6 +179,24 @@ describe('buildUserContent', () => {
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]).toContain('too large');
     expect(result.warnings[0]).toContain(resolved);
+    expect(result.content).toHaveLength(1);
+    expect((result.content[0] as any).text).toBe('Hello');
+  });
+
+  it('adds warning when image attachment cannot be read', () => {
+    const filePath = '/tmp/unreadable-image.png';
+
+    mockedFs.existsSync.mockReturnValue(true);
+    mockedFs.statSync.mockReturnValue({ size: 200 } as any);
+    mockedFs.readFileSync.mockImplementation(() => {
+      throw new Error('permission denied');
+    });
+
+    const result = buildUserContent('Hello', [filePath]);
+
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain('could not be read');
+    expect(result.warnings[0]).toContain(filePath);
     expect(result.content).toHaveLength(1);
     expect((result.content[0] as any).text).toBe('Hello');
   });
@@ -266,6 +294,74 @@ describe('buildUserContent - cwd path restriction', () => {
     expect(textBlock.type).toBe('text');
     expect(textBlock.text).toContain(fileContent);
     expect(textBlock.text).toContain('<attachments>');
+  });
+
+  it('resolves relative attachments against the provided working directory', () => {
+    const cwd = '/home/user/project';
+    const filePath = 'notes.txt';
+    const resolvedPath = path.resolve(cwd, filePath);
+    const fileContent = 'relative content';
+
+    mockedFs.existsSync.mockReturnValue(true);
+    mockedFs.statSync.mockReturnValue({ size: 50 } as any);
+    mockedFs.readFileSync.mockReturnValue(fileContent as any);
+
+    const result = buildUserContent('Read this', [filePath], { cwd });
+
+    expect(result.warnings).toHaveLength(0);
+    const textBlock = result.content[0] as any;
+    expect(textBlock.type).toBe('text');
+    expect(textBlock.text).toContain('Read this');
+    expect(textBlock.text).toContain('File: ' + resolvedPath);
+    expect(textBlock.text).toContain(fileContent);
+  });
+
+  it('rejects cwd-relative symlink that resolves outside the working directory', () => {
+    const cwd = '/home/user/project';
+    const filePath = 'outside-link';
+    const resolvedPath = path.resolve(cwd, filePath);
+
+    (mockedFs as unknown as { realpathSync: typeof fs.realpathSync }).realpathSync = vi.fn(
+      (value: string) => {
+        if (value === path.resolve(cwd)) return '/mnt/storage/secure';
+        if (value === resolvedPath) return '/etc/secret.txt';
+        return value;
+      },
+    );
+
+    const result = buildUserContent('Read this', [filePath], { cwd });
+
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain('Attachment outside working directory');
+    expect(result.warnings[0]).toContain(filePath);
+    const textBlock = result.content[0] as any;
+    expect(textBlock.text).toBe('Read this');
+  });
+
+  it('warns when attachment realpath verification fails', () => {
+    const cwd = '/home/user/project';
+    const filePath = 'broken-link.txt';
+    const resolvedPath = path.resolve(cwd, filePath);
+
+    (mockedFs as unknown as { realpathSync: typeof fs.realpathSync }).realpathSync = vi
+      .fn()
+      .mockImplementation((value: string) => {
+        if (value === path.resolve(cwd)) {
+          return '/home/user/project';
+        }
+        if (value === resolvedPath) {
+          throw new Error('No such file');
+        }
+        return value;
+      });
+
+    const result = buildUserContent('Check', [filePath], { cwd });
+
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain('could not be verified');
+    expect(result.warnings[0]).toContain(filePath);
+    const textBlock = result.content[0] as any;
+    expect(textBlock.text).toBe('Check');
   });
 
   it('rejects attachment outside the working directory when cwd is set', () => {

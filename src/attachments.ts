@@ -45,6 +45,59 @@ function readTextFile(
   }
 }
 
+function readBinaryFile(filePath: string): Buffer | null {
+  try {
+    return fs.readFileSync(filePath);
+  } catch {
+    return null;
+  }
+}
+
+function resolveAttachmentPath(
+  rawPath: string,
+  resolvedCwd: string | null,
+): { filePath: string; warnings: string[] } {
+  const warnings: string[] = [];
+  const requestedPath = path.resolve(resolvedCwd ?? process.cwd(), rawPath);
+
+  if (!resolvedCwd) {
+    return { filePath: requestedPath, warnings };
+  }
+
+  const canResolvePath = typeof fs.realpathSync === 'function';
+  const cwdForCheck = canResolvePath && resolvedCwd ? safeRealpath(resolvedCwd) : resolvedCwd;
+  if (!cwdForCheck) {
+    warnings.push(`Attachment outside working directory: ${rawPath}`);
+    return { filePath: requestedPath, warnings };
+  }
+
+  let candidatePath = requestedPath;
+  if (canResolvePath) {
+    const maybeReal = safeRealpath(requestedPath);
+    if (!maybeReal) {
+      warnings.push(`Attachment path could not be verified: ${rawPath}`);
+      return { filePath: requestedPath, warnings };
+    }
+    candidatePath = maybeReal;
+  }
+
+  const rel = path.relative(cwdForCheck, candidatePath);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    warnings.push(`Attachment outside working directory: ${rawPath}`);
+    return { filePath: requestedPath, warnings };
+  }
+
+  return { filePath: candidatePath, warnings };
+}
+
+function safeRealpath(value: string): string | null {
+  try {
+    return fs.realpathSync(value);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Merges user text with file attachments into Anthropic message content blocks.
  * Images are base64-encoded as image blocks; text files are inlined in an
@@ -65,14 +118,16 @@ export function buildUserContent(
   const resolvedCwd = options.cwd ? path.resolve(options.cwd) : null;
 
   for (const rawPath of attachmentPaths) {
-    const filePath = path.resolve(rawPath);
+    const trimmedPath = rawPath.trim();
+    if (!trimmedPath) {
+      warnings.push('Attachment path is empty');
+      continue;
+    }
 
-    if (resolvedCwd) {
-      const rel = path.relative(resolvedCwd, filePath);
-      if (rel.startsWith('..') || path.isAbsolute(rel)) {
-        warnings.push(`Attachment outside working directory: ${rawPath}`);
-        continue;
-      }
+    const { filePath, warnings: pathWarnings } = resolveAttachmentPath(trimmedPath, resolvedCwd);
+    if (pathWarnings.length > 0) {
+      warnings.push(...pathWarnings);
+      continue;
     }
 
     if (!fs.existsSync(filePath)) {
@@ -80,7 +135,14 @@ export function buildUserContent(
       continue;
     }
 
-    const stat = fs.statSync(filePath);
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(filePath);
+    } catch {
+      warnings.push(`Attachment could not be read: ${filePath}`);
+      continue;
+    }
+
     if (stat.size > maxFileBytes) {
       warnings.push(`Attachment too large (>${maxFileBytes} bytes): ${filePath}`);
       continue;
@@ -88,13 +150,17 @@ export function buildUserContent(
 
     const mimeType = getImageMimeType(filePath);
     if (mimeType) {
-      const data = fs.readFileSync(filePath).toString('base64');
+      const data = readBinaryFile(filePath);
+      if (!data) {
+        warnings.push(`Attachment could not be read: ${filePath}`);
+        continue;
+      }
       imageBlocks.push({
         type: 'image',
         source: {
           type: 'base64',
           media_type: mimeType,
-          data,
+          data: data.toString('base64'),
         },
       });
       continue;

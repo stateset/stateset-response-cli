@@ -22,9 +22,18 @@ let mockMcpClientInstance: {
   callTool: ReturnType<typeof vi.fn>;
 };
 
+let mockTransportOptions: {
+  command: string;
+  args: string[];
+  stderr: 'inherit';
+  cwd: string;
+  env: Record<string, string>;
+} | null = null;
+
 let mockTransportInstance: {
   close: ReturnType<typeof vi.fn>;
 };
+let mockTransportInstances: Array<{ close: ReturnType<typeof vi.fn> }> = [];
 
 vi.mock('@anthropic-ai/sdk', () => ({
   default: vi.fn().mockImplementation(() => {
@@ -51,10 +60,12 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
 }));
 
 vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
-  StdioClientTransport: vi.fn().mockImplementation(() => {
+  StdioClientTransport: vi.fn().mockImplementation((options: any) => {
+    mockTransportOptions = options;
     mockTransportInstance = {
       close: vi.fn().mockResolvedValue(undefined),
     };
+    mockTransportInstances.push(mockTransportInstance);
     return mockTransportInstance;
   }),
 }));
@@ -113,6 +124,9 @@ import { DEFAULT_MODEL } from '../config.js';
 describe('StateSetAgent', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockTransportOptions = null;
+    mockTransportInstances = [];
+    mockTransportInstance = null as unknown as { close: ReturnType<typeof vi.fn> };
   });
 
   // =========================================================================
@@ -285,10 +299,127 @@ describe('StateSetAgent', () => {
       expect(mockTransportInstance.close).toHaveBeenCalledTimes(1);
     });
 
+    it('passes MCP env vars needed for knowledge base tools', async () => {
+      const previousKbHost = process.env.STATESET_KB_HOST;
+      const previousOpenAI = process.env.OPENAI_API_KEY;
+      const previousOpenAIAlt = process.env.OPEN_AI;
+
+      process.env.STATESET_KB_HOST = '  http://qdrant.internal  ';
+      process.env.OPENAI_API_KEY = '  test-openai-key  ';
+      process.env.OPEN_AI = '  alt-openai-key  ';
+
+      const agent = new StateSetAgent('test-key');
+      await agent.connect();
+
+      try {
+        expect(mockTransportOptions).not.toBeNull();
+        expect(mockTransportOptions?.env).toEqual(
+          expect.objectContaining({
+            STATESET_KB_HOST: 'http://qdrant.internal',
+            OPENAI_API_KEY: 'test-openai-key',
+            OPEN_AI: 'alt-openai-key',
+          }),
+        );
+      } finally {
+        process.env.STATESET_KB_HOST = previousKbHost;
+        process.env.OPENAI_API_KEY = previousOpenAI;
+        process.env.OPEN_AI = previousOpenAIAlt;
+      }
+    });
+
+    it('clears transport if connect fails after spawning', async () => {
+      mockMcpClientInstance.connect.mockRejectedValueOnce(new Error('spawn failed'));
+      const agent = new StateSetAgent('test-key');
+
+      await expect(agent.connect()).rejects.toThrow('spawn failed');
+
+      expect(mockTransportInstances).toHaveLength(1);
+      expect(mockTransportInstances[0].close).toHaveBeenCalledTimes(1);
+    });
+
+    it('clears transport if tool discovery fails during connect', async () => {
+      mockMcpClientInstance.listTools.mockRejectedValueOnce(new Error('tools failed'));
+      const agent = new StateSetAgent('test-key');
+
+      await expect(agent.connect()).rejects.toThrow('tools failed');
+
+      expect(mockTransportInstances).toHaveLength(1);
+      expect(mockTransportInstances[0].close).toHaveBeenCalledTimes(1);
+    });
+
     it('disconnect is safe to call when never connected', async () => {
       const agent = new StateSetAgent('test-key');
       // transport is null – should not throw
       await expect(agent.disconnect()).resolves.toBeUndefined();
+    });
+
+    it('disconnect can be called multiple times without throwing', async () => {
+      const agent = new StateSetAgent('test-key');
+      await agent.connect();
+      await agent.disconnect();
+      await expect(agent.disconnect()).resolves.toBeUndefined();
+    });
+
+    it('suppresses transport close errors during disconnect', async () => {
+      const agent = new StateSetAgent('test-key');
+      await agent.connect();
+      mockTransportInstance.close.mockRejectedValueOnce(new Error('close failed'));
+
+      await expect(agent.disconnect()).resolves.toBeUndefined();
+      expect((agent as unknown as { tools: unknown[] }).tools).toHaveLength(0);
+    });
+
+    it('clears cached tools when disconnecting', async () => {
+      mockMcpClientInstance.listTools.mockResolvedValueOnce({
+        tools: [
+          {
+            name: 'list_agents',
+            description: 'List agents',
+            inputSchema: { type: 'object', properties: {} },
+          },
+        ],
+      });
+
+      const agent = new StateSetAgent('test-key');
+      await agent.connect();
+
+      expect((agent as unknown as { tools: unknown[] }).tools).toHaveLength(1);
+
+      await agent.disconnect();
+      expect((agent as unknown as { tools: unknown[] }).tools).toHaveLength(0);
+    });
+
+    it('reconnect closes an existing transport before creating a new one', async () => {
+      const agent = new StateSetAgent('test-key');
+      await agent.connect();
+      const firstTransport = mockTransportInstances[0];
+      await agent.connect();
+
+      expect(firstTransport?.close).toHaveBeenCalledTimes(1);
+      expect(mockTransportInstances).toHaveLength(2);
+    });
+
+    it('clears cached tools when a reconnect attempt fails', async () => {
+      mockMcpClientInstance.listTools
+        .mockResolvedValueOnce({
+          tools: [
+            {
+              name: 'list_agents',
+              description: 'List agents',
+              inputSchema: { type: 'object', properties: {} },
+            },
+          ],
+        })
+        .mockRejectedValueOnce(new Error('tools failed'));
+
+      const agent = new StateSetAgent('test-key');
+
+      await agent.connect();
+      expect((agent as unknown as { tools: unknown[] }).tools).toHaveLength(1);
+
+      await expect(agent.connect()).rejects.toThrow('tools failed');
+      expect((agent as unknown as { tools: unknown[] }).tools).toHaveLength(0);
+      expect(mockTransportInstances).toHaveLength(2);
     });
   });
 

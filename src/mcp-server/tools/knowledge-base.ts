@@ -4,14 +4,69 @@ import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { executeQuery } from '../graphql-client.js';
 
-const QDRANT_HOST = process.env.STATESET_KB_HOST || '';
 const EMBEDDING_MODEL = 'text-embedding-ada-002';
 const SIMILARITY_THRESHOLD = 0.95;
+const MAX_KB_LIMIT = 1000;
+const COLLECTION_NAME_RE = /^[A-Za-z0-9._-]+$/;
 
 interface KBConfig {
   collection: string;
   apiKey: string;
   openaiApiKey: string;
+}
+
+function resolveOpenAIKey(): string {
+  const explicit = process.env.OPENAI_API_KEY?.trim();
+  if (explicit) return explicit;
+  return process.env.OPEN_AI?.trim() || '';
+}
+
+function resolveQdrantHost(): string {
+  return (process.env.STATESET_KB_HOST || '').trim().replace(/\/+$/, '');
+}
+
+function normalizeTopK(topK: number | undefined, defaultValue: number): number {
+  if (topK === undefined) return defaultValue;
+  if (!Number.isFinite(topK)) {
+    throw new Error('top_k must be a finite integer');
+  }
+  if (topK <= 0 || !Number.isInteger(topK)) {
+    throw new Error('top_k must be a positive integer');
+  }
+  if (topK > MAX_KB_LIMIT) {
+    throw new Error(`top_k cannot exceed ${MAX_KB_LIMIT}`);
+  }
+  return topK;
+}
+
+function normalizeCollectionName(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error('Knowledge Base collection name is required');
+  }
+  if (!COLLECTION_NAME_RE.test(trimmed)) {
+    throw new Error('Knowledge Base collection name contains invalid characters');
+  }
+  if (trimmed.length > 255) {
+    throw new Error('Knowledge Base collection name is too long');
+  }
+  return trimmed;
+}
+
+function normalizeTextValue(value: string, field: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error(`${field} cannot be empty`);
+  }
+  return trimmed;
+}
+
+function normalizeScoreThreshold(value: number | undefined, field: string): number {
+  if (value === undefined) return SIMILARITY_THRESHOLD;
+  if (!Number.isFinite(value) || value < 0 || value > 1) {
+    throw new Error(`${field} must be between 0 and 1`);
+  }
+  return value;
 }
 
 async function fetchKBConfig(client: GraphQLClient, orgId: string): Promise<KBConfig> {
@@ -29,19 +84,28 @@ async function fetchKBConfig(client: GraphQLClient, orgId: string): Promise<KBCo
     throw new Error('Knowledge Base configuration not found for this organization');
   }
 
-  const { stateset_kb_collection, stateset_kb_api_key } = data.access_tokens[0];
+  const stateset_kb_collection = data.access_tokens[0].stateset_kb_collection?.trim();
+  const stateset_kb_api_key = data.access_tokens[0].stateset_kb_api_key?.trim();
   if (!stateset_kb_collection || !stateset_kb_api_key) {
     throw new Error(
       'Knowledge Base not configured — missing collection or API key in access_tokens',
     );
   }
 
-  const openaiApiKey = process.env.OPENAI_API_KEY || process.env.OPEN_AI || '';
+  const openaiApiKey = resolveOpenAIKey();
   if (!openaiApiKey) {
-    throw new Error('No OpenAI API key found. Set OPENAI_API_KEY environment variable.');
+    throw new Error(
+      'No OpenAI API key found. Set OPENAI_API_KEY (or OPEN_AI) environment variable.',
+    );
   }
 
-  return { collection: stateset_kb_collection, apiKey: stateset_kb_api_key, openaiApiKey };
+  const collection = normalizeCollectionName(stateset_kb_collection);
+
+  return { collection, apiKey: stateset_kb_api_key, openaiApiKey };
+}
+
+function getCollectionPath(collection: string): string {
+  return encodeURIComponent(collection);
 }
 
 async function createEmbedding(text: string, config: KBConfig): Promise<number[]> {
@@ -72,12 +136,14 @@ async function qdrantRequest(
   body: unknown,
   config: KBConfig,
 ): Promise<unknown> {
-  if (!QDRANT_HOST) {
+  const host = resolveQdrantHost();
+  if (!host) {
     throw new Error(
       'STATESET_KB_HOST environment variable is required for Knowledge Base operations.',
     );
   }
-  const url = `${QDRANT_HOST}/collections/${config.collection}${path}`;
+  const collectionPath = getCollectionPath(config.collection);
+  const url = `${host}/collections/${collectionPath}${path}`;
   const res = await fetch(url, {
     method,
     headers: {
@@ -104,7 +170,7 @@ export function registerKnowledgeBaseTools(
     'kb_search',
     'Search the Knowledge Base using semantic similarity. Returns the most relevant entries for a given question.',
     {
-      question: z.string().describe('The question or text to search for'),
+      question: z.string().min(1).describe('The question or text to search for'),
       top_k: z.number().optional().describe('Number of results to return (default 5)'),
       score_threshold: z
         .number()
@@ -113,15 +179,21 @@ export function registerKnowledgeBaseTools(
     },
     async ({ question, top_k, score_threshold }) => {
       const config = await fetchKBConfig(client, orgId);
-      const vector = await createEmbedding(question, config);
+      const normalizedQuestion = normalizeTextValue(question, 'question');
+      const normalizedTopK = normalizeTopK(top_k, 5);
+      const normalizedScoreThreshold =
+        score_threshold === undefined
+          ? undefined
+          : normalizeScoreThreshold(score_threshold, 'score_threshold');
+      const vector = await createEmbedding(normalizedQuestion, config);
 
       const searchBody: Record<string, unknown> = {
         vector,
-        limit: top_k ?? 5,
+        limit: normalizedTopK,
         with_payload: true,
       };
-      if (score_threshold !== undefined) {
-        searchBody.score_threshold = score_threshold;
+      if (normalizedScoreThreshold !== undefined) {
+        searchBody.score_threshold = normalizedScoreThreshold;
       }
 
       const result = (await qdrantRequest('/points/search', 'POST', searchBody, config)) as {
@@ -152,7 +224,7 @@ export function registerKnowledgeBaseTools(
     'kb_upsert',
     'Add or update knowledge in the Knowledge Base. Automatically deduplicates — if similar content exists (above similarity threshold), it updates the existing entry instead of creating a duplicate.',
     {
-      knowledge: z.string().describe('The text content to store in the knowledge base'),
+      knowledge: z.string().min(1).describe('The text content to store in the knowledge base'),
       metadata: z
         .record(z.unknown())
         .optional()
@@ -164,8 +236,9 @@ export function registerKnowledgeBaseTools(
     },
     async ({ knowledge, metadata, similarity_threshold }) => {
       const config = await fetchKBConfig(client, orgId);
-      const vector = await createEmbedding(knowledge, config);
-      const threshold = similarity_threshold ?? SIMILARITY_THRESHOLD;
+      const normalizedKnowledge = normalizeTextValue(knowledge, 'knowledge');
+      const vector = await createEmbedding(normalizedKnowledge, config);
+      const threshold = normalizeScoreThreshold(similarity_threshold, 'similarity_threshold');
 
       // Search for similar existing content
       const searchResult = (await qdrantRequest(
@@ -200,7 +273,7 @@ export function registerKnowledgeBaseTools(
               id: pointId,
               vector,
               payload: {
-                text: knowledge,
+                text: normalizedKnowledge,
                 org_id: orgId,
                 [action === 'created' ? 'created_at' : 'updated_at']: new Date().toISOString(),
                 ...(metadata || {}),
@@ -235,7 +308,7 @@ export function registerKnowledgeBaseTools(
     'kb_update',
     'Update an existing Knowledge Base entry by ID, or find the closest match and update it',
     {
-      knowledge: z.string().describe('Updated text content'),
+      knowledge: z.string().min(1).describe('Updated text content'),
       point_id: z
         .string()
         .optional()
@@ -244,7 +317,8 @@ export function registerKnowledgeBaseTools(
     },
     async ({ knowledge, point_id, metadata }) => {
       const config = await fetchKBConfig(client, orgId);
-      const vector = await createEmbedding(knowledge, config);
+      const normalizedKnowledge = normalizeTextValue(knowledge, 'knowledge');
+      const vector = await createEmbedding(normalizedKnowledge, config);
 
       let targetId = point_id;
 
@@ -278,7 +352,7 @@ export function registerKnowledgeBaseTools(
               id: targetId,
               vector,
               payload: {
-                text: knowledge,
+                text: normalizedKnowledge,
                 org_id: orgId,
                 updated_at: new Date().toISOString(),
                 ...(metadata || {}),
@@ -312,7 +386,7 @@ export function registerKnowledgeBaseTools(
     'kb_delete',
     'Delete one or more entries from the Knowledge Base by ID',
     {
-      ids: z.array(z.string()).describe('Array of point IDs to delete'),
+      ids: z.array(z.string()).min(1).describe('Array of point IDs to delete'),
     },
     async ({ ids }) => {
       const config = await fetchKBConfig(client, orgId);
@@ -351,8 +425,14 @@ export function registerKnowledgeBaseTools(
     {},
     async () => {
       const config = await fetchKBConfig(client, orgId);
+      const host = resolveQdrantHost();
+      if (!host) {
+        throw new Error(
+          'STATESET_KB_HOST environment variable is required for Knowledge Base operations.',
+        );
+      }
 
-      const url = `${QDRANT_HOST}/collections/${config.collection}`;
+      const url = `${host}/collections/${getCollectionPath(config.collection)}`;
       const res = await fetch(url, {
         method: 'GET',
         headers: {
@@ -391,9 +471,10 @@ export function registerKnowledgeBaseTools(
     },
     async ({ limit, offset, filter }) => {
       const config = await fetchKBConfig(client, orgId);
+      const normalizedLimit = normalizeTopK(limit, 10);
 
       const scrollBody: Record<string, unknown> = {
-        limit: limit ?? 10,
+        limit: normalizedLimit,
         with_payload: true,
       };
       if (offset) {

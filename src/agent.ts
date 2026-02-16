@@ -30,12 +30,22 @@ for (const def of INTEGRATION_DEFINITIONS) {
   }
 }
 
+const MCP_EXTRA_ENV_KEYS = new Set<string>(['STATESET_KB_HOST', 'OPENAI_API_KEY', 'OPEN_AI']);
+
 function buildMcpEnv(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const key of INTEGRATION_ENV_KEYS) {
     const value = process.env[key];
-    if (typeof value === 'string' && value.trim()) {
-      env[key] = value;
+    const trimmed = typeof value === 'string' ? value.trim() : '';
+    if (trimmed) {
+      env[key] = trimmed;
+    }
+  }
+  for (const key of MCP_EXTRA_ENV_KEYS) {
+    const value = process.env[key];
+    const trimmed = typeof value === 'string' ? value.trim() : '';
+    if (trimmed) {
+      env[key] = trimmed;
     }
   }
   return env;
@@ -167,26 +177,38 @@ export class StateSetAgent {
 
   /** Spawns the MCP server as a child process and discovers available tools. */
   async connect(): Promise<void> {
+    if (this.transport) {
+      await this.disconnect();
+    }
+    this.tools = [];
+
     const serverPath = path.join(__dirname, 'mcp-server', IS_TS ? 'index.ts' : 'index.js');
     const command = process.execPath;
     const args = IS_TS ? ['--loader', 'tsx', serverPath] : [serverPath];
 
-    this.transport = new StdioClientTransport({
+    const transport = new StdioClientTransport({
       command,
       args,
       stderr: 'inherit',
       cwd: process.cwd(),
       env: buildMcpEnv(),
     });
+    this.transport = transport;
 
-    await this.mcpClient.connect(this.transport);
-
-    const { tools } = await this.mcpClient.listTools();
-    this.tools = tools.map((tool) => ({
-      name: tool.name,
-      description: tool.description || '',
-      input_schema: tool.inputSchema as Anthropic.Tool.InputSchema,
-    }));
+    try {
+      await this.mcpClient.connect(transport);
+      const { tools } = await this.mcpClient.listTools();
+      this.tools = tools.map((tool) => ({
+        name: tool.name,
+        description: tool.description || '',
+        input_schema: tool.inputSchema as Anthropic.Tool.InputSchema,
+      }));
+    } catch (error: unknown) {
+      this.transport = null;
+      this.tools = [];
+      await transport.close().catch(() => {});
+      throw error;
+    }
   }
 
   /**
@@ -356,8 +378,15 @@ export class StateSetAgent {
   /** Closes the stdio transport to the MCP server subprocess. */
   async disconnect(): Promise<void> {
     if (this.transport) {
-      await this.transport.close();
+      try {
+        await this.transport.close();
+      } catch {
+        // Best-effort cleanup. Transport shutdown should not block shutdown flows.
+      } finally {
+        this.transport = null;
+      }
     }
+    this.tools = [];
   }
 
   private trimHistory(): void {

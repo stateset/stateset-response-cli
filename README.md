@@ -47,6 +47,7 @@ Follow the prompts to authenticate via your browser. The CLI will receive a scop
 **Manual Setup**
 
 During `response auth login`, you can provide your GraphQL endpoint and admin secret directly.
+You can choose either the browser/device flow or manual setup during login.
 
 Credentials are stored in `~/.stateset/config.json` with restricted file permissions (600).
 
@@ -350,6 +351,7 @@ On first WhatsApp run, scan the QR code (Settings > Linked Devices > Link a Devi
 | `SLACK_BOT_TOKEN`        | Slack    | Bot User OAuth Token (`xoxb-...`)              |
 | `SLACK_APP_TOKEN`        | Slack    | App-level token for Socket Mode (`xapp-...`)   |
 | `OPENAI_API_KEY`         | KB       | OpenAI API key for knowledge base embeddings   |
+| `OPEN_AI`                | KB       | Alternative OpenAI API key variable             |
 
 ## Available Tools
 
