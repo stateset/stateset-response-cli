@@ -31,7 +31,7 @@ export function applyConditionals(content: string, vars: Record<string, string>)
 export async function handleTemplateCommand(
   input: string,
   ctx: ChatContext,
-): Promise<CommandResult | null> {
+): Promise<CommandResult> {
   // /prompts — list prompt templates
   if (input === '/prompts') {
     const templates = listPromptTemplates(ctx.cwd);
@@ -319,5 +319,5 @@ export async function handleTemplateCommand(
     return { handled: true, sendMessage: expanded };
   }
 
-  return null;
+  return { handled: false };
 }

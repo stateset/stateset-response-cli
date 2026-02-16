@@ -38,10 +38,10 @@ describe('handleAuditCommand', () => {
     vi.restoreAllMocks();
   });
 
-  it('returns null for non-audit commands', async () => {
+  it('returns unhandled for non-audit commands', async () => {
     const ctx = createMockCtx();
-    expect(await handleAuditCommand('/help', ctx)).toBeNull();
-    expect(await handleAuditCommand('/apply on', ctx)).toBeNull();
+    expect(await handleAuditCommand('/help', ctx)).toEqual({ handled: false });
+    expect(await handleAuditCommand('/apply on', ctx)).toEqual({ handled: false });
   });
 
   it('/audit shows current status', async () => {

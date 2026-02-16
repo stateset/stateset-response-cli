@@ -21,6 +21,11 @@ import { formatUsage } from './utils/display.js';
 
 const DEBOUNCE_MS = 100;
 const RETRY_BASE_MS = 100;
+const MAX_TIMEOUT_MS = 2_147_483_647;
+const SESSION_RUNNER_TTL_MS = 15 * 60_000;
+const SESSION_RUNNER_MAX_COUNT = 200;
+const SESSION_RUNNER_MAX_PENDING = 32;
+const SESSION_RUNNER_CLEANUP_MS = 5 * 60_000;
 
 /** An event that triggers an agent run: immediately, at a specific time, or on a cron schedule. */
 export type ResponseEvent =
@@ -93,7 +98,9 @@ class SessionAgentRunner {
   private agent: StateSetAgent;
   private store: SessionStore;
   private connected = false;
+  private lastUsedAt = Date.now();
   private queue: Promise<void> = Promise.resolve();
+  private pending = 0;
   private showUsage: boolean;
   private stdout: boolean;
 
@@ -117,13 +124,38 @@ class SessionAgentRunner {
     this.connected = false;
   }
 
+  touch(): void {
+    this.lastUsedAt = Date.now();
+  }
+
+  getLastUsedAt(): number {
+    return this.lastUsedAt;
+  }
+
+  isIdle(): boolean {
+    return this.pending === 0;
+  }
+
   enqueue(event: QueuedEvent): void {
+    if (this.pending >= SESSION_RUNNER_MAX_PENDING) {
+      logger.warn(
+        `Dropping event for session ${this.store.getSessionId()}: queue saturated (${SESSION_RUNNER_MAX_PENDING} events).`,
+      );
+      return;
+    }
+
     this.queue = this.queue
       .then(() => this.run(event))
       .catch((err) => {
         const msg = err instanceof Error ? err.message : String(err);
         logger.error(`Event error (${this.store.getSessionId()}): ${msg}`);
+      })
+      .finally(() => {
+        this.pending = Math.max(0, this.pending - 1);
+        this.touch();
       });
+    this.pending += 1;
+    this.touch();
   }
 
   private async run({ filename, event }: QueuedEvent): Promise<void> {
@@ -187,6 +219,7 @@ export class EventsRunner {
   private timers = new Map<string, NodeJS.Timeout>();
   private crons = new Map<string, Cron>();
   private debounceTimers = new Map<string, NodeJS.Timeout>();
+  private sessionCleanupTimer: ReturnType<typeof setInterval> | null = null;
   private startTime: number;
   private options: EventsRunnerOptions;
   private sessionRunners = new Map<string, SessionAgentRunner>();
@@ -203,6 +236,7 @@ export class EventsRunner {
     }
 
     this.scanExisting();
+    this.startSessionCleanup();
 
     this.watcher = watch(this.eventsDir, (_eventType, filename) => {
       if (!filename || !filename.endsWith('.json')) return;
@@ -213,6 +247,8 @@ export class EventsRunner {
   }
 
   async stop(): Promise<void> {
+    this.stopSessionCleanup();
+
     if (this.watcher) {
       this.watcher.close();
       this.watcher = null;
@@ -233,12 +269,25 @@ export class EventsRunner {
     }
     this.crons.clear();
 
-    const disconnects: Promise<void>[] = [];
-    for (const runner of this.sessionRunners.values()) {
-      disconnects.push(runner.disconnect());
+    await this.cleanupSessionRunners(true);
+  }
+
+  private startSessionCleanup(): void {
+    if (this.sessionCleanupTimer) return;
+    this.sessionCleanupTimer = setInterval(() => {
+      void this.cleanupSessionRunners().catch((error) => {
+        logger.error(
+          `Failed to cleanup session runners: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
+    }, SESSION_RUNNER_CLEANUP_MS);
+  }
+
+  private stopSessionCleanup(): void {
+    if (this.sessionCleanupTimer) {
+      clearInterval(this.sessionCleanupTimer);
+      this.sessionCleanupTimer = null;
     }
-    await Promise.all(disconnects);
-    this.sessionRunners.clear();
   }
 
   private debounce(filename: string, fn: () => void): void {
@@ -369,10 +418,27 @@ export class EventsRunner {
       return;
     }
 
-    const timer = setTimeout(() => {
+    this.scheduleOneShot(filename, event, atTime);
+  }
+
+  private scheduleOneShot(
+    filename: string,
+    event: ResponseEvent & { type: 'one-shot' },
+    atTime: number,
+  ): void {
+    const remainingMs = atTime - Date.now();
+    if (remainingMs <= 0) {
       this.timers.delete(filename);
       this.execute(filename, event, true);
-    }, atTime - now);
+      return;
+    }
+
+    const timer = setTimeout(
+      () => {
+        this.scheduleOneShot(filename, event, atTime);
+      },
+      Math.min(remainingMs, MAX_TIMEOUT_MS),
+    );
 
     this.timers.set(filename, timer);
   }
@@ -390,8 +456,14 @@ export class EventsRunner {
   }
 
   private execute(filename: string, event: ResponseEvent, deleteAfter: boolean): void {
+    void this.cleanupSessionRunners().catch((error) => {
+      logger.error(
+        `Failed to cleanup session runners: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
     const sessionId = sanitizeSessionId(event.session || this.options.defaultSession);
     const runner = this.getSessionRunner(sessionId);
+    runner.touch();
     runner.enqueue({ filename, event });
 
     if (deleteAfter) {
@@ -401,7 +473,10 @@ export class EventsRunner {
 
   private getSessionRunner(sessionId: string): SessionAgentRunner {
     const existing = this.sessionRunners.get(sessionId);
-    if (existing) return existing;
+    if (existing) {
+      existing.touch();
+      return existing;
+    }
 
     const model = this.options.model ?? getConfiguredModel();
     const runner = new SessionAgentRunner(
@@ -411,7 +486,71 @@ export class EventsRunner {
       Boolean(this.options.stdout),
     );
     this.sessionRunners.set(sessionId, runner);
+    void this.enforceSessionRunnerLimit();
     return runner;
+  }
+
+  private async cleanupSessionRunners(force = false): Promise<void> {
+    if (force) {
+      const disconnects: Promise<void>[] = [];
+      for (const [sessionId, runner] of this.sessionRunners.entries()) {
+        this.sessionRunners.delete(sessionId);
+        disconnects.push(runner.disconnect());
+      }
+      await Promise.all(disconnects);
+      return;
+    }
+
+    const expiredSessions: string[] = [];
+    const now = Date.now();
+    for (const [sessionId, runner] of this.sessionRunners.entries()) {
+      if (!runner.isIdle()) continue;
+      if (now - runner.getLastUsedAt() <= SESSION_RUNNER_TTL_MS) continue;
+      expiredSessions.push(sessionId);
+    }
+
+    await this.evictSessionRunners(expiredSessions);
+    await this.enforceSessionRunnerLimit();
+  }
+
+  private async evictSessionRunners(sessionIds: string[]): Promise<void> {
+    const disconnects: Promise<void>[] = [];
+
+    for (const sessionId of sessionIds) {
+      const runner = this.sessionRunners.get(sessionId);
+      if (!runner || !runner.isIdle()) continue;
+      this.sessionRunners.delete(sessionId);
+      disconnects.push(
+        runner.disconnect().catch((error) => {
+          const msg = error instanceof Error ? error.message : String(error);
+          logger.error(`Failed to disconnect idle runner ${sessionId}: ${msg}`);
+        }),
+      );
+    }
+
+    await Promise.all(disconnects);
+  }
+
+  private async enforceSessionRunnerLimit(): Promise<void> {
+    if (this.sessionRunners.size <= SESSION_RUNNER_MAX_COUNT) {
+      return;
+    }
+
+    const excess = this.sessionRunners.size - SESSION_RUNNER_MAX_COUNT;
+    const idleSessions = [...this.sessionRunners.entries()]
+      .filter(([, runner]) => runner.isIdle())
+      .sort((a, b) => a[1].getLastUsedAt() - b[1].getLastUsedAt())
+      .slice(0, excess)
+      .map(([sessionId]) => sessionId);
+
+    if (idleSessions.length > 0) {
+      await this.evictSessionRunners(idleSessions);
+      return;
+    }
+
+    if (excess > 0) {
+      logger.warn(`Event session runner limit reached (${SESSION_RUNNER_MAX_COUNT}).`);
+    }
   }
 
   private deleteFile(filename: string): void {

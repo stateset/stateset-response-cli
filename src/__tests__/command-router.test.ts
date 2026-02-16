@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { routeSlashCommand } from '../cli/command-router.js';
-import type { ChatContext } from '../cli/types.js';
+import type { ChatContext, CommandResult } from '../cli/types.js';
 
 vi.mock('../cli/commands-chat.js', () => ({
   handleChatCommand: vi.fn(async () => ({ handled: false })),
@@ -46,6 +46,33 @@ describe('routeSlashCommand', () => {
     expect(result).toEqual({ handled: true, sendMessage: 'expanded' });
   });
 
+  it('returns needsPrompt when chat handler sends blank message', async () => {
+    mockChat.mockResolvedValue({ handled: true, sendMessage: '   ' });
+    const result = await routeSlashCommand('/prompt test', ctx);
+    expect(result).toEqual({ handled: true, needsPrompt: true });
+  });
+
+  it('returns needsPrompt when chat handler sends non-string payload', async () => {
+    mockChat.mockResolvedValue({ handled: true, sendMessage: 123 as unknown as string });
+    const result = await routeSlashCommand('/prompt test', ctx);
+    expect(result).toEqual({ handled: true, needsPrompt: true });
+  });
+
+  it('normalizes malformed needsPrompt into prompt flow', async () => {
+    mockChat.mockResolvedValue({
+      handled: true,
+      needsPrompt: 'yes' as unknown as boolean,
+    });
+    const result = await routeSlashCommand('/prompt test', ctx);
+    expect(result).toEqual({ handled: true, needsPrompt: true });
+  });
+
+  it('normalizes explicit false needsPrompt to canonical handled result', async () => {
+    mockChat.mockResolvedValue({ handled: true, needsPrompt: false });
+    const result = await routeSlashCommand('/prompt test', ctx);
+    expect(result).toEqual({ handled: true });
+  });
+
   it('falls through to session when chat not handled', async () => {
     mockSession.mockResolvedValue(true);
     const result = await routeSlashCommand('/session', ctx);
@@ -70,6 +97,159 @@ describe('routeSlashCommand', () => {
     expect(mockChat).toHaveBeenCalled();
     expect(mockSession).toHaveBeenCalled();
     expect(mockExport).toHaveBeenCalled();
+  });
+
+  it('routes extension commands through context extension registry', async () => {
+    const extensionCtx = {
+      extensions: {
+        getCommand: vi.fn((name: string) =>
+          name === 'demo'
+            ? {
+                name: 'demo',
+                handler: vi.fn(async () => '/demo-response'),
+              }
+            : null,
+        ),
+      },
+      buildExtensionContext: vi.fn(() => ({})),
+    } as unknown as ChatContext;
+
+    const result = await routeSlashCommand('/demo hi', extensionCtx);
+    expect(result).toEqual({ handled: true, sendMessage: '/demo-response' });
+    expect(extensionCtx.extensions.getCommand).toHaveBeenCalledWith('demo');
+    expect(extensionCtx.buildExtensionContext).toHaveBeenCalled();
+  });
+
+  it('accepts extension responses using send payload', async () => {
+    const extensionCtx = {
+      extensions: {
+        getCommand: vi.fn((name: string) =>
+          name === 'demo-send'
+            ? {
+                name: 'demo-send',
+                handler: vi.fn(async () => ({ send: '/demo-send-response' })),
+              }
+            : null,
+        ),
+      },
+      buildExtensionContext: vi.fn(() => ({})),
+    } as unknown as ChatContext;
+
+    const result = await routeSlashCommand('/demo-send hi', extensionCtx);
+    expect(result).toEqual({ handled: true, sendMessage: '/demo-send-response' });
+    expect(extensionCtx.extensions.getCommand).toHaveBeenCalledWith('demo-send');
+    expect(extensionCtx.buildExtensionContext).toHaveBeenCalled();
+  });
+
+  it('returns handled-with-prompt when extension command emits no response', async () => {
+    const extensionCtx = {
+      extensions: {
+        getCommand: vi.fn(() => ({
+          name: 'silent',
+          handler: vi.fn(async () => undefined),
+        })),
+      },
+      buildExtensionContext: vi.fn(() => ({})),
+    } as unknown as ChatContext;
+
+    const result = await routeSlashCommand('/silent', extensionCtx);
+    expect(result).toEqual({ handled: true, needsPrompt: true });
+  });
+
+  it('returns handled-with-prompt when extension command returns non-boolean handled', async () => {
+    const extensionCtx = {
+      extensions: {
+        getCommand: vi.fn(() => ({
+          name: 'weird',
+          handler: vi.fn(async () => ({ handled: 'yes' as unknown as boolean })),
+        })),
+      },
+      buildExtensionContext: vi.fn(() => ({})),
+    } as unknown as ChatContext;
+
+    const result = await routeSlashCommand('/weird', extensionCtx);
+    expect(result).toEqual({ handled: true, needsPrompt: true });
+  });
+
+  it('returns handled-with-prompt when extension command returns empty send payload', async () => {
+    const extensionCtx = {
+      extensions: {
+        getCommand: vi.fn(() => ({
+          name: 'empty',
+          handler: vi.fn(async () => ''),
+        })),
+      },
+      buildExtensionContext: vi.fn(() => ({})),
+    } as unknown as ChatContext;
+
+    const result = await routeSlashCommand('/empty', extensionCtx);
+    expect(result).toEqual({ handled: true, needsPrompt: true });
+  });
+
+  it('returns handled-with-prompt when extension command returns whitespace send payload', async () => {
+    const extensionCtx = {
+      extensions: {
+        getCommand: vi.fn(() => ({
+          name: 'spacey',
+          handler: vi.fn(async () => ({ send: '   ' })),
+        })),
+      },
+      buildExtensionContext: vi.fn(() => ({})),
+    } as unknown as ChatContext;
+
+    const result = await routeSlashCommand('/spacey', extensionCtx);
+    expect(result).toEqual({ handled: true, needsPrompt: true });
+  });
+
+  it('returns handled-with-prompt when extension command send payload is not a string', async () => {
+    const extensionCtx = {
+      extensions: {
+        getCommand: vi.fn(() => ({
+          name: 'weird-send',
+          handler: vi.fn(async () => ({ send: 123 as unknown as string })),
+        })),
+      },
+      buildExtensionContext: vi.fn(() => ({})),
+    } as unknown as ChatContext;
+
+    const result = await routeSlashCommand('/weird-send', extensionCtx);
+    expect(result).toEqual({ handled: true, needsPrompt: true });
+  });
+
+  it('returns handled when extension command explicitly suppresses follow-up', async () => {
+    const extensionCtx = {
+      extensions: {
+        getCommand: vi.fn(() => ({
+          name: 'suppress',
+          handler: vi.fn(async () => ({ handled: true })),
+        })),
+      },
+      buildExtensionContext: vi.fn(() => ({})),
+    } as unknown as ChatContext;
+
+    const result = await routeSlashCommand('/suppress', extensionCtx);
+    expect(result).toEqual({ handled: true });
+    expect(extensionCtx.extensions.getCommand).toHaveBeenCalledWith('suppress');
+    expect(extensionCtx.buildExtensionContext).toHaveBeenCalled();
+  });
+
+  it('returns handled-with-prompt when extension command throws', async () => {
+    const extensionCtx = {
+      extensions: {
+        getCommand: vi.fn(() => ({
+          name: 'boom',
+          handler: vi.fn(async () => {
+            throw new Error('extension failed');
+          }),
+        })),
+      },
+      buildExtensionContext: vi.fn(() => ({})),
+    } as unknown as ChatContext;
+
+    const result = await routeSlashCommand('/boom', extensionCtx);
+    expect(result).toEqual({ handled: true, needsPrompt: true });
+    expect(extensionCtx.extensions.getCommand).toHaveBeenCalledWith('boom');
+    expect(extensionCtx.buildExtensionContext).toHaveBeenCalled();
   });
 
   it('checks handlers in order: chat → session → export', async () => {
@@ -98,9 +278,106 @@ describe('routeSlashCommand', () => {
     expect(result).toEqual({ handled: true });
   });
 
+  it('returns handled-with-prompt when chat handler throws', async () => {
+    const err = new Error('chat error');
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    mockChat.mockRejectedValue(err);
+    const result = await routeSlashCommand('/help', ctx);
+    expect(result).toEqual({ handled: true, needsPrompt: true });
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it('returns handled-with-prompt when session handler throws', async () => {
+    const err = new Error('session error');
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    mockChat.mockResolvedValue({ handled: false });
+    mockSession.mockRejectedValue(err);
+    const result = await routeSlashCommand('/session', ctx);
+    expect(result).toEqual({ handled: true, needsPrompt: true });
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it('returns handled-with-prompt when export handler throws', async () => {
+    const err = new Error('export error');
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    mockChat.mockResolvedValue({ handled: false });
+    mockSession.mockResolvedValue(false);
+    mockExport.mockRejectedValue(err);
+    const result = await routeSlashCommand('/export', ctx);
+    expect(result).toEqual({ handled: true, needsPrompt: true });
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it('returns handled-with-prompt when extension registry throws', async () => {
+    const err = new Error('registry error');
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const extensionCtx = {
+      extensions: {
+        getCommand: vi.fn(() => {
+          throw err;
+        }),
+      },
+    } as unknown as ChatContext;
+
+    const result = await routeSlashCommand('/boom', extensionCtx);
+    expect(result).toEqual({ handled: true, needsPrompt: true });
+    expect(extensionCtx.extensions.getCommand).toHaveBeenCalledWith('boom');
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it('returns handled-with-prompt when extension context builder throws', async () => {
+    const err = new Error('context builder error');
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const extensionCtx = {
+      extensions: {
+        getCommand: vi.fn(() => ({
+          name: 'context-bug',
+          handler: vi.fn(async () => '/should-not-run'),
+        })),
+      },
+      buildExtensionContext: vi.fn(() => {
+        throw err;
+      }),
+    } as unknown as ChatContext;
+
+    const result = await routeSlashCommand('/context-bug', extensionCtx);
+    expect(result).toEqual({ handled: true, needsPrompt: true });
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
   it('export returning false results in unhandled', async () => {
     mockExport.mockResolvedValue(false);
     const result = await routeSlashCommand('/nonexistent', ctx);
+    expect(result).toEqual({ handled: false });
+  });
+
+  it('falls through when chat is explicitly unhandled', async () => {
+    mockChat.mockResolvedValue({ handled: false } as CommandResult);
+    mockSession.mockResolvedValue(true);
+    mockExport.mockResolvedValue(false);
+    const result = await routeSlashCommand('/session', ctx);
+    expect(mockSession).toHaveBeenCalled();
+    expect(result).toEqual({ handled: true });
+  });
+
+  it('continues when chat handler returns malformed result', async () => {
+    mockChat.mockResolvedValue(undefined as unknown as CommandResult);
+    mockSession.mockResolvedValue(false);
+    mockExport.mockResolvedValue(false);
+    const result = await routeSlashCommand('/nonexistent', ctx);
+    expect(result).toEqual({ handled: false });
+  });
+
+  it('requires strict boolean handling from chat handler results', async () => {
+    mockChat.mockResolvedValue({ handled: 'yes' as unknown as boolean });
+    const result = await routeSlashCommand('/nonexistent', ctx);
+    expect(mockSession).toHaveBeenCalled();
+    expect(mockExport).toHaveBeenCalled();
     expect(result).toEqual({ handled: false });
   });
 });

@@ -79,6 +79,8 @@ interface SlackMessageEvent {
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 const MAX_SLACK_LENGTH = 3000;
+const MAX_SESSIONS = 400;
+const MAX_SESSION_QUEUE = 128;
 
 // ---------------------------------------------------------------------------
 // Slack Gateway
@@ -285,6 +287,18 @@ export class SlackGateway {
     this.log.debug(`${userId}: ${text.substring(0, 100)}${text.length > 100 ? '...' : ''}`);
 
     const session = this.getOrCreateSession(userId);
+    if (!session) {
+      await this.sendText(channel, 'Too many active sessions right now; please retry in a moment.');
+      return;
+    }
+    if (session.queue.length >= MAX_SESSION_QUEUE) {
+      this.log.debug(`Dropping message for ${userId}: session queue full (${MAX_SESSION_QUEUE}).`);
+      await this.sendText(
+        channel,
+        'You are sending messages too quickly. Please wait for the previous requests to complete.',
+      );
+      return;
+    }
     session.queue.push({ text, channel, threadTs: event.thread_ts ?? event.ts });
     session.lastActivity = Date.now();
 
@@ -409,10 +423,26 @@ export class SlackGateway {
   // Session Management
   // -------------------------------------------------------------------------
 
-  private getOrCreateSession(userId: string): SenderSession {
+  private getOrCreateSession(userId: string): SenderSession | null {
     let session = this.sessions.get(userId);
+    const now = Date.now();
 
-    if (!session || Date.now() - session.lastActivity > SESSION_TTL_MS) {
+    if (session && now - session.lastActivity > SESSION_TTL_MS) {
+      this.log.debug(`Expiring stale session for ${userId}`);
+      session.agent.disconnect().catch(() => {});
+      this.sessions.delete(userId);
+      session = null;
+    }
+
+    if (!session) {
+      if (this.sessions.size >= MAX_SESSIONS) {
+        this.evictOldestSessions();
+        if (this.sessions.size >= MAX_SESSIONS) {
+          this.log.warn(`Session cache limit reached (${MAX_SESSIONS}).`);
+          return null;
+        }
+      }
+
       this.log.debug(`Creating new session for ${userId}`);
       const apiKey = getAnthropicApiKey();
       const agent = new StateSetAgent(apiKey, this.model);
@@ -436,6 +466,19 @@ export class SlackGateway {
     return session;
   }
 
+  private evictOldestSessions(limit = 1): void {
+    const candidates = [...this.sessions.entries()]
+      .filter(([, session]) => !session.processing)
+      .sort((a, b) => a[1].lastActivity - b[1].lastActivity);
+
+    for (const [userId, session] of candidates.slice(0, limit)) {
+      this.log.debug(`Evicting inactive session for ${userId}`);
+      session.agent.disconnect().catch(() => {});
+      this.sessions.delete(userId);
+      if (this.sessions.size < MAX_SESSIONS) break;
+    }
+  }
+
   private startCleanupTimer(): void {
     this.cleanupTimer = setInterval(() => this.cleanupSessions(), CLEANUP_INTERVAL_MS);
   }
@@ -455,6 +498,11 @@ export class SlackGateway {
         session.agent.disconnect().catch(() => {});
         this.sessions.delete(userId);
       }
+    }
+    while (this.sessions.size > MAX_SESSIONS) {
+      const before = this.sessions.size;
+      this.evictOldestSessions();
+      if (this.sessions.size >= before) break;
     }
   }
 

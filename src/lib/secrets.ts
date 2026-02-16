@@ -10,8 +10,8 @@
  */
 
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import os from 'node:os';
-import { execSync } from 'node:child_process';
 
 const ENCRYPTION_PREFIX = 'enc:';
 const ALGORITHM = 'aes-256-gcm';
@@ -24,46 +24,65 @@ const SALT = 'stateset-response-cli-v1';
  */
 function getMachineId(): string {
   try {
-    // Try to get a persistent machine ID
     const platform = os.platform();
+    const linuxCandidates = ['/etc/machine-id', '/var/lib/dbus/machine-id'];
+    for (const candidate of linuxCandidates) {
+      const value = readTextFile(candidate);
+      if (value) return value;
+    }
 
-    if (platform === 'linux') {
-      try {
-        return execSync('cat /etc/machine-id', { encoding: 'utf8' }).trim();
-      } catch {
-        // Fallback to dbus machine ID
-        try {
-          return execSync('cat /var/lib/dbus/machine-id', { encoding: 'utf8' }).trim();
-        } catch {
-          // Continue to fallback
-        }
-      }
-    } else if (platform === 'darwin') {
-      try {
-        const output = execSync('ioreg -rd1 -c IOPlatformExpertDevice | grep IOPlatformUUID', {
-          encoding: 'utf8',
-        });
-        const match = output.match(/"IOPlatformUUID"\s*=\s*"([^"]+)"/);
-        if (match) return match[1];
-      } catch {
-        // Continue to fallback
-      }
-    } else if (platform === 'win32') {
-      try {
-        const output = execSync('wmic csproduct get uuid', { encoding: 'utf8' });
-        const lines = output.split('\n').filter((line) => line.trim() && !line.includes('UUID'));
-        if (lines.length > 0) return lines[0].trim();
-      } catch {
-        // Continue to fallback
-      }
+    // Fall back to a deterministic local hardware identifier where possible.
+    const mac = getPrimaryMacAddress();
+    if (mac) {
+      return `mac:${mac}`;
+    }
+
+    if (platform === 'darwin') {
+      const hostId = readTextFile('/etc/hostid');
+      if (hostId) return `darwin-hostid:${hostId}`;
+    }
+
+    if (platform === 'win32') {
+      const machineGuid = process.env.COMPUTERNAME || process.env.HOSTNAME;
+      if (machineGuid) return `win-host:${machineGuid}`;
     }
   } catch {
-    // Continue to fallback
+    // Continue to fallback.
   }
 
   // Fallback: combine hostname and username
   // Less secure but better than nothing
   return `${os.hostname()}-${os.userInfo().username}`;
+}
+
+function readTextFile(filePath: string): string | null {
+  try {
+    const raw = fs.readFileSync(filePath, 'utf8');
+    const value = raw.split(/\r?\n/)[0]?.trim();
+    if (value) return value;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function getPrimaryMacAddress(): string | null {
+  try {
+    const networkInterfaces = os.networkInterfaces();
+    const candidates: string[] = [];
+    for (const iface of Object.values(networkInterfaces)) {
+      if (!iface) continue;
+      for (const item of iface) {
+        if (!item || item.internal) continue;
+        if (!item.mac || item.mac === '00:00:00:00:00:00') continue;
+        candidates.push(item.mac.toLowerCase());
+      }
+    }
+    candidates.sort();
+    return candidates[0] || null;
+  } catch {
+    return null;
+  }
 }
 
 /**

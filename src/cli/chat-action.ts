@@ -28,7 +28,7 @@ import {
 import { ExtensionManager } from '../extensions.js';
 import { logger } from '../lib/logger.js';
 import { extractInlineFlags, readBooleanEnv } from './utils.js';
-import type { ChatContext, ToolAuditEntry } from './types.js';
+import type { ChatContext, ToolAuditEntry, CommandResult } from './types.js';
 
 const SIGINT_GRACE_MS = 2000;
 import { readSessionMeta, listSessionSummaries } from './session-meta.js';
@@ -37,6 +37,26 @@ import { readPermissionStore, writePermissionStore, makeHookPermissionKey } from
 import { printIntegrationStatus, runIntegrationsSetup } from './commands-integrations.js';
 import { routeSlashCommand } from './command-router.js';
 import inquirer from 'inquirer';
+
+export type SlashRouteAction = 'send' | 'prompt' | 'handled' | 'ignore';
+
+export function resolveSlashRouteAction(routeResult: CommandResult): SlashRouteAction {
+  if (routeResult.handled !== true) return 'ignore';
+
+  if (typeof routeResult.sendMessage === 'string' && routeResult.sendMessage.trim().length > 0) {
+    return 'send';
+  }
+
+  if (routeResult.needsPrompt === true) {
+    return 'prompt';
+  }
+
+  if (routeResult.needsPrompt !== undefined && routeResult.needsPrompt !== false) {
+    return 'prompt';
+  }
+
+  return 'handled';
+}
 
 export interface ChatOptions {
   model?: string;
@@ -346,7 +366,14 @@ export async function startChatSession(
 
     // Route slash commands to extracted handlers
     if (input.startsWith('/')) {
-      const routeResult = await routeSlashCommand(input, ctx);
+      let routeResult: CommandResult;
+      try {
+        routeResult = await routeSlashCommand(input, ctx);
+      } catch (err) {
+        console.error(formatError(err instanceof Error ? err.message : String(err)));
+        rl.prompt();
+        return;
+      }
 
       // Sync state back from context (handlers may mutate)
       sessionId = ctx.sessionId;
@@ -357,38 +384,15 @@ export async function startChatSession(
       auditIncludeExcerpt = ctx.auditIncludeExcerpt;
       permissionStore = ctx.permissionStore;
 
-      if (routeResult.handled) {
-        if (routeResult.sendMessage) {
-          finalInput = routeResult.sendMessage;
-        } else {
-          return;
-        }
-      } else {
-        // Try extension commands
-        const trimmed = input.slice(1).trim();
-        if (trimmed) {
-          const [commandName, ...restParts] = trimmed.split(/\s+/);
-          const extCommand = extensions.getCommand(commandName);
-          if (extCommand) {
-            try {
-              const result = await extCommand.handler(restParts.join(' '), buildExtensionContext());
-              if (typeof result === 'string') {
-                finalInput = result;
-              } else if (result && typeof result === 'object' && 'send' in result) {
-                finalInput = String((result as { send: string }).send);
-              } else {
-                console.log('');
-                rl.prompt();
-                return;
-              }
-            } catch (err) {
-              console.error(formatError(err instanceof Error ? err.message : String(err)));
-              console.log('');
-              rl.prompt();
-              return;
-            }
-          }
-        }
+      const routeAction = resolveSlashRouteAction(routeResult);
+      if (routeAction === 'send') {
+        finalInput = routeResult.sendMessage as string;
+      } else if (routeAction === 'prompt') {
+        console.log('');
+        rl.prompt();
+        return;
+      } else if (routeAction === 'handled') {
+        return;
       }
     }
 

@@ -54,10 +54,10 @@ describe('handleConfigCommand', () => {
     vi.restoreAllMocks();
   });
 
-  it('returns null for non-config commands', async () => {
+  it('returns unhandled for non-config commands', async () => {
     const ctx = createMockCtx();
-    expect(await handleConfigCommand('/help', ctx)).toBeNull();
-    expect(await handleConfigCommand('/clear', ctx)).toBeNull();
+    expect(await handleConfigCommand('/help', ctx)).toEqual({ handled: false });
+    expect(await handleConfigCommand('/clear', ctx)).toEqual({ handled: false });
   });
 
   // /apply tests

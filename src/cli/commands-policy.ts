@@ -12,10 +12,7 @@ import {
   readPolicyFile,
 } from './permissions.js';
 
-export async function handlePolicyCommand(
-  input: string,
-  ctx: ChatContext,
-): Promise<CommandResult | null> {
+export async function handlePolicyCommand(input: string, ctx: ChatContext): Promise<CommandResult> {
   // /permissions — manage stored tool hook permissions
   if (input.startsWith('/permissions')) {
     const tokens = input.split(/\s+/).slice(1);
@@ -267,5 +264,5 @@ export async function handlePolicyCommand(
     return { handled: true };
   }
 
-  return null;
+  return { handled: false };
 }

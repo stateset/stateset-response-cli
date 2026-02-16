@@ -46,6 +46,8 @@ export interface GatewayOptions {
 const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const MAX_WHATSAPP_LENGTH = 4000;
+const MAX_SESSIONS = 400;
+const MAX_SESSION_QUEUE = 128;
 const SENT_MESSAGE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const AGENT_MARKER = '[agent]';
 const AGENT_MARKER_LOWER = AGENT_MARKER.toLowerCase();
@@ -339,6 +341,23 @@ export class WhatsAppGateway {
 
   private enqueueMessage(jid: string, text: string, messageId: string): void {
     const session = this.getOrCreateSession(jid);
+    if (!session) {
+      this.sendText(jid, 'Too many active sessions right now; please retry in a moment.').catch(
+        () => {},
+      );
+      return;
+    }
+    if (session.queue.length >= MAX_SESSION_QUEUE) {
+      this.log.debug(
+        `Dropping message for ${jidToPhone(jid)}: session queue full (${MAX_SESSION_QUEUE}).`,
+      );
+      this.sendText(
+        jid,
+        'You are sending messages too quickly. Please wait for the previous requests to complete.',
+      ).catch(() => {});
+      return;
+    }
+
     session.queue.push({ text, jid, messageId });
     session.lastActivity = Date.now();
 
@@ -460,11 +479,27 @@ export class WhatsAppGateway {
   // Session Management
   // -------------------------------------------------------------------------
 
-  private getOrCreateSession(jid: string): SenderSession {
+  private getOrCreateSession(jid: string): SenderSession | null {
     const phone = jidToPhone(jid);
     let session = this.sessions.get(phone);
+    const now = Date.now();
+
+    if (session && now - session.lastActivity > SESSION_TTL_MS) {
+      this.log.debug(`Expiring stale session for ${phone}`);
+      session.agent.disconnect().catch(() => {});
+      this.sessions.delete(phone);
+      session = null;
+    }
 
     if (!session) {
+      if (this.sessions.size >= MAX_SESSIONS) {
+        this.evictOldestSessions();
+        if (this.sessions.size >= MAX_SESSIONS) {
+          this.log.warn(`Session cache limit reached (${MAX_SESSIONS}).`);
+          return null;
+        }
+      }
+
       this.log.debug(`Creating new session for ${phone}`);
       const apiKey = getAnthropicApiKey();
       const agent = new StateSetAgent(apiKey, this.model);
@@ -490,6 +525,19 @@ export class WhatsAppGateway {
     return session;
   }
 
+  private evictOldestSessions(limit = 1): void {
+    const candidates = [...this.sessions.entries()]
+      .filter(([, session]) => !session.processing)
+      .sort((a, b) => a[1].lastActivity - b[1].lastActivity);
+
+    for (const [phone, session] of candidates.slice(0, limit)) {
+      this.log.debug(`Evicting inactive session for ${phone}`);
+      session.agent.disconnect().catch(() => {});
+      this.sessions.delete(phone);
+      if (this.sessions.size < MAX_SESSIONS) break;
+    }
+  }
+
   private startCleanupTimer(): void {
     this.cleanupTimer = setInterval(() => this.cleanupSessions(), CLEANUP_INTERVAL_MS);
   }
@@ -509,6 +557,11 @@ export class WhatsAppGateway {
         session.agent.disconnect().catch(() => {});
         this.sessions.delete(phone);
       }
+    }
+    while (this.sessions.size > MAX_SESSIONS) {
+      const before = this.sessions.size;
+      this.evictOldestSessions();
+      if (this.sessions.size >= before) break;
     }
     this.pruneSentMessageIds();
   }

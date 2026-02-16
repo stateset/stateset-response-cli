@@ -9,30 +9,27 @@ import {
   formatTable,
 } from '../utils/display.js';
 import { getSkill, listSkills } from '../resources.js';
-import type { ChatContext } from './types.js';
+import type { ChatContext, CommandResult } from './types.js';
 import { handleConfigCommand } from './commands-config.js';
 import { handleAuditCommand } from './commands-audit.js';
 import { handlePolicyCommand } from './commands-policy.js';
 import { handleTemplateCommand } from './commands-templates.js';
 
-export async function handleChatCommand(
-  input: string,
-  ctx: ChatContext,
-): Promise<{ handled: boolean; sendMessage?: string }> {
+export async function handleChatCommand(input: string, ctx: ChatContext): Promise<CommandResult> {
   const prefix = input.split(/\s/)[0];
 
   // Delegate to extracted command modules
   if (['/apply', '/redact', '/usage', '/model'].includes(prefix)) {
-    return (await handleConfigCommand(input, ctx))!;
+    return await handleConfigCommand(input, ctx);
   }
   if (prefix.startsWith('/audit')) {
-    return (await handleAuditCommand(input, ctx))!;
+    return await handleAuditCommand(input, ctx);
   }
   if (prefix === '/permissions' || prefix === '/policy') {
-    return (await handlePolicyCommand(input, ctx))!;
+    return await handlePolicyCommand(input, ctx);
   }
   if (['/prompts', '/prompt-history', '/prompt-validate', '/prompt'].includes(prefix)) {
-    return (await handleTemplateCommand(input, ctx))!;
+    return await handleTemplateCommand(input, ctx);
   }
 
   // /help — show help
@@ -247,34 +244,6 @@ export async function handleChatCommand(
     console.log('');
     ctx.rl.prompt();
     return { handled: true };
-  }
-
-  // Extension command fallthrough
-  if (input.startsWith('/')) {
-    const trimmed = input.slice(1).trim();
-    if (trimmed) {
-      const [commandName, ...restParts] = trimmed.split(/\s+/);
-      const extCommand = ctx.extensions.getCommand(commandName);
-      if (extCommand) {
-        try {
-          const result = await extCommand.handler(restParts.join(' '), ctx.buildExtensionContext());
-          if (typeof result === 'string') {
-            return { handled: true, sendMessage: result };
-          } else if (result && typeof result === 'object' && 'send' in result) {
-            return { handled: true, sendMessage: String((result as { send: string }).send) };
-          } else {
-            console.log('');
-            ctx.rl.prompt();
-            return { handled: true };
-          }
-        } catch (err) {
-          console.error(formatError(err instanceof Error ? err.message : String(err)));
-          console.log('');
-          ctx.rl.prompt();
-          return { handled: true };
-        }
-      }
-    }
   }
 
   return { handled: false };

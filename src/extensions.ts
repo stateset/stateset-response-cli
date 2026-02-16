@@ -105,6 +105,14 @@ function isHookNameValid(name: string): boolean {
   return /^[a-z0-9_-]+$/i.test(name);
 }
 
+interface ExtensionTrustPolicy {
+  enforce: boolean;
+  allowed: Set<string>;
+  denied: Set<string>;
+}
+
+const EXTENSION_TRUST_FILES = ['extension-trust.json', 'extensions-trust.json'];
+
 function listExtensionFiles(dir: string): string[] {
   if (!fs.existsSync(dir)) return [];
   let entries: fs.Dirent[] = [];
@@ -136,6 +144,11 @@ export class ExtensionManager {
   private diagnostics: ExtensionDiagnostic[] = [];
   private runtimeDiagnostics: ExtensionDiagnostic[] = [];
   private policyOverrides: Record<string, string> = {};
+  private extensionTrust: ExtensionTrustPolicy = {
+    enforce: false,
+    allowed: new Set(),
+    denied: new Set(),
+  };
 
   async load(cwd: string): Promise<void> {
     this.commands.clear();
@@ -147,6 +160,7 @@ export class ExtensionManager {
     this.diagnostics = [];
     this.runtimeDiagnostics = [];
     this.policyOverrides = loadPolicyOverrides(cwd, this.diagnostics);
+    this.extensionTrust = loadExtensionTrustPolicy(cwd, this.diagnostics);
 
     const globalDir = path.join(getStateSetDir(), 'extensions');
     const projectDir = path.join(cwd, '.stateset', 'extensions');
@@ -154,6 +168,9 @@ export class ExtensionManager {
 
     for (const filePath of files) {
       const extensionName = path.basename(filePath, path.extname(filePath));
+      if (!isExtensionTrusted(extensionName, filePath, this.extensionTrust, this.diagnostics)) {
+        continue;
+      }
       const registeredCommands: ExtensionCommand[] = [];
       const registeredToolHooks: ToolHook[] = [];
       const registeredToolResultHooks: ToolResultHook[] = [];
@@ -382,6 +399,124 @@ function matchPattern(value: string, pattern: string): boolean {
 
 function normalizeTag(tag: string): string {
   return tag.trim().toLowerCase();
+}
+
+function parseCommaSeparatedList(value: string | undefined): Set<string> {
+  if (!value) return new Set();
+  return new Set(
+    value
+      .split(',')
+      .map((entry) => entry.trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
+function parseTrustArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => (typeof entry === 'string' ? entry.trim().toLowerCase() : ''))
+    .filter(Boolean);
+}
+
+function loadExtensionTrustPolicy(
+  cwd: string,
+  diagnostics: ExtensionDiagnostic[],
+): ExtensionTrustPolicy {
+  const policy: ExtensionTrustPolicy = {
+    enforce: false,
+    allowed: new Set(),
+    denied: new Set(),
+  };
+
+  const envEnforce =
+    process.env.STATESET_EXTENSIONS_ENFORCE_TRUST === '1' ||
+    process.env.STATESET_EXTENSIONS_ENFORCE_TRUST?.toLowerCase() === 'true';
+  const envAllow = parseCommaSeparatedList(process.env.STATESET_EXTENSIONS_ALLOW);
+  const envDeny = parseCommaSeparatedList(process.env.STATESET_EXTENSIONS_DENY);
+
+  if (envEnforce || envAllow.size > 0) {
+    policy.enforce = true;
+  }
+
+  for (const name of envAllow) policy.allowed.add(name);
+  for (const name of envDeny) policy.denied.add(name);
+
+  const policyPaths = EXTENSION_TRUST_FILES.flatMap((filename) => [
+    path.join(getStateSetDir(), filename),
+    path.join(cwd, '.stateset', filename),
+  ]);
+
+  for (const filePath of policyPaths) {
+    if (!fs.existsSync(filePath)) continue;
+    try {
+      const content = fs.readFileSync(filePath, 'utf-8');
+      const parsed = JSON.parse(content) as {
+        enforce?: boolean;
+        allow?: unknown;
+        allowed?: unknown;
+        deny?: unknown;
+        denied?: unknown;
+      };
+
+      if (typeof parsed.enforce === 'boolean' && parsed.enforce) {
+        policy.enforce = true;
+      }
+
+      const fileAllowed = parseTrustArray(parsed.allow ?? parsed.allowed);
+      const fileDenied = parseTrustArray(parsed.deny ?? parsed.denied);
+
+      for (const name of fileAllowed) {
+        policy.allowed.add(name);
+      }
+      for (const name of fileDenied) {
+        policy.denied.add(name);
+      }
+
+      if (fileAllowed.length > 0) {
+        policy.enforce = true;
+      }
+    } catch (err) {
+      diagnostics.push({
+        source: filePath,
+        message: `Failed to load extension trust policy: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  }
+
+  return policy;
+}
+
+function isExtensionTrusted(
+  extensionName: string,
+  filePath: string,
+  policy: ExtensionTrustPolicy,
+  diagnostics: ExtensionDiagnostic[],
+): boolean {
+  const normalized = extensionName.toLowerCase();
+  if (policy.denied.has(normalized)) {
+    diagnostics.push({
+      source: filePath,
+      message: `Extension "${extensionName}" blocked by trust policy (denied).`,
+    });
+    return false;
+  }
+  if (!policy.enforce) return true;
+  if (policy.allowed.size === 0) {
+    diagnostics.push({
+      source: filePath,
+      message:
+        'Extension trust policy is enforced, but no allowlist is configured. Configure STATESET_EXTENSIONS_ALLOW.',
+    });
+    return false;
+  }
+  if (!policy.allowed.has(normalized)) {
+    diagnostics.push({
+      source: filePath,
+      message: `Extension "${extensionName}" blocked by trust policy. Add to allowlist.`,
+    });
+    return false;
+  }
+  return true;
 }
 
 function matchesTags(sessionTags: string[], hookTags: string[]): boolean {

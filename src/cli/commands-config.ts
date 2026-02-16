@@ -6,10 +6,7 @@ import { formatError, formatSuccess, formatWarning } from '../utils/display.js';
 import type { ChatContext, CommandResult } from './types.js';
 import { parseToggleValue } from './utils.js';
 
-export async function handleConfigCommand(
-  input: string,
-  ctx: ChatContext,
-): Promise<CommandResult | null> {
+export async function handleConfigCommand(input: string, ctx: ChatContext): Promise<CommandResult> {
   // /apply — toggle write operations
   if (input.startsWith('/apply')) {
     const arg = input.slice('/apply'.length).trim();
@@ -149,5 +146,5 @@ export async function handleConfigCommand(
     return { handled: true };
   }
 
-  return null;
+  return { handled: false };
 }

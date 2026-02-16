@@ -44,8 +44,8 @@ export type ToolAuditEntry = {
   resultExcerpt?: string;
 };
 
-export type CommandResult = { handled: boolean; sendMessage?: string };
-export type CommandHandler = (input: string, ctx: ChatContext) => Promise<CommandResult | null>;
+export type CommandResult = { handled: boolean; sendMessage?: string; needsPrompt?: boolean };
+export type CommandHandler = (input: string, ctx: ChatContext) => Promise<CommandResult>;
 
 export type PermissionDecision = 'allow' | 'deny';
 

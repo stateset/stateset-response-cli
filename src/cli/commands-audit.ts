@@ -7,10 +7,7 @@ import type { ChatContext, CommandResult } from './types.js';
 import { parseToggleValue } from './utils.js';
 import { readToolAudit, getToolAuditPath } from './audit.js';
 
-export async function handleAuditCommand(
-  input: string,
-  ctx: ChatContext,
-): Promise<CommandResult | null> {
+export async function handleAuditCommand(input: string, ctx: ChatContext): Promise<CommandResult> {
   // /audit — toggle or show audit status
   if (
     input.startsWith('/audit') &&
@@ -159,5 +156,5 @@ export async function handleAuditCommand(
     return { handled: true };
   }
 
-  return null;
+  return { handled: false };
 }

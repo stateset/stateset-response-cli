@@ -85,10 +85,10 @@ describe('applyConditionals', () => {
 });
 
 describe('handleTemplateCommand', () => {
-  it('returns null for non-template commands', async () => {
+  it('returns unhandled for non-template commands', async () => {
     const ctx = createMockCtx();
-    expect(await handleTemplateCommand('/help', ctx)).toBeNull();
-    expect(await handleTemplateCommand('/audit on', ctx)).toBeNull();
+    expect(await handleTemplateCommand('/help', ctx)).toEqual({ handled: false });
+    expect(await handleTemplateCommand('/audit on', ctx)).toEqual({ handled: false });
   });
 
   it('/prompts shows empty list', async () => {
