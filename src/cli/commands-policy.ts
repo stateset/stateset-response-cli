@@ -1,10 +1,10 @@
 import chalk from 'chalk';
 import inquirer from 'inquirer';
 import fs from 'node:fs';
-import path from 'node:path';
 import { formatError, formatSuccess, formatWarning, formatTable } from '../utils/display.js';
 import type { ChatContext, CommandResult } from './types.js';
-import { hasCommand, ensureDirExists } from './utils.js';
+import { getStateSetDir } from '../session.js';
+import { hasCommand, ensureDirExists, resolveSafeOutputPath } from './utils.js';
 import {
   writePermissionStore,
   readPolicyOverridesDetailed,
@@ -169,6 +169,7 @@ export async function handlePolicyCommand(input: string, ctx: ChatContext): Prom
     if (action === 'export') {
       const outToken = tokens.find((t) => t.startsWith('out='));
       const outPath = outToken ? outToken.slice('out='.length) : null;
+      const allowUnsafePath = tokens.includes('--unsafe-path');
       const mode = tokens.includes('local')
         ? 'local'
         : tokens.includes('global')
@@ -177,7 +178,13 @@ export async function handlePolicyCommand(input: string, ctx: ChatContext): Prom
       const data = readPolicyOverridesDetailed(ctx.cwd);
       const view = mode === 'local' ? data.local : mode === 'global' ? data.global : data.merged;
       const defaultPath = mode === 'global' ? data.globalPath : data.localPath;
-      const resolved = outPath ? path.resolve(outPath) : defaultPath;
+      const resolved = outPath
+        ? resolveSafeOutputPath(outPath, {
+            label: 'Policy export target',
+            allowOutside: allowUnsafePath,
+            allowedRoots: [ctx.cwd, getStateSetDir()],
+          })
+        : defaultPath;
       try {
         ensureDirExists(resolved);
         fs.writeFileSync(resolved, JSON.stringify(view, null, 2), 'utf-8');
@@ -258,7 +265,7 @@ export async function handlePolicyCommand(input: string, ctx: ChatContext): Prom
       return { handled: true };
     }
 
-    console.log(formatWarning('Usage: /policy [list|set|unset|clear]'));
+    console.log(formatWarning('Usage: /policy [list|set|unset|clear|export|import]'));
     console.log('');
     ctx.rl.prompt();
     return { handled: true };

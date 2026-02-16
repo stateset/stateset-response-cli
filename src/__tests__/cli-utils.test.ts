@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   parseToggleValue,
   extractInlineFlags,
@@ -6,6 +9,7 @@ import {
   formatTimestamp,
   readBooleanEnv,
   hasCommand,
+  resolveSafeOutputPath,
 } from '../cli/utils.js';
 
 describe('parseToggleValue', () => {
@@ -148,5 +152,79 @@ describe('hasCommand', () => {
   it('ignores collisions with command extensions', () => {
     expect(hasCommand('/skill-clear', '/skill')).toBe(false);
     expect(hasCommand('/prompt-validate', '/prompt')).toBe(false);
+  });
+});
+
+describe('resolveSafeOutputPath', () => {
+  it('allows paths inside allowed root', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'csr-output-'));
+    const target = path.join(root, 'subdir', 'session.md');
+
+    try {
+      const resolved = resolveSafeOutputPath(target, {
+        label: 'Test output',
+        allowedRoots: [root],
+      });
+      expect(resolved).toBe(path.resolve(target));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects path outside allowed roots', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'csr-output-'));
+    const outside = path.join(root, '..', `${path.basename(root)}-outside`);
+
+    try {
+      expect(() =>
+        resolveSafeOutputPath(outside, { allowedRoots: [root], label: 'Test output' }),
+      ).toThrow(/must be within/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects existing directory output path', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'csr-output-'));
+    const target = path.join(root, 'existing-dir');
+    fs.mkdirSync(target);
+
+    try {
+      expect(() =>
+        resolveSafeOutputPath(target, { allowedRoots: [root], label: 'Test output' }),
+      ).toThrow(/directory/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('rejects existing symlink output path', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'csr-output-'));
+    const realFile = path.join(root, 'real.txt');
+    const linkFile = path.join(root, 'link.txt');
+    fs.writeFileSync(realFile, 'ok');
+
+    try {
+      fs.symlinkSync(realFile, linkFile);
+      expect(() =>
+        resolveSafeOutputPath(linkFile, { allowedRoots: [root], label: 'Test output' }),
+      ).toThrow(/symlink/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('allows paths outside allowed roots when allowOutside is true', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'csr-output-'));
+    const outside = path.join(root, '..', `${path.basename(root)}-outside`);
+
+    const resolved = resolveSafeOutputPath(outside, {
+      label: 'Test output',
+      allowedRoots: [root],
+      allowOutside: true,
+    });
+
+    expect(resolved).toBe(path.resolve(outside));
   });
 });

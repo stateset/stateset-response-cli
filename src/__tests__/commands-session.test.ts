@@ -26,11 +26,13 @@ const mockEntries = [
   { role: 'assistant', content: 'hi there', ts: '2025-01-01T00:01:00Z' },
   { role: 'user', content: 'search target text', ts: '2025-01-02T00:00:00Z' },
 ];
+const mockWriteFileSync = vi.fn();
 
 vi.mock('../session.js', () => ({
   sanitizeSessionId: vi.fn((id: string) => id.replace(/[^a-zA-Z0-9_-]/g, '')),
   getSessionsDir: vi.fn(() => '/tmp/sessions'),
   getSessionDir: vi.fn((id: string) => `/tmp/sessions/${id}`),
+  getStateSetDir: vi.fn(() => '/tmp/stateset'),
 }));
 
 vi.mock('../cli/session-meta.js', () => ({
@@ -65,6 +67,7 @@ vi.mock('node:fs', async () => {
       existsSync: vi.fn(() => true),
       renameSync: vi.fn(),
       rmSync: vi.fn(),
+      writeFileSync: mockWriteFileSync,
     },
   };
 });
@@ -394,5 +397,37 @@ describe('handleSessionCommand', () => {
     const result = await handleSessionCommand('/rename test-session', ctx);
     expect(result).toBe(true);
     expect(ctx.switchSession).not.toHaveBeenCalled();
+  });
+
+  // /session-meta
+  it('/session-meta rejects unsafe output path by default', async () => {
+    const ctx = createMockCtx({ cwd: '/tmp/project' });
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const result = await handleSessionCommand(
+      '/session-meta json out=/tmp/unsafe-session-meta.md',
+      ctx,
+    );
+
+    expect(result).toBe(true);
+    expect(mockWriteFileSync).not.toHaveBeenCalled();
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) => typeof line === 'string' && line.includes('must be within'),
+      ),
+    ).toBe(true);
+  });
+
+  it('/session-meta allows unsafe output path with --unsafe-path', async () => {
+    const ctx = createMockCtx({ cwd: '/tmp/project' });
+    const result = await handleSessionCommand(
+      '/session-meta json out=/tmp/session-meta-unsafe.md --unsafe-path',
+      ctx,
+    );
+
+    expect(result).toBe(true);
+    expect(mockWriteFileSync).toHaveBeenCalled();
+    const [target, payload] = mockWriteFileSync.mock.calls[0];
+    expect(target).toBe('/tmp/session-meta-unsafe.md');
+    expect(typeof payload).toBe('string');
   });
 });

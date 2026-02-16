@@ -2,11 +2,11 @@ import chalk from 'chalk';
 import inquirer from 'inquirer';
 import fs from 'node:fs';
 import path from 'node:path';
-import { sanitizeSessionId } from '../session.js';
+import { sanitizeSessionId, getStateSetDir } from '../session.js';
 import { getSessionExportPath, resolveExportFilePath } from '../utils/session-exports.js';
 import { formatSuccess, formatWarning, formatError, formatTable } from '../utils/display.js';
 import type { ChatContext } from './types.js';
-import { formatTimestamp, ensureDirExists, hasCommand } from './utils.js';
+import { formatTimestamp, ensureDirExists, hasCommand, resolveSafeOutputPath } from './utils.js';
 import {
   readSessionEntries,
   exportSessionToMarkdown,
@@ -232,7 +232,9 @@ export async function handleExportCommand(input: string, ctx: ChatContext): Prom
 
   // /export — export session messages
   if (hasCommand(input, '/export')) {
-    const tokens = input.split(/\s+/).slice(1);
+    const rawTokens = input.split(/\s+/).slice(1);
+    const tokens = rawTokens.filter((token) => !token.startsWith('--'));
+    const allowUnsafePath = rawTokens.includes('--unsafe-path');
     const formats = new Set(['md', 'json', 'jsonl']);
     let targetSession = ctx.sessionId;
     let format = 'md';
@@ -267,19 +269,26 @@ export async function handleExportCommand(input: string, ctx: ChatContext): Prom
     const defaultName = `session-${targetSession}-${timestamp}.${defaultExt}`;
     const defaultDir = getSessionExportPath(targetSession);
     const resolvedPath = outPath ? path.resolve(outPath) : path.join(defaultDir, defaultName);
+    const finalOutputPath = outPath
+      ? resolveSafeOutputPath(outPath, {
+          label: 'Export output',
+          allowOutside: allowUnsafePath,
+          allowedRoots: [defaultDir, ctx.cwd, getStateSetDir()],
+        })
+      : resolvedPath;
 
     try {
-      ensureDirExists(resolvedPath);
+      ensureDirExists(finalOutputPath);
       if (format === 'jsonl') {
         const lines = entries.map((entry) => JSON.stringify(entry));
-        fs.writeFileSync(resolvedPath, lines.join('\n') + '\n', 'utf-8');
+        fs.writeFileSync(finalOutputPath, lines.join('\n') + '\n', 'utf-8');
       } else if (format === 'json') {
-        fs.writeFileSync(resolvedPath, JSON.stringify(entries, null, 2), 'utf-8');
+        fs.writeFileSync(finalOutputPath, JSON.stringify(entries, null, 2), 'utf-8');
       } else {
         const markdown = exportSessionToMarkdown(targetSession, entries);
-        fs.writeFileSync(resolvedPath, markdown, 'utf-8');
+        fs.writeFileSync(finalOutputPath, markdown, 'utf-8');
       }
-      console.log(formatSuccess(`Exported ${entries.length} messages to ${resolvedPath}`));
+      console.log(formatSuccess(`Exported ${entries.length} messages to ${finalOutputPath}`));
     } catch (err) {
       console.error(formatError(err instanceof Error ? err.message : String(err)));
     }

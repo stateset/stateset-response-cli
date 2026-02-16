@@ -278,6 +278,24 @@ describe('routeSlashCommand', () => {
     expect(result).toEqual({ handled: true });
   });
 
+  it('routes /session-meta through session handler and not export', async () => {
+    mockSession.mockResolvedValue(true);
+    const result = await routeSlashCommand('/session-meta json out=/tmp/meta.json', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(mockSession).toHaveBeenCalledWith('/session-meta json out=/tmp/meta.json', ctx);
+    expect(mockExport).not.toHaveBeenCalled();
+  });
+
+  it('routes /policy commands through session/chat stage before export', async () => {
+    mockSession.mockResolvedValue(true);
+    const result = await routeSlashCommand('/policy export out=/tmp/policy.json', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(mockSession).toHaveBeenCalled();
+    expect(mockExport).not.toHaveBeenCalled();
+  });
+
   it('returns handled-with-prompt when chat handler throws', async () => {
     const err = new Error('chat error');
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});

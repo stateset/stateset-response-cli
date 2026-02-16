@@ -9,6 +9,41 @@
 
 import { logger } from './logger.js';
 
+let isExiting = false;
+
+const onUncaughtException = (error: unknown) => {
+  const ssError = toStateSetError(error);
+  const userMsg = getUserMessage(ssError);
+  shutdownWithError(`Fatal error: ${userMsg}`);
+};
+
+const onUnhandledRejection = (reason: unknown) => {
+  const userMsg = getUserMessage(toStateSetError(reason));
+  shutdownWithError(`Unhandled error: ${userMsg}`);
+};
+
+function ensureProcessHandler(
+  event: 'uncaughtException' | 'unhandledRejection',
+  handler: (...args: unknown[]) => void,
+): void {
+  const listeners = process.listeners(event);
+  if (!listeners.includes(handler)) {
+    process.on(event, handler as never);
+  }
+}
+
+function shutdownWithError(message: string): void {
+  logger.error(message, { exitReason: 'fatal' });
+  if (isExiting) {
+    return;
+  }
+  isExiting = true;
+  process.exitCode = 1;
+  setImmediate(() => {
+    process.exit(1);
+  });
+}
+
 /**
  * Base error class for all StateSet errors
  */
@@ -251,18 +286,8 @@ export function toStateSetError(error: unknown): StateSetError {
  * and unhandled promise rejections. Call once at startup.
  */
 export function installGlobalErrorHandlers(): void {
-  process.on('uncaughtException', (error: unknown) => {
-    const ssError = toStateSetError(error);
-    const userMsg = getUserMessage(ssError);
-    logger.error('Fatal error', { message: userMsg });
-    process.exitCode = 1;
-  });
-
-  process.on('unhandledRejection', (reason: unknown) => {
-    const userMsg = getUserMessage(toStateSetError(reason));
-    logger.error('Unhandled error', { message: userMsg });
-    process.exitCode = 1;
-  });
+  ensureProcessHandler('uncaughtException', onUncaughtException);
+  ensureProcessHandler('unhandledRejection', onUnhandledRejection);
 }
 
 /**

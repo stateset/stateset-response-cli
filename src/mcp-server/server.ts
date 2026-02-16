@@ -45,9 +45,17 @@ import { registerZendeskTools } from './tools/zendesk.js';
 
 export function createServer(): McpServer {
   const { orgId, config: orgConfig } = getCurrentOrg();
-  const auth: GraphQLAuth = orgConfig.cliToken
-    ? { type: 'cli_token', token: orgConfig.cliToken }
-    : { type: 'admin_secret', adminSecret: orgConfig.adminSecret || '' };
+  const cliToken = orgConfig.cliToken?.trim();
+  const adminSecret = orgConfig.adminSecret?.trim();
+  if (!cliToken && !adminSecret) {
+    throw new Error(
+      `Organization "${orgId}" has missing credentials. Run "response auth login" to authenticate.`,
+    );
+  }
+
+  const auth: GraphQLAuth = cliToken
+    ? { type: 'cli_token', token: cliToken }
+    : { type: 'admin_secret', adminSecret: adminSecret! };
   const graphqlClient = createGraphQLClient(orgConfig.graphqlEndpoint, auth, orgId);
 
   const server = new McpServer(

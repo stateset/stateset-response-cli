@@ -2,6 +2,41 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { formatError } from '../utils/display.js';
 import type { InlineFlags } from './types.js';
+import { getStateSetDir } from '../session.js';
+
+export interface SafeOutputPathOptions {
+  allowedRoots?: string[];
+  allowOutside?: boolean;
+  label?: string;
+}
+
+function safeRealpath(value: string): string | null {
+  try {
+    return fs.realpathSync(value);
+  } catch {
+    return null;
+  }
+}
+
+function isPathWithin(root: string, candidate: string): boolean {
+  const normalizedRoot = path.resolve(root);
+  const normalizedCandidate = path.resolve(candidate);
+  const relative = path.relative(normalizedRoot, normalizedCandidate);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function getExistingAnchorPath(candidate: string): string | null {
+  let candidatePath = path.resolve(candidate);
+  while (true) {
+    const parent = path.dirname(candidatePath);
+    if (parent === candidatePath) return candidatePath;
+
+    if (fs.existsSync(candidatePath)) {
+      return candidatePath;
+    }
+    candidatePath = parent;
+  }
+}
 
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -63,6 +98,61 @@ export function ensureDirExists(filePath: string): void {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
+}
+
+export function resolveSafeOutputPath(
+  outputPath: string,
+  options: SafeOutputPathOptions = {},
+): string {
+  const trimmed = outputPath.trim();
+  if (!trimmed) {
+    throw new Error('Output path is required.');
+  }
+
+  const resolved = path.resolve(trimmed);
+  const canInspectPath = typeof fs.realpathSync === 'function';
+  const roots = (options.allowedRoots ?? [process.cwd(), getStateSetDir()]).map((root) =>
+    path.resolve(root),
+  );
+  const normalizedRoots = roots.map((root) => (canInspectPath ? safeRealpath(root) || root : root));
+
+  if (fs.existsSync(resolved)) {
+    const stats = fs.lstatSync(resolved);
+    if (stats.isDirectory()) {
+      throw new Error(`Output path is a directory: ${resolved}`);
+    }
+    if (stats.isSymbolicLink()) {
+      throw new Error(`Output path must not be a symlink: ${resolved}`);
+    }
+  }
+
+  if (!options.allowOutside) {
+    const existingAnchor = getExistingAnchorPath(resolved);
+    if (!existingAnchor) {
+      throw new Error(
+        `${options.label ?? 'Output path'} could not be validated against safe roots: ${resolved}`,
+      );
+    }
+
+    const anchorReal = canInspectPath ? safeRealpath(existingAnchor) : existingAnchor;
+    if (!anchorReal) {
+      throw new Error(
+        `${options.label ?? 'Output path'} could not be validated against safe roots: ${resolved}`,
+      );
+    }
+
+    const suffix = path.relative(existingAnchor, resolved);
+    const resolvedForContainment = path.resolve(anchorReal, suffix);
+    const allowed = normalizedRoots.some((root) => isPathWithin(root, resolvedForContainment));
+    const rootsText = normalizedRoots.map((root) => path.resolve(root)).join(', ');
+    if (!allowed) {
+      throw new Error(
+        `${options.label ?? 'Output path'} must be within [${rootsText}] by default. Use --unsafe-path to override.`,
+      );
+    }
+  }
+
+  return resolved;
 }
 
 export function hasCommand(input: string, command: string): boolean {

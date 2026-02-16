@@ -49,6 +49,8 @@ export function parsePolicyFile(filePath: string): { toolHooks: Record<string, s
   }
 }
 
+const MAX_POLICY_FILE_SIZE_BYTES = 1_048_576;
+
 export function readPolicyOverridesDetailed(cwd: string): {
   localPath: string;
   globalPath: string;
@@ -82,6 +84,17 @@ export function readPolicyFile(pathInput: string): { toolHooks: Record<string, s
   const resolved = path.resolve(pathInput);
   if (!fs.existsSync(resolved)) {
     throw new Error(`Policy file not found: ${resolved}`);
+  }
+  const stats = fs.lstatSync(resolved);
+  if (stats.isSymbolicLink()) {
+    throw new Error(`Refusing to read policy from symlink: ${resolved}`);
+  }
+  if (!stats.isFile()) {
+    throw new Error(`Policy import path must be a file: ${resolved}`);
+  }
+  const fileStats = fs.statSync(resolved);
+  if (fileStats.size > MAX_POLICY_FILE_SIZE_BYTES) {
+    throw new Error(`Policy file too large (${fileStats.size} bytes): ${resolved}`);
   }
   return parsePolicyFile(resolved);
 }

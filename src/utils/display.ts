@@ -236,8 +236,16 @@ export function printHelp(): void {
     chalk.cyan('    /permissions [list|clear]') + chalk.gray('List or clear stored permissions'),
   );
   console.log(
-    chalk.cyan('    /policy list|set|unset|clear|edit|init|import|export') +
+    chalk.cyan('    /policy list|set|unset|clear|edit|init|import') +
       chalk.gray('Manage policy overrides'),
+  );
+  console.log(
+    chalk.cyan('    /policy export [local|global] [out=path] [--unsafe-path]') +
+      chalk.gray('Export policy overrides'),
+  );
+  console.log(
+    chalk.cyan('    /policy import <path> [merge|replace]') +
+      chalk.gray('Import policy overrides from JSON'),
   );
   console.log('');
 
@@ -269,14 +277,14 @@ export function printHelp(): void {
     ) + chalk.gray('Search session transcripts (scans up to 5000 entries)'),
   );
   console.log(
-    chalk.cyan('    /session-meta [session] [json|md] [out=path]') +
+    chalk.cyan('    /session-meta [session] [json|md] [out=path] [--unsafe-path]') +
       chalk.gray('Show or export session metadata'),
   );
   console.log('');
 
   console.log(chalk.bold('  Exports'));
   console.log(
-    chalk.cyan('    /export [session] [md|json|jsonl] [path]') +
+    chalk.cyan('    /export [session] [md|json|jsonl] [path] [--unsafe-path]') +
       chalk.gray('Export session to markdown/json/jsonl'),
   );
   console.log(

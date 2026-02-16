@@ -110,15 +110,18 @@ export function loadConfig(): StateSetConfig {
 
   // Decrypt secrets on load
   if (config.anthropicApiKey) {
-    config.anthropicApiKey = decryptSecret(config.anthropicApiKey);
+    const decrypted = decryptSecret(config.anthropicApiKey).trim();
+    config.anthropicApiKey = decrypted.length > 0 ? decrypted : undefined;
   }
   for (const orgId of Object.keys(config.organizations)) {
     const org = config.organizations[orgId];
     if (org.cliToken) {
-      org.cliToken = decryptSecret(org.cliToken);
+      const decrypted = decryptSecret(org.cliToken).trim();
+      org.cliToken = decrypted.length > 0 ? decrypted : undefined;
     }
     if (org.adminSecret) {
-      org.adminSecret = decryptSecret(org.adminSecret);
+      const decrypted = decryptSecret(org.adminSecret).trim();
+      org.adminSecret = decrypted.length > 0 ? decrypted : undefined;
     }
   }
 
@@ -175,7 +178,11 @@ export function getCurrentOrg(): { orgId: string; config: OrgConfig } {
       `Organization "${cfg.currentOrg}" not found in config. Run "response auth login" or "response auth switch <org-id>".`,
     );
   }
-  if (!orgConfig.cliToken && !orgConfig.adminSecret) {
+  const hasCliToken =
+    typeof orgConfig.cliToken === 'string' && orgConfig.cliToken.trim().length > 0;
+  const hasAdminSecret =
+    typeof orgConfig.adminSecret === 'string' && orgConfig.adminSecret.trim().length > 0;
+  if (!hasCliToken && !hasAdminSecret) {
     throw new Error(
       `Organization "${cfg.currentOrg}" is missing credentials. Run "response auth login" to set up your credentials.`,
     );

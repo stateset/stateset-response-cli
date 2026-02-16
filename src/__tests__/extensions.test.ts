@@ -201,4 +201,43 @@ describe('extensions', () => {
       expect(loaded).toEqual(['envoverride', 'fileonly'].sort());
     });
   });
+
+  it('rejects extensions with unsafe filenames', async () => {
+    const cwd = setupTempExtensions({
+      'bad.name': `
+        export default function register(api) {
+          api.registerCommand({ name: 'ok', handler: () => 'ok' });
+        }
+      `,
+    });
+
+    const manager = new ExtensionManager();
+    await manager.load(cwd);
+    const diagnostics = manager.listDiagnostics().map((d) => d.message);
+
+    expect(manager.listExtensions()).toEqual([]);
+    expect(
+      diagnostics.some((message) => message.includes('Invalid extension filename "bad.name.js".')),
+    ).toBe(true);
+  });
+
+  it('rejects oversized extension files', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'stateset-ext-large-'));
+    const extensionsDir = path.join(root, '.stateset', 'extensions');
+    fs.mkdirSync(extensionsDir, { recursive: true });
+    const filePath = path.join(extensionsDir, 'too-large.js');
+    fs.writeFileSync(filePath, 'x'.repeat(1_048_577));
+    trackedTempDirs.push(root);
+
+    const manager = new ExtensionManager();
+    await manager.load(root);
+    const diagnostics = manager.listDiagnostics().map((d) => d.message);
+
+    expect(manager.listExtensions()).toEqual([]);
+    expect(
+      diagnostics.some((message) =>
+        message.includes('Skipping extension file too large: too-large.js (>1MB).'),
+      ),
+    ).toBe(true);
+  });
 });

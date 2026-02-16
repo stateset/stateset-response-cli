@@ -105,11 +105,17 @@ function isHookNameValid(name: string): boolean {
   return /^[a-z0-9_-]+$/i.test(name);
 }
 
+function isExtensionNameValid(name: string): boolean {
+  return /^[a-z0-9_-]+$/i.test(name);
+}
+
 interface ExtensionTrustPolicy {
   enforce: boolean;
   allowed: Set<string>;
   denied: Set<string>;
 }
+
+const MAX_EXTENSION_FILE_SIZE_BYTES = 1_048_576;
 
 const EXTENSION_TRUST_FILES = ['extension-trust.json', 'extensions-trust.json'];
 
@@ -123,7 +129,7 @@ function listExtensionFiles(dir: string): string[] {
   }
 
   return entries
-    .filter((entry) => entry.isFile())
+    .filter((entry) => entry.isFile() && !entry.isSymbolicLink())
     .map((entry) => entry.name)
     .filter((name) => !name.startsWith('.'))
     .filter((name) => name.endsWith('.js') || name.endsWith('.mjs') || name.endsWith('.cjs'))
@@ -174,6 +180,16 @@ export class ExtensionManager {
 
     for (const filePath of files) {
       const extensionName = path.basename(filePath, path.extname(filePath));
+      if (!isExtensionNameValid(extensionName)) {
+        this.diagnostics.push({
+          source: filePath,
+          message: `Invalid extension filename "${path.basename(filePath)}".`,
+        });
+        continue;
+      }
+      if (!isExtensionFileSafe(filePath, this.diagnostics)) {
+        continue;
+      }
       if (!isExtensionTrusted(extensionName, filePath, this.extensionTrust, this.diagnostics)) {
         continue;
       }
@@ -394,6 +410,35 @@ export class ExtensionManager {
 
 function matchesToolList(name: string, patterns: string[]): boolean {
   return patterns.some((pattern) => matchPattern(name, pattern));
+}
+
+function isExtensionFileSafe(filePath: string, diagnostics: ExtensionDiagnostic[]): boolean {
+  let stats: fs.Stats;
+  try {
+    stats = fs.lstatSync(filePath);
+  } catch (err) {
+    diagnostics.push({
+      source: filePath,
+      message: `Failed to inspect extension file: ${err instanceof Error ? err.message : String(err)}`,
+    });
+    return false;
+  }
+
+  if (!stats.isFile()) {
+    diagnostics.push({
+      source: filePath,
+      message: `Skipping extension file that is not a regular file: ${path.basename(filePath)}`,
+    });
+    return false;
+  }
+  if (stats.size > MAX_EXTENSION_FILE_SIZE_BYTES) {
+    diagnostics.push({
+      source: filePath,
+      message: `Skipping extension file too large: ${path.basename(filePath)} (>1MB).`,
+    });
+    return false;
+  }
+  return true;
 }
 
 function matchPattern(value: string, pattern: string): boolean {

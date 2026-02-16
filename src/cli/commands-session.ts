@@ -2,11 +2,17 @@ import chalk from 'chalk';
 import inquirer from 'inquirer';
 import fs from 'node:fs';
 import path from 'node:path';
-import { sanitizeSessionId, getSessionsDir, getSessionDir } from '../session.js';
+import { sanitizeSessionId, getSessionsDir, getSessionDir, getStateSetDir } from '../session.js';
 import { loadMemory } from '../memory.js';
 import { formatSuccess, formatWarning, formatError, formatTable } from '../utils/display.js';
 import type { ChatContext } from './types.js';
-import { formatTimestamp, normalizeTag, ensureDirExists, hasCommand } from './utils.js';
+import {
+  formatTimestamp,
+  normalizeTag,
+  ensureDirExists,
+  hasCommand,
+  resolveSafeOutputPath,
+} from './utils.js';
 import {
   readSessionMeta,
   writeSessionMeta,
@@ -20,6 +26,7 @@ const MAX_SEARCH_LIMIT = 100;
 const MAX_SEARCH_ENTRIES = 5_000;
 const MAX_REGEX_PATTERN_LENGTH = 160;
 const MAX_REGEX_CONTENT_LENGTH = 12_000;
+const MAX_SEARCH_RUNTIME_MS = 2_000;
 function isUnsafeRegexPattern(pattern: string): string | null {
   if (pattern.length > MAX_REGEX_PATTERN_LENGTH) {
     return `Regex pattern exceeds ${MAX_REGEX_PATTERN_LENGTH} characters`;
@@ -427,6 +434,12 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
       }
       if (token.startsWith('regex=')) {
         const raw = token.slice('regex='.length);
+        if (!raw) {
+          console.log(formatWarning('Invalid regex: pattern is required for regex=.'));
+          console.log('');
+          ctx.rl.prompt();
+          return true;
+        }
         const match = raw.match(/^\/(.+)\/([gimsuy]*)$/);
         if (match) {
           regexPattern = match[1];
@@ -438,6 +451,12 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
         continue;
       }
       if (token.startsWith('regexi=')) {
+        if (token.length <= 'regexi='.length) {
+          console.log(formatWarning('Invalid regex: pattern is required for regexi=.'));
+          console.log('');
+          ctx.rl.prompt();
+          return true;
+        }
         regexPattern = token.slice('regexi='.length);
         regexFlags = 'i';
         continue;
@@ -536,9 +555,15 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
     let scannedEntries = 0;
     let scanLimitReached = false;
     let outputLimitReached = false;
-    for (const session of sessions) {
+    let scanTimedOut = false;
+    const scanDeadline = Date.now() + MAX_SEARCH_RUNTIME_MS;
+    searchLoop: for (const session of sessions) {
       const entries = readSessionEntries(session.id);
       for (const entry of entries) {
+        if (Date.now() > scanDeadline) {
+          scanTimedOut = true;
+          break searchLoop;
+        }
         scannedEntries += 1;
         if (scannedEntries > MAX_SEARCH_ENTRIES) {
           scanLimitReached = true;
@@ -593,6 +618,9 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
     if (scanLimitReached) {
       console.log(formatWarning(`Search stopped after ${MAX_SEARCH_ENTRIES} scanned entries.`));
       console.log(formatWarning('Use narrower filters to inspect additional matches.'));
+    } else if (scanTimedOut) {
+      console.log(formatWarning(`Search timed out after ${MAX_SEARCH_RUNTIME_MS}ms.`));
+      console.log(formatWarning('Use narrower filters to avoid large scans.'));
     } else if (outputLimitReached) {
       console.log(formatWarning(`Result limit reached after ${results.length} matches.`));
       console.log(
@@ -628,8 +656,10 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
     let target = ctx.sessionId;
     let format: 'text' | 'json' | 'md' = 'text';
     let outPath: string | null = null;
+    const allowUnsafePath = tokens.includes('--unsafe-path');
+    const args = tokens.filter((token) => !token.startsWith('--'));
 
-    for (const token of tokens) {
+    for (const token of args) {
       if (!token) continue;
       if (token === 'json') {
         format = 'json';
@@ -707,7 +737,11 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
     }
 
     if (outPath) {
-      const resolved = path.resolve(outPath);
+      const resolved = resolveSafeOutputPath(outPath, {
+        label: 'Session meta output',
+        allowOutside: allowUnsafePath,
+        allowedRoots: [ctx.cwd, getStateSetDir()],
+      });
       try {
         ensureDirExists(resolved);
         fs.writeFileSync(resolved, outputText, 'utf-8');
