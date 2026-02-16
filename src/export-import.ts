@@ -190,10 +190,35 @@ export interface ImportResult {
   datasets: number;
   datasetEntries: number;
   agentSettings: number;
+  skipped: number;
+  failures: ImportFailure[];
+  sourceOrgId: string;
+}
+
+export interface ImportFailure {
+  entity: string;
+  index: number;
+  sourceId: string | null;
+  reason: string;
+}
+
+export interface ImportOptions {
+  dryRun?: boolean;
+  strict?: boolean;
 }
 
 /** Imports org resources from a previously exported JSON file, upserting into the current org. */
-export async function importOrg(inputPath: string): Promise<ImportResult> {
+export async function importOrg(
+  inputPath: string,
+  options: ImportOptions = {},
+): Promise<ImportResult> {
+  const normalizedOptions: ImportOptions = {
+    dryRun: false,
+    strict: false,
+    ...options,
+  };
+  const maxFailureReport = 25;
+
   let raw: string;
   try {
     raw = fs.readFileSync(inputPath, 'utf-8');
@@ -228,6 +253,9 @@ export async function importOrg(inputPath: string): Promise<ImportResult> {
     datasets: 0,
     datasetEntries: 0,
     agentSettings: 0,
+    skipped: 0,
+    failures: [],
+    sourceOrgId: data.orgId,
   };
 
   // Helper: strip read-only fields and remap org_id
@@ -244,249 +272,401 @@ export async function importOrg(inputPath: string): Promise<ImportResult> {
     return out;
   }
 
+  const recordFailure = (entity: string, index: number, source: unknown, error: unknown): void => {
+    const sourceId =
+      source && typeof source === 'object' && !Array.isArray(source) && 'id' in source
+        ? typeof source.id === 'string'
+          ? source.id
+          : null
+        : null;
+    const reason = error instanceof Error ? error.message : String(error);
+    result.skipped += 1;
+    if (result.failures.length >= maxFailureReport) return;
+    result.failures.push({ entity, index, sourceId, reason });
+  };
+
+  const runQuery = async <T>(
+    fn: () => Promise<T>,
+  ): Promise<{ ok: true; data: T } | { ok: false; error: unknown }> => {
+    if (normalizedOptions.dryRun) {
+      return { ok: true, data: undefined as unknown as T };
+    }
+    try {
+      return { ok: true, data: await fn() };
+    } catch (error) {
+      return { ok: false, error };
+    }
+  };
+
+  const toNumber = (value: unknown): number => {
+    const parsed = typeof value === 'number' ? value : Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  const asArray = <T>(label: string, value: unknown): T[] => {
+    if (value == null) return [];
+    if (Array.isArray(value)) {
+      return value as T[];
+    }
+    throw new Error(`Invalid export format: "${label}" must be an array.`);
+  };
+
+  const asObject = (label: string, value: unknown): Record<string, unknown> => {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      return value as Record<string, unknown>;
+    }
+    throw new Error(`Invalid export format: "${label}" must be an object.`);
+  };
+
   // Agents
-  if (data.agents?.length) {
-    const objects = data.agents.map((a) => prepObj(a as Record<string, unknown>));
+  const agents = asArray<unknown>('agents', data.agents);
+  if (agents.length) {
+    const objects = agents.map((a, index) => prepObj(asObject(`agents[${index}]`, a)));
     const mutation = `mutation ($objects: [agents_insert_input!]!) {
       insert_agents(objects: $objects, on_conflict: { constraint: agents_pkey, update_columns: [name, type, role, goal, backstory, instructions, voice_model, voice_model_id, voice_model_provider, status, metadata, updated_at] }) {
         affected_rows
       }
     }`;
-    try {
-      const res = await executeQuery<{ insert_agents: { affected_rows: number } }>(
-        client,
-        mutation,
-        { objects },
-      );
-      result.agents = res.insert_agents.affected_rows;
-    } catch {
-      // Fallback: insert one by one
-      for (const obj of objects) {
-        try {
-          await executeQuery(
-            client,
-            `mutation ($object: agents_insert_input!) { insert_agents(objects: [$object]) { affected_rows } }`,
-            { object: obj },
-          );
-          result.agents++;
-        } catch {
-          /* skip duplicates */
+    if (normalizedOptions.dryRun) {
+      result.agents += objects.length;
+    } else {
+      const batch = await runQuery(async () => {
+        const batchResult = await executeQuery<{ insert_agents: { affected_rows: number } }>(
+          client,
+          mutation,
+          { objects },
+        );
+        return batchResult.insert_agents.affected_rows;
+      });
+      if (batch.ok) {
+        result.agents += toNumber(batch.data);
+      } else {
+        for (const [i, obj] of objects.entries()) {
+          const item = await runQuery(async () => {
+            const itemResult = await executeQuery(
+              client,
+              `mutation ($object: agents_insert_input!) { insert_agents(objects: [$object]) { affected_rows } }`,
+              { object: obj },
+            );
+            return itemResult;
+          });
+          if (item.ok) {
+            result.agents++;
+          } else {
+            recordFailure('agents', i, obj, item.error);
+          }
         }
       }
     }
   }
 
   // Rules
-  if (data.rules?.length) {
-    const objects = data.rules.map((r) => prepObj(r as Record<string, unknown>));
-    try {
-      const res = await executeQuery<{ insert_rules: { affected_rows: number } }>(
-        client,
-        `mutation ($objects: [rules_insert_input!]!) { insert_rules(objects: $objects) { affected_rows } }`,
-        { objects },
-      );
-      result.rules = res.insert_rules.affected_rows;
-    } catch {
-      for (const obj of objects) {
-        try {
-          await executeQuery(
-            client,
-            `mutation ($object: rules_insert_input!) { insert_rules(objects: [$object]) { affected_rows } }`,
-            { object: obj },
-          );
-          result.rules++;
-        } catch {
-          /* skip */
+  const rules = asArray<unknown>('rules', data.rules);
+  if (rules.length) {
+    const objects = rules.map((r, index) => prepObj(asObject(`rules[${index}]`, r)));
+    if (normalizedOptions.dryRun) {
+      result.rules += objects.length;
+    } else {
+      const batch = await runQuery(async () => {
+        const batchResult = await executeQuery<{ insert_rules: { affected_rows: number } }>(
+          client,
+          `mutation ($objects: [rules_insert_input!]!) { insert_rules(objects: $objects) { affected_rows } }`,
+          { objects },
+        );
+        return batchResult.insert_rules.affected_rows;
+      });
+      if (batch.ok) {
+        result.rules += toNumber(batch.data);
+      } else {
+        for (const [i, obj] of objects.entries()) {
+          const item = await runQuery(async () => {
+            const itemResult = await executeQuery(
+              client,
+              `mutation ($object: rules_insert_input!) { insert_rules(objects: [$object]) { affected_rows } }`,
+              { object: obj },
+            );
+            return itemResult;
+          });
+          if (item.ok) {
+            result.rules++;
+          } else {
+            recordFailure('rules', i, obj, item.error);
+          }
         }
       }
     }
   }
 
   // Skills
-  if (data.skills?.length) {
-    const objects = data.skills.map((s) => prepObj(s as Record<string, unknown>));
-    try {
-      const res = await executeQuery<{ insert_skills: { affected_rows: number } }>(
-        client,
-        `mutation ($objects: [skills_insert_input!]!) { insert_skills(objects: $objects) { affected_rows } }`,
-        { objects },
-      );
-      result.skills = res.insert_skills.affected_rows;
-    } catch {
-      for (const obj of objects) {
-        try {
-          await executeQuery(
-            client,
-            `mutation ($object: skills_insert_input!) { insert_skills(objects: [$object]) { affected_rows } }`,
-            { object: obj },
-          );
-          result.skills++;
-        } catch {
-          /* skip */
+  const skills = asArray<unknown>('skills', data.skills);
+  if (skills.length) {
+    const objects = skills.map((s, index) => prepObj(asObject(`skills[${index}]`, s)));
+    if (normalizedOptions.dryRun) {
+      result.skills += objects.length;
+    } else {
+      const batch = await runQuery(async () => {
+        const batchResult = await executeQuery<{ insert_skills: { affected_rows: number } }>(
+          client,
+          `mutation ($objects: [skills_insert_input!]!) { insert_skills(objects: $objects) { affected_rows } }`,
+          { objects },
+        );
+        return batchResult.insert_skills.affected_rows;
+      });
+      if (batch.ok) {
+        result.skills += toNumber(batch.data);
+      } else {
+        for (const [i, obj] of objects.entries()) {
+          const item = await runQuery(async () => {
+            const itemResult = await executeQuery(
+              client,
+              `mutation ($object: skills_insert_input!) { insert_skills(objects: [$object]) { affected_rows } }`,
+              { object: obj },
+            );
+            return itemResult;
+          });
+          if (item.ok) {
+            result.skills++;
+          } else {
+            recordFailure('skills', i, obj, item.error);
+          }
         }
       }
     }
   }
 
   // Attributes
-  if (data.attributes?.length) {
-    const objects = data.attributes.map((a) => prepObj(a as Record<string, unknown>));
-    try {
-      const res = await executeQuery<{ insert_attributes: { affected_rows: number } }>(
-        client,
-        `mutation ($objects: [attributes_insert_input!]!) { insert_attributes(objects: $objects) { affected_rows } }`,
-        { objects },
-      );
-      result.attributes = res.insert_attributes.affected_rows;
-    } catch {
-      for (const obj of objects) {
-        try {
-          await executeQuery(
-            client,
-            `mutation ($object: attributes_insert_input!) { insert_attributes(objects: [$object]) { affected_rows } }`,
-            { object: obj },
-          );
-          result.attributes++;
-        } catch {
-          /* skip */
+  const attributes = asArray<unknown>('attributes', data.attributes);
+  if (attributes.length) {
+    const objects = attributes.map((a, index) => prepObj(asObject(`attributes[${index}]`, a)));
+    if (normalizedOptions.dryRun) {
+      result.attributes += objects.length;
+    } else {
+      const batch = await runQuery(async () => {
+        const batchResult = await executeQuery<{ insert_attributes: { affected_rows: number } }>(
+          client,
+          `mutation ($objects: [attributes_insert_input!]!) { insert_attributes(objects: $objects) { affected_rows } }`,
+          { objects },
+        );
+        return batchResult.insert_attributes.affected_rows;
+      });
+      if (batch.ok) {
+        result.attributes += toNumber(batch.data);
+      } else {
+        for (const [i, obj] of objects.entries()) {
+          const item = await runQuery(async () => {
+            const itemResult = await executeQuery(
+              client,
+              `mutation ($object: attributes_insert_input!) { insert_attributes(objects: [$object]) { affected_rows } }`,
+              { object: obj },
+            );
+            return itemResult;
+          });
+          if (item.ok) {
+            result.attributes++;
+          } else {
+            recordFailure('attributes', i, obj, item.error);
+          }
         }
       }
     }
   }
 
   // Functions
-  if (data.functions?.length) {
-    const objects = data.functions.map((f) => prepObj(f as Record<string, unknown>));
-    try {
-      const res = await executeQuery<{ insert_functions: { affected_rows: number } }>(
-        client,
-        `mutation ($objects: [functions_insert_input!]!) { insert_functions(objects: $objects) { affected_rows } }`,
-        { objects },
-      );
-      result.functions = res.insert_functions.affected_rows;
-    } catch {
-      for (const obj of objects) {
-        try {
-          await executeQuery(
-            client,
-            `mutation ($object: functions_insert_input!) { insert_functions(objects: [$object]) { affected_rows } }`,
-            { object: obj },
-          );
-          result.functions++;
-        } catch {
-          /* skip */
+  const functions = asArray<unknown>('functions', data.functions);
+  if (functions.length) {
+    const objects = functions.map((f, index) => prepObj(asObject(`functions[${index}]`, f)));
+    if (normalizedOptions.dryRun) {
+      result.functions += objects.length;
+    } else {
+      const batch = await runQuery(async () => {
+        const batchResult = await executeQuery<{ insert_functions: { affected_rows: number } }>(
+          client,
+          `mutation ($objects: [functions_insert_input!]!) { insert_functions(objects: $objects) { affected_rows } }`,
+          { objects },
+        );
+        return batchResult.insert_functions.affected_rows;
+      });
+      if (batch.ok) {
+        result.functions += toNumber(batch.data);
+      } else {
+        for (const [i, obj] of objects.entries()) {
+          const item = await runQuery(async () => {
+            const itemResult = await executeQuery(
+              client,
+              `mutation ($object: functions_insert_input!) { insert_functions(objects: [$object]) { affected_rows } }`,
+              { object: obj },
+            );
+            return itemResult;
+          });
+          if (item.ok) {
+            result.functions++;
+          } else {
+            recordFailure('functions', i, obj, item.error);
+          }
         }
       }
     }
   }
 
   // Examples (with nested messages)
-  if (data.examples?.length) {
-    for (const ex of data.examples) {
-      const exObj = ex as Record<string, unknown>;
-      const messages = (exObj.example_messages || []) as Record<string, unknown>[];
+  const examples = asArray<unknown>('examples', data.examples);
+  if (examples.length) {
+    for (const [exampleIndex, ex] of examples.entries()) {
+      const exObj = asObject(`examples[${exampleIndex}]`, ex);
+      const messages = asArray<Record<string, unknown>>(
+        `examples[${exampleIndex}].example_messages`,
+        exObj.example_messages,
+      );
       const cleanEx = prepObj(exObj, ['example_messages']);
-      try {
-        await executeQuery(
+      if (normalizedOptions.dryRun) {
+        result.examples++;
+        continue;
+      }
+      const exampleInsert = await runQuery(async () => {
+        const payload = await executeQuery(
           client,
           `mutation ($object: examples_insert_input!) { insert_examples(objects: [$object]) { affected_rows } }`,
           { object: cleanEx },
         );
+        return payload;
+      });
+      if (exampleInsert.ok) {
         result.examples++;
-      } catch {
-        /* skip */
-      }
-
-      // Insert messages for the example
-      for (const msg of messages) {
-        const cleanMsg = prepObj(msg);
-        try {
-          await executeQuery(
-            client,
-            `mutation ($object: example_messages_insert_input!) { insert_example_messages(objects: [$object]) { affected_rows } }`,
-            { object: cleanMsg },
+        for (const [messageIndex, msg] of messages.entries()) {
+          const cleanMsg = prepObj(
+            asObject(`examples[${exampleIndex}].example_messages[${messageIndex}]`, msg),
           );
-        } catch {
-          /* skip */
+          const messageInsert = await runQuery(async () => {
+            const payload = await executeQuery(
+              client,
+              `mutation ($object: example_messages_insert_input!) { insert_example_messages(objects: [$object]) { affected_rows } }`,
+              { object: cleanMsg },
+            );
+            return payload;
+          });
+          if (!messageInsert.ok) {
+            recordFailure('example_messages', messageIndex, cleanMsg, messageInsert.error);
+          }
+        }
+      } else {
+        recordFailure('examples', exampleIndex, exObj, exampleInsert.error);
+      }
+    }
+  }
+
+  const evals = asArray<unknown>('evals', data.evals);
+  if (evals.length) {
+    const objects = evals.map((e, index) => prepObj(asObject(`evals[${index}]`, e)));
+    if (normalizedOptions.dryRun) {
+      result.evals += objects.length;
+    } else {
+      const batch = await runQuery(async () => {
+        const batchResult = await executeQuery<{ insert_evals: { affected_rows: number } }>(
+          client,
+          `mutation ($objects: [evals_insert_input!]!) { insert_evals(objects: $objects) { affected_rows } }`,
+          { objects },
+        );
+        return batchResult.insert_evals.affected_rows;
+      });
+      if (batch.ok) {
+        result.evals += toNumber(batch.data);
+      } else {
+        for (const [i, obj] of objects.entries()) {
+          const item = await runQuery(async () => {
+            const itemResult = await executeQuery(
+              client,
+              `mutation ($object: evals_insert_input!) { insert_evals(objects: [$object]) { affected_rows } }`,
+              { object: obj },
+            );
+            return itemResult;
+          });
+          if (item.ok) {
+            result.evals++;
+          } else {
+            recordFailure('evals', i, obj, item.error);
+          }
         }
       }
     }
   }
 
-  // Evals
-  if (data.evals?.length) {
-    const objects = data.evals.map((e) => prepObj(e as Record<string, unknown>));
-    try {
-      const res = await executeQuery<{ insert_evals: { affected_rows: number } }>(
-        client,
-        `mutation ($objects: [evals_insert_input!]!) { insert_evals(objects: $objects) { affected_rows } }`,
-        { objects },
+  const datasets = asArray<unknown>('datasets', data.datasets);
+  if (datasets.length) {
+    for (const [datasetIndex, ds] of datasets.entries()) {
+      const dsObj = asObject(`datasets[${datasetIndex}]`, ds);
+      const entries = asArray<Record<string, unknown>>(
+        `datasets[${datasetIndex}].dataset_entries`,
+        dsObj.dataset_entries,
       );
-      result.evals = res.insert_evals.affected_rows;
-    } catch {
-      for (const obj of objects) {
-        try {
-          await executeQuery(
-            client,
-            `mutation ($object: evals_insert_input!) { insert_evals(objects: [$object]) { affected_rows } }`,
-            { object: obj },
-          );
-          result.evals++;
-        } catch {
-          /* skip */
-        }
-      }
-    }
-  }
-
-  // Datasets (with nested entries)
-  if (data.datasets?.length) {
-    for (const ds of data.datasets) {
-      const dsObj = ds as Record<string, unknown>;
-      const entries = (dsObj.dataset_entries || []) as Record<string, unknown>[];
       const cleanDs = prepObj(dsObj, ['dataset_entries']);
-      try {
-        await executeQuery(
+      if (normalizedOptions.dryRun) {
+        result.datasets++;
+        result.datasetEntries += entries.length;
+        continue;
+      }
+      const datasetInsert = await runQuery(async () => {
+        const payload = await executeQuery(
           client,
           `mutation ($object: datasets_insert_input!) { insert_datasets(objects: [$object]) { affected_rows } }`,
           { object: cleanDs },
         );
+        return payload;
+      });
+      if (datasetInsert.ok) {
         result.datasets++;
-      } catch {
-        /* skip */
-      }
-
-      for (const entry of entries) {
-        const cleanEntry = prepObj(entry);
-        try {
-          await executeQuery(
-            client,
-            `mutation ($object: dataset_entries_insert_input!) { insert_dataset_entries(objects: [$object]) { affected_rows } }`,
-            { object: cleanEntry },
+        for (const [entryIndex, entry] of entries.entries()) {
+          const cleanEntry = prepObj(
+            asObject(`datasets[${datasetIndex}].dataset_entries[${entryIndex}]`, entry),
           );
-          result.datasetEntries++;
-        } catch {
-          /* skip */
+          const entryInsert = await runQuery(async () => {
+            const payload = await executeQuery(
+              client,
+              `mutation ($object: dataset_entries_insert_input!) { insert_dataset_entries(objects: [$object]) { affected_rows } }`,
+              { object: cleanEntry },
+            );
+            return payload;
+          });
+          if (entryInsert.ok) {
+            result.datasetEntries++;
+          } else {
+            recordFailure('dataset_entries', entryIndex, cleanEntry, entryInsert.error);
+          }
         }
+      } else {
+        recordFailure('datasets', datasetIndex, dsObj, datasetInsert.error);
       }
     }
   }
 
   // Agent Settings
-  if (data.agentSettings?.length) {
-    for (const s of data.agentSettings) {
-      const sObj = prepObj(s as Record<string, unknown>);
-      try {
-        await executeQuery(
+  const agentSettings = asArray<unknown>('agentSettings', data.agentSettings);
+  if (agentSettings.length) {
+    for (const [index, s] of agentSettings.entries()) {
+      const sObj = prepObj(asObject(`agentSettings[${index}]`, s));
+      if (normalizedOptions.dryRun) {
+        result.agentSettings++;
+        continue;
+      }
+      const settingsInsert = await runQuery(async () => {
+        const payload = await executeQuery(
           client,
           `mutation ($object: agent_settings_insert_input!) { insert_agent_settings(objects: [$object]) { affected_rows } }`,
           { object: sObj },
         );
+        return payload;
+      });
+      if (settingsInsert.ok) {
         result.agentSettings++;
-      } catch {
-        /* skip */
+      } else {
+        recordFailure('agent_settings', index, sObj, settingsInsert.error);
       }
     }
+  }
+
+  if (normalizedOptions.strict && result.failures.length > 0) {
+    throw new Error(
+      `Import completed with ${result.failures.length} failure(s). Use --dry-run to inspect before applying to this org.`,
+    );
   }
 
   return result;

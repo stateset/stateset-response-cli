@@ -69,10 +69,17 @@ vi.mock('node:fs', async () => {
   };
 });
 
-import { writeSessionMeta, readSessionMeta } from '../cli/session-meta.js';
+import {
+  writeSessionMeta,
+  readSessionMeta,
+  readSessionEntries,
+  listSessionSummaries,
+} from '../cli/session-meta.js';
 
 const mockWriteSessionMeta = vi.mocked(writeSessionMeta);
 const mockReadSessionMeta = vi.mocked(readSessionMeta);
+const mockReadSessionEntries = vi.mocked(readSessionEntries);
+const mockListSessionSummaries = vi.mocked(listSessionSummaries);
 
 function createMockCtx(overrides: Partial<ChatContext> = {}): ChatContext {
   return {
@@ -96,6 +103,8 @@ describe('handleSessionCommand', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockReadSessionMeta.mockReturnValue({ ...mockMeta });
+    mockReadSessionEntries.mockReturnValue([...mockEntries]);
+    mockListSessionSummaries.mockReturnValue([...mockSessions]);
   });
 
   afterEach(() => {
@@ -126,17 +135,14 @@ describe('handleSessionCommand', () => {
   });
 
   it('/sessions with tag= filters by tag', async () => {
-    const { listSessionSummaries } = await import('../cli/session-meta.js');
-    const mockList = vi.mocked(listSessionSummaries);
-    mockList.mockReturnValue([...mockSessions]);
+    mockListSessionSummaries.mockReturnValue([...mockSessions]);
     const ctx = createMockCtx();
     const result = await handleSessionCommand('/sessions tag=dev', ctx);
     expect(result).toBe(true);
   });
 
   it('/sessions shows empty message when no sessions', async () => {
-    const { listSessionSummaries } = await import('../cli/session-meta.js');
-    vi.mocked(listSessionSummaries).mockReturnValue([]);
+    mockListSessionSummaries.mockReturnValue([]);
     const ctx = createMockCtx();
     const result = await handleSessionCommand('/sessions', ctx);
     expect(result).toBe(true);
@@ -212,6 +218,56 @@ describe('handleSessionCommand', () => {
     const ctx = createMockCtx();
     const result = await handleSessionCommand('/search regex=/[invalid', ctx);
     expect(result).toBe(true);
+  });
+
+  it('/search enforces a hard scanned-entry limit', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const mockEntries = Array.from({ length: 5005 }, (_, i) => ({
+      role: 'user' as const,
+      content: `entry-${i}`,
+      ts: '2025-01-01T00:00:00Z',
+    }));
+    mockReadSessionEntries.mockReturnValue([...mockEntries]);
+
+    const ctx = createMockCtx();
+    const result = await handleSessionCommand('/search entry', ctx);
+    expect(result).toBe(true);
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) =>
+          typeof line === 'string' && line.includes('Search stopped after 5000 scanned entries.'),
+      ),
+    ).toBe(true);
+  });
+
+  it('/search rejects unsafe nested-repetition regex patterns', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const ctx = createMockCtx();
+    const result = await handleSessionCommand('/search regex=/(a+)+/i', ctx);
+    expect(result).toBe(true);
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) =>
+          typeof line === 'string' &&
+          line.includes(
+            'Invalid regex: Regex has nested repetition and may cause expensive evaluation.',
+          ),
+      ),
+    ).toBe(true);
+  });
+
+  it('/search rejects lookaround regex patterns', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const ctx = createMockCtx();
+    const result = await handleSessionCommand('/search regex=/target(?=test)/i', ctx);
+    expect(result).toBe(true);
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) =>
+          typeof line === 'string' &&
+          line.includes('Invalid regex: Regex lookaround assertions are disabled for safety.'),
+      ),
+    ).toBe(true);
   });
 
   // /archive / /unarchive

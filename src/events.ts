@@ -21,11 +21,11 @@ import { formatUsage } from './utils/display.js';
 
 const DEBOUNCE_MS = 100;
 const RETRY_BASE_MS = 100;
-const MAX_TIMEOUT_MS = 2_147_483_647;
 const SESSION_RUNNER_TTL_MS = 15 * 60_000;
 const SESSION_RUNNER_MAX_COUNT = 200;
 const SESSION_RUNNER_MAX_PENDING = 32;
 const SESSION_RUNNER_CLEANUP_MS = 5 * 60_000;
+const ONE_SHOT_POLL_MS = 1000;
 
 /** An event that triggers an agent run: immediately, at a specific time, or on a cron schedule. */
 export type ResponseEvent =
@@ -92,6 +92,11 @@ export function parseEvent(content: string, filename: string): ResponseEvent {
 interface QueuedEvent {
   filename: string;
   event: ResponseEvent;
+}
+
+interface ScheduledOneShot {
+  event: ResponseEvent & { type: 'one-shot' };
+  at: number;
 }
 
 class SessionAgentRunner {
@@ -216,10 +221,11 @@ export class EventsRunner {
   private eventsDir: string;
   private watcher: FSWatcher | null = null;
   private knownFiles = new Set<string>();
-  private timers = new Map<string, NodeJS.Timeout>();
+  private oneShots = new Map<string, ScheduledOneShot>();
   private crons = new Map<string, Cron>();
   private debounceTimers = new Map<string, NodeJS.Timeout>();
   private sessionCleanupTimer: ReturnType<typeof setInterval> | null = null;
+  private oneShotTimer: ReturnType<typeof setInterval> | null = null;
   private startTime: number;
   private options: EventsRunnerOptions;
   private sessionRunners = new Map<string, SessionAgentRunner>();
@@ -259,10 +265,8 @@ export class EventsRunner {
     }
     this.debounceTimers.clear();
 
-    for (const timer of this.timers.values()) {
-      clearTimeout(timer);
-    }
-    this.timers.clear();
+    this.oneShots.clear();
+    this.stopOneShotPoller();
 
     for (const cron of this.crons.values()) {
       cron.stop();
@@ -281,6 +285,45 @@ export class EventsRunner {
         );
       });
     }, SESSION_RUNNER_CLEANUP_MS);
+  }
+
+  private startOneShotPoller(): void {
+    if (this.oneShotTimer) {
+      return;
+    }
+    this.oneShotTimer = setInterval(() => {
+      this.processOneShots();
+    }, ONE_SHOT_POLL_MS);
+  }
+
+  private stopOneShotPoller(): void {
+    if (!this.oneShotTimer) {
+      return;
+    }
+    clearInterval(this.oneShotTimer);
+    this.oneShotTimer = null;
+  }
+
+  private processOneShots(): void {
+    if (this.oneShots.size === 0) {
+      this.stopOneShotPoller();
+      return;
+    }
+
+    const now = Date.now();
+    const due: string[] = [];
+    for (const [filename, scheduled] of this.oneShots.entries()) {
+      if (scheduled.at <= now) {
+        due.push(filename);
+      }
+    }
+
+    for (const filename of due) {
+      const scheduled = this.oneShots.get(filename);
+      if (!scheduled) continue;
+      this.oneShots.delete(filename);
+      this.execute(scheduled.event, true);
+    }
   }
 
   private stopSessionCleanup(): void {
@@ -337,10 +380,8 @@ export class EventsRunner {
   }
 
   private cancelScheduled(filename: string): void {
-    const timer = this.timers.get(filename);
-    if (timer) {
-      clearTimeout(timer);
-      this.timers.delete(filename);
+    if (this.oneShots.has(filename)) {
+      this.oneShots.delete(filename);
     }
 
     const cron = this.crons.get(filename);
@@ -426,21 +467,13 @@ export class EventsRunner {
     event: ResponseEvent & { type: 'one-shot' },
     atTime: number,
   ): void {
-    const remainingMs = atTime - Date.now();
-    if (remainingMs <= 0) {
-      this.timers.delete(filename);
+    if (atTime <= Date.now()) {
       this.execute(filename, event, true);
       return;
     }
 
-    const timer = setTimeout(
-      () => {
-        this.scheduleOneShot(filename, event, atTime);
-      },
-      Math.min(remainingMs, MAX_TIMEOUT_MS),
-    );
-
-    this.timers.set(filename, timer);
+    this.oneShots.set(filename, { event, at: atTime });
+    this.startOneShotPoller();
   }
 
   private handlePeriodic(filename: string, event: ResponseEvent & { type: 'periodic' }): void {

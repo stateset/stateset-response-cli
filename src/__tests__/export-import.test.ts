@@ -426,4 +426,122 @@ describe('importOrg', () => {
     );
     expect(entryCalls).toHaveLength(1);
   });
+
+  it('supports dry-run preview mode without executing queries', async () => {
+    const exportFile = makeExportFile({
+      agents: [{ id: 'a1', name: 'Agent1', org_id: 'org-1' }],
+      examples: [
+        {
+          id: 'ex1',
+          title: 'Example1',
+          org_id: 'org-1',
+          example_messages: [{ id: 'm1', role: 'user', content: 'hello', org_id: 'org-1' }],
+        },
+      ],
+      datasets: [
+        {
+          id: 'd1',
+          name: 'Dataset1',
+          org_id: 'org-1',
+          dataset_entries: [
+            { id: 'de1', content: 'entry1', org_id: 'org-1' },
+            { id: 'de2', content: 'entry2', org_id: 'org-1' },
+          ],
+        },
+      ],
+      rules: [],
+      skills: [],
+      attributes: [],
+      functions: [],
+      evals: [],
+      agentSettings: [],
+    });
+    mockReadFileSync.mockReturnValue(JSON.stringify(exportFile));
+
+    const result = await importOrg('/tmp/import.json', { dryRun: true });
+
+    expect(result.sourceOrgId).toBe('org-1');
+    expect(result.agents).toBe(1);
+    expect(result.examples).toBe(1);
+    expect(result.datasets).toBe(1);
+    expect(result.datasetEntries).toBe(2);
+    expect(result.rules).toBe(0);
+    expect(result.skipped).toBe(0);
+    expect(result.failures).toHaveLength(0);
+    expect(mockExecuteQuery).not.toHaveBeenCalled();
+  });
+
+  it('returns skipped count and failure details on insert errors', async () => {
+    const exportFile = makeExportFile({
+      agents: [{ id: 'a1', name: 'Agent1', org_id: 'org-1' }],
+      rules: [],
+      skills: [],
+      attributes: [],
+      functions: [],
+      examples: [],
+      evals: [],
+      datasets: [],
+      agentSettings: [],
+    });
+    mockReadFileSync.mockReturnValue(JSON.stringify(exportFile));
+
+    mockExecuteQuery
+      // Agents batch fails
+      .mockRejectedValueOnce(new Error('batch conflict'))
+      // Agent item-level insert fails
+      .mockRejectedValueOnce(new Error('agent already exists'));
+
+    const result = await importOrg('/tmp/import.json');
+
+    expect(result.agents).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]).toMatchObject({
+      entity: 'agents',
+      index: 0,
+      sourceId: 'a1',
+    });
+  });
+
+  it('throws on strict mode when any insert fails', async () => {
+    const exportFile = makeExportFile({
+      agents: [{ id: 'a1', name: 'Agent1', org_id: 'org-1' }],
+      rules: [],
+      skills: [],
+      attributes: [],
+      functions: [],
+      examples: [],
+      evals: [],
+      datasets: [],
+      agentSettings: [],
+    });
+    mockReadFileSync.mockReturnValue(JSON.stringify(exportFile));
+
+    mockExecuteQuery
+      .mockRejectedValueOnce(new Error('batch conflict'))
+      .mockRejectedValueOnce(new Error('agent already exists'));
+
+    await expect(importOrg('/tmp/import.json', { strict: true })).rejects.toThrow(
+      'Import completed with 1 failure(s). Use --dry-run to inspect before applying to this org.',
+    );
+  });
+
+  it('throws for malformed array sections', async () => {
+    const exportFile = makeExportFile({
+      agents: { not: 'an array' },
+      rules: [],
+      skills: [],
+      attributes: [],
+      functions: [],
+      examples: [],
+      evals: [],
+      datasets: [],
+      agentSettings: [],
+    } as unknown as Record<string, unknown>);
+    mockReadFileSync.mockReturnValue(JSON.stringify(exportFile));
+
+    await expect(importOrg('/tmp/import.json')).rejects.toThrow(
+      'Invalid export format: "agents" must be an array.',
+    );
+  });
 });

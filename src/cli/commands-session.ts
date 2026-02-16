@@ -15,6 +15,30 @@ import {
   formatContentForExport,
   getSessionMetaSummary,
 } from './session-meta.js';
+
+const MAX_SEARCH_LIMIT = 100;
+const MAX_SEARCH_ENTRIES = 5_000;
+const MAX_REGEX_PATTERN_LENGTH = 160;
+const MAX_REGEX_CONTENT_LENGTH = 12_000;
+
+function isUnsafeRegexPattern(pattern: string): string | null {
+  if (pattern.length > MAX_REGEX_PATTERN_LENGTH) {
+    return `Regex pattern exceeds ${MAX_REGEX_PATTERN_LENGTH} characters`;
+  }
+  if (
+    pattern.includes('(?=') ||
+    pattern.includes('(?!') ||
+    pattern.includes('(?<=') ||
+    pattern.includes('(?<!')
+  ) {
+    return 'Regex lookaround assertions are disabled for safety.';
+  }
+  if (/\([^)]*[+*][^)]*\)[+*]/.test(pattern)) {
+    return 'Regex has nested repetition and may cause expensive evaluation.';
+  }
+  return null;
+}
+
 export async function handleSessionCommand(input: string, ctx: ChatContext): Promise<boolean> {
   // /session — show current session info
   if (input === '/session') {
@@ -415,7 +439,7 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
       if (token.startsWith('limit=')) {
         const val = Number(token.slice('limit='.length));
         if (Number.isFinite(val) && val > 0) {
-          limit = Math.min(100, Math.floor(val));
+          limit = Math.min(MAX_SEARCH_LIMIT, Math.floor(val));
         }
         continue;
       }
@@ -470,6 +494,13 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
     const lowerTerm = term.toLowerCase();
     let regex: RegExp | null = null;
     if (regexPattern) {
+      const regexError = isUnsafeRegexPattern(regexPattern);
+      if (regexError) {
+        console.log(formatWarning(`Invalid regex: ${regexError}`));
+        console.log('');
+        ctx.rl.prompt();
+        return true;
+      }
       try {
         regex = new RegExp(regexPattern, regexFlags);
       } catch {
@@ -479,9 +510,16 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
         return true;
       }
     }
+    let scannedEntries = 0;
+    let scanLimitReached = false;
     for (const session of sessions) {
       const entries = readSessionEntries(session.id);
       for (const entry of entries) {
+        scannedEntries += 1;
+        if (scannedEntries > MAX_SEARCH_ENTRIES) {
+          scanLimitReached = true;
+          break;
+        }
         if (roleFilter && entry.role !== roleFilter) continue;
         if (sinceMs && entry.ts) {
           const entryMs = Date.parse(entry.ts);
@@ -491,11 +529,16 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
           const entryMs = Date.parse(entry.ts);
           if (Number.isFinite(entryMs) && entryMs > untilMs) continue;
         }
-        const content = formatContentForExport(entry.content);
+        const content = formatContentForExport(entry.content)?.slice(0, MAX_REGEX_CONTENT_LENGTH);
         if (!content) continue;
         let idx = -1;
+        let match: RegExpMatchArray | null = null;
         if (regex) {
-          const match = regex.exec(content);
+          const searchableRegex =
+            regex.global || regex.sticky
+              ? new RegExp(regex.source, regex.flags.replace(/[gy]/g, ''))
+              : regex;
+          match = searchableRegex.exec(content);
           if (!match || match.index === undefined) continue;
           idx = match.index;
         } else {
@@ -503,7 +546,7 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
           if (idx === -1) continue;
         }
         const start = Math.max(0, idx - 40);
-        const matchLen = regex && regex.lastIndex > idx ? regex.lastIndex - idx : term.length;
+        const matchLen = regex ? (match?.[0]?.length ?? 0) : term.length;
         const end = Math.min(content.length, idx + matchLen + 40);
         const excerpt = content.slice(start, end).replace(/\s+/g, ' ');
         results.push({
@@ -514,7 +557,15 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
         });
         if (results.length >= limit) break;
       }
+      if (scanLimitReached) {
+        break;
+      }
       if (results.length >= limit) break;
+    }
+
+    if (scanLimitReached) {
+      console.log(formatWarning(`Search stopped after ${MAX_SEARCH_ENTRIES} scanned entries.`));
+      console.log(formatWarning('Use narrower filters to inspect additional matches.'));
     }
 
     if (results.length === 0) {

@@ -19,7 +19,7 @@ import {
 import { sanitizeSessionId } from './session.js';
 import { printAuthHelp, formatError } from './utils/display.js';
 import { installGlobalErrorHandlers } from './lib/errors.js';
-import { exportOrg, importOrg } from './export-import.js';
+import { exportOrg, importOrg, type ImportResult } from './export-import.js';
 import { EventsRunner, validateEventsPrereqs } from './events.js';
 import { assertNodeVersion } from './cli/utils.js';
 import { registerAuthCommands } from './cli/auth.js';
@@ -125,45 +125,112 @@ program
   .command('import')
   .description('Import org configuration from a JSON export file')
   .argument('<file>', 'Input file path')
-  .action(async (file: string) => {
-    if (!configExists()) {
-      printAuthHelp();
-      process.exit(1);
-    }
-    if (!fs.existsSync(file)) {
-      console.error(formatError(`File not found: ${file}`));
-      process.exit(1);
-    }
-    const { orgId } = getCurrentOrg();
-    const { confirm } = await inquirer.prompt([
-      {
-        type: 'confirm',
-        name: 'confirm',
-        message: `Import into organization "${orgId}"? This will create new resources.`,
-        default: false,
+  .option('--dry-run', 'Validate without writing changes')
+  .option('--strict', 'Fail if any insert fails')
+  .action(
+    async (
+      file: string,
+      options: {
+        dryRun?: boolean;
+        strict?: boolean;
       },
-    ]);
-    if (!confirm) {
-      console.log(chalk.gray('  Import cancelled.'));
-      process.exit(0);
-    }
-    const spinner = ora('Importing...').start();
-    try {
-      const result = await importOrg(file);
-      spinner.succeed('Import complete');
-      const counts = Object.entries(result)
-        .filter(([, v]) => v > 0)
-        .map(([k, v]) => `${v} ${k}`)
-        .join(', ');
+    ) => {
+      if (!configExists()) {
+        printAuthHelp();
+        process.exit(1);
+      }
+      if (!fs.existsSync(file)) {
+        console.error(formatError(`File not found: ${file}`));
+        process.exit(1);
+      }
+
+      const formatCounts = (result: ImportResult, label = 'Imported'): string => {
+        const lines = [
+          ['agents', 'agents'],
+          ['rules', 'rules'],
+          ['skills', 'skills'],
+          ['attributes', 'attributes'],
+          ['functions', 'functions'],
+          ['examples', 'examples'],
+          ['evals', 'evals'],
+          ['datasets', 'datasets'],
+          ['datasetEntries', 'dataset entries'],
+          ['agentSettings', 'agent settings'],
+        ] as const;
+
+        const counts = lines
+          .map(([key, name]) => ({ key, name, value: result[key as keyof ImportResult] }))
+          .filter((entry) => Number(entry.value) > 0)
+          .map((entry) => `${entry.value} ${entry.name}`);
+
+        return `${label}: ${counts.length ? counts.join(', ') : 'nothing'}`;
+      };
+
+      let preview: ImportResult;
+      try {
+        preview = await importOrg(file, { dryRun: true });
+      } catch (e: unknown) {
+        console.error(formatError(e instanceof Error ? e.message : String(e)));
+        process.exit(1);
+        return;
+      }
+      const { orgId } = getCurrentOrg();
       console.log(
-        chalk.gray(`  Imported: ${counts || 'nothing (all resources may already exist)'}`),
+        chalk.gray(
+          `  Import preview for destination "${orgId}" from source "${preview.sourceOrgId}"`,
+        ),
       );
-    } catch (e: unknown) {
-      spinner.fail('Import failed');
-      console.error(formatError(e instanceof Error ? e.message : String(e)));
-      process.exit(1);
-    }
-  });
+      if (preview.sourceOrgId !== orgId) {
+        console.log(chalk.yellow('  Source org differs from destination org.'));
+      }
+      console.log(chalk.gray(`  ${formatCounts(preview, 'Will apply')}`));
+      if (preview.skipped > 0) {
+        console.log(chalk.yellow(`  Skipped (dry-run estimate): ${preview.skipped}`));
+      }
+
+      if (options.dryRun) {
+        console.log(chalk.gray('  Dry-run complete.'));
+        return;
+      }
+
+      const confirmText = `Apply import to organization "${orgId}"?`;
+      const { confirm } = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'confirm',
+          message: confirmText,
+          default: false,
+        },
+      ]);
+      if (!confirm) {
+        console.log(chalk.gray('  Import cancelled.'));
+        process.exit(0);
+      }
+
+      const spinner = ora('Importing...').start();
+      try {
+        const result = await importOrg(file, { strict: options.strict });
+        spinner.succeed('Import complete');
+        const counts = formatCounts(result);
+        console.log(chalk.gray(`  ${counts || 'nothing (all resources may already exist)'}`));
+
+        if (result.skipped > 0) {
+          console.log(chalk.yellow(`  Skipped: ${result.skipped}`));
+        }
+        if (result.failures.length > 0) {
+          const summary = result.failures
+            .slice(0, 5)
+            .map((f) => `    - ${f.entity}[${f.index}]: ${f.reason}`);
+          console.log(chalk.yellow('  Failures:'));
+          console.log(chalk.yellow(summary.join('\n')));
+        }
+      } catch (e: unknown) {
+        spinner.fail('Import failed');
+        console.error(formatError(e instanceof Error ? e.message : String(e)));
+        process.exit(1);
+      }
+    },
+  );
 
 // Events watcher
 program

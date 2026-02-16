@@ -161,10 +161,16 @@ export class ExtensionManager {
     this.runtimeDiagnostics = [];
     this.policyOverrides = loadPolicyOverrides(cwd, this.diagnostics);
     this.extensionTrust = loadExtensionTrustPolicy(cwd, this.diagnostics);
-
     const globalDir = path.join(getStateSetDir(), 'extensions');
     const projectDir = path.join(cwd, '.stateset', 'extensions');
     const files = [...listExtensionFiles(globalDir), ...listExtensionFiles(projectDir)];
+    if (!this.extensionTrust.enforce && files.length > 0) {
+      this.diagnostics.push({
+        source: 'extensions',
+        message:
+          'Extension trust policy is disabled. Enable STATESET_EXTENSIONS_ENFORCE_TRUST=true to apply allow/deny rules.',
+      });
+    }
 
     for (const filePath of files) {
       const extensionName = path.basename(filePath, path.extname(filePath));
