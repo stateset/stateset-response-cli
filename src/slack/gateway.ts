@@ -100,7 +100,7 @@ export class SlackGateway {
   private orgId = 'unknown';
 
   constructor(options: SlackGatewayOptions = {}) {
-    this.model = options.model ? resolveModelOrThrow(options.model, 'valid') : getConfiguredModel();
+    this.model = options.model ? resolveModelOrThrow(options.model) : getConfiguredModel();
     this.allowList = options.allowList?.length ? new Set(options.allowList) : null;
     this.verbose = options.verbose ?? false;
     this.botToken = process.env.SLACK_BOT_TOKEN || '';
@@ -389,7 +389,7 @@ export class SlackGateway {
         '`/reset` — Clear conversation history',
         '`/clear` — Same as /reset',
         '`/status` — Show session info',
-        '`/model` — Show or change model',
+        '`/model` — Show or change model (alias or full model ID)',
         '',
         'Send any message to chat with the AI agent.',
         'The agent can manage your StateSet Response platform:',
@@ -421,11 +421,11 @@ export class SlackGateway {
         return `Current model: \`${session.agent.getModel()}\``;
       }
       try {
-        const resolved = resolveModelOrThrow(arg, 'valid');
+        const resolved = resolveModelOrThrow(arg);
         session.agent.setModel(resolved);
         return `Model changed to: \`${resolved}\``;
       } catch {
-        return formatUnknownModelError(arg, 'valid');
+        return formatUnknownModelError(arg);
       }
     }
 

@@ -120,6 +120,12 @@ export interface ToolCallResult {
   durationMs: number;
 }
 
+export interface ToolCallPayload<T = unknown> {
+  payload: T;
+  rawText: string;
+  isError: boolean;
+}
+
 /**
  * Orchestrates conversation with Claude via the Anthropic API and delegates
  * tool execution to a co-located MCP server subprocess.
@@ -393,6 +399,52 @@ export class StateSetAgent {
     if (this.conversationHistory.length > MAX_HISTORY_MESSAGES) {
       this.conversationHistory = this.conversationHistory.slice(-MAX_HISTORY_MESSAGES);
     }
+  }
+
+  /**
+   * Calls an MCP tool directly with optional JSON arguments.
+   * Useful for slash commands and non-interactive command modes.
+   */
+  async callTool<T = unknown>(
+    toolName: string,
+    args: Record<string, unknown> = {},
+  ): Promise<ToolCallPayload<T>> {
+    if (!this.transport) {
+      await this.connect();
+    }
+
+    const response = await this.mcpClient.callTool({
+      name: toolName,
+      arguments: args,
+    });
+
+    const rawText = (response.content || [])
+      .map((c) => {
+        if (
+          typeof c === 'object' &&
+          c !== null &&
+          'type' in c &&
+          (c as { type?: unknown }).type === 'text'
+        ) {
+          const text = (c as { text?: unknown }).text;
+          return typeof text === 'string' ? text : JSON.stringify(text);
+        }
+        return JSON.stringify(c);
+      })
+      .join('\n');
+
+    let payload: T;
+    try {
+      payload = JSON.parse(rawText) as T;
+    } catch {
+      payload = rawText as T;
+    }
+
+    return {
+      payload,
+      rawText,
+      isError: Boolean(response.isError),
+    };
   }
 
   private addMessage(message: Anthropic.MessageParam): void {

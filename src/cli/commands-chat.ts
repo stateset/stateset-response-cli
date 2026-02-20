@@ -14,6 +14,11 @@ import { handleConfigCommand } from './commands-config.js';
 import { handleAuditCommand } from './commands-audit.js';
 import { handlePolicyCommand } from './commands-policy.js';
 import { handleTemplateCommand } from './commands-templates.js';
+import {
+  printIntegrationHealth,
+  printIntegrationLimits,
+  printIntegrationLogs,
+} from './commands-integrations.js';
 import { hasCommand } from './utils.js';
 
 export async function handleChatCommand(input: string, ctx: ChatContext): Promise<CommandResult> {
@@ -117,6 +122,30 @@ export async function handleChatCommand(input: string, ctx: ChatContext): Promis
   if (hasCommand(input, '/integrations')) {
     const tokens = input.split(/\s+/).slice(1);
     const action = tokens[0];
+    if (action === 'health') {
+      const detailed = tokens.includes('--detailed');
+      printIntegrationHealth(
+        process.cwd(),
+        tokens[1] === '--detailed' ? undefined : tokens[1],
+        detailed,
+      );
+      console.log('');
+      ctx.rl.prompt();
+      return { handled: true };
+    }
+    if (action === 'limits') {
+      printIntegrationLimits(process.cwd(), tokens[1]);
+      console.log('');
+      ctx.rl.prompt();
+      return { handled: true };
+    }
+    if (action === 'logs') {
+      const integration = tokens[1] && tokens[1] !== '--last' ? tokens[1] : undefined;
+      printIntegrationLogs(process.cwd(), integration);
+      console.log('');
+      ctx.rl.prompt();
+      return { handled: true };
+    }
     if (action === 'setup') {
       let setupSucceeded = false;
       ctx.rl.pause();

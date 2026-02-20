@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import fs from 'node:fs';
 import path from 'node:path';
 import { getSessionExportPath, resolveExportFilePath } from '../utils/session-exports.js';
 
@@ -23,5 +24,32 @@ describe('resolveExportFilePath', () => {
 
   it('rejects empty filenames', () => {
     expect(() => resolveExportFilePath('default', '')).toThrow(/Missing export filename/);
+  });
+
+  it('rejects symlink export files', () => {
+    const exportDir = getSessionExportPath('default');
+    const symlinkPath = path.join(exportDir, 'secret.md');
+    const lstatMock = (candidate: fs.PathLike) => {
+      if (`${candidate}` === symlinkPath) {
+        return {
+          isSymbolicLink: () => true,
+          isFile: () => false,
+          isDirectory: () => false,
+        } as unknown as fs.Stats;
+      }
+      return {
+        isSymbolicLink: () => false,
+        isFile: () => false,
+        isDirectory: () => true,
+      } as unknown as fs.Stats;
+    };
+    const spy = vi.spyOn(fs, 'lstatSync').mockImplementation(lstatMock);
+    try {
+      expect(() => resolveExportFilePath('default', 'secret.md')).toThrow(
+        /Invalid export filename/,
+      );
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

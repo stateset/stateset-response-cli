@@ -111,6 +111,7 @@ function isExtensionNameValid(name: string): boolean {
 
 interface ExtensionTrustPolicy {
   enforce: boolean;
+  requiresAllowlist: boolean;
   allowed: Set<string>;
   denied: Set<string>;
 }
@@ -119,7 +120,30 @@ const MAX_EXTENSION_FILE_SIZE_BYTES = 1_048_576;
 
 const EXTENSION_TRUST_FILES = ['extension-trust.json', 'extensions-trust.json'];
 
-function listExtensionFiles(dir: string): string[] {
+function listExtensionFiles(dir: string, diagnostics: ExtensionDiagnostic[]): string[] {
+  try {
+    const dirStats = fs.lstatSync(dir);
+    if (!dirStats.isDirectory() || dirStats.isSymbolicLink()) {
+      diagnostics.push({
+        source: dir,
+        message: `Skipping extension directory "${dir}" because it is not a regular directory.`,
+      });
+      return [];
+    }
+  } catch (err) {
+    if (
+      (err as NodeJS.ErrnoException).code === 'ENOENT' ||
+      (err as NodeJS.ErrnoException).code === 'ENOTDIR'
+    ) {
+      return [];
+    }
+    diagnostics.push({
+      source: dir,
+      message: `Failed to inspect extension directory "${dir}": ${err instanceof Error ? err.message : String(err)}`,
+    });
+    return [];
+  }
+
   if (!fs.existsSync(dir)) return [];
   let entries: fs.Dirent[] = [];
   try {
@@ -134,6 +158,56 @@ function listExtensionFiles(dir: string): string[] {
     .filter((name) => !name.startsWith('.'))
     .filter((name) => name.endsWith('.js') || name.endsWith('.mjs') || name.endsWith('.cjs'))
     .map((name) => path.join(dir, name));
+}
+
+function readSafeJsonFile(
+  filePath: string,
+  diagnostics: ExtensionDiagnostic[],
+  label: string,
+): Record<string, unknown> | null {
+  let stats: fs.Stats;
+  try {
+    stats = fs.lstatSync(filePath);
+  } catch (err) {
+    if (
+      (err as NodeJS.ErrnoException).code === 'ENOENT' ||
+      (err as NodeJS.ErrnoException).code === 'ENOTDIR'
+    ) {
+      return null;
+    }
+    diagnostics.push({
+      source: filePath,
+      message: `Failed to inspect ${label}: ${err instanceof Error ? err.message : String(err)}`,
+    });
+    return null;
+  }
+
+  if (!stats.isFile() || stats.isSymbolicLink()) {
+    diagnostics.push({
+      source: filePath,
+      message: `Skipping ${label} because it is not a safe regular file: ${path.basename(filePath)}.`,
+    });
+    return null;
+  }
+
+  try {
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const parsed = JSON.parse(content);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      diagnostics.push({
+        source: filePath,
+        message: `Skipping ${label} because it does not contain a valid JSON object: ${path.basename(filePath)}.`,
+      });
+      return null;
+    }
+    return parsed as Record<string, unknown>;
+  } catch (err) {
+    diagnostics.push({
+      source: filePath,
+      message: `Failed to load ${label}: ${err instanceof Error ? err.message : String(err)}`,
+    });
+    return null;
+  }
 }
 
 /**
@@ -152,6 +226,7 @@ export class ExtensionManager {
   private policyOverrides: Record<string, string> = {};
   private extensionTrust: ExtensionTrustPolicy = {
     enforce: false,
+    requiresAllowlist: false,
     allowed: new Set(),
     denied: new Set(),
   };
@@ -169,12 +244,19 @@ export class ExtensionManager {
     this.extensionTrust = loadExtensionTrustPolicy(cwd, this.diagnostics);
     const globalDir = path.join(getStateSetDir(), 'extensions');
     const projectDir = path.join(cwd, '.stateset', 'extensions');
-    const files = [...listExtensionFiles(globalDir), ...listExtensionFiles(projectDir)];
-    if (!this.extensionTrust.enforce && files.length > 0) {
+    const projectDirResolved = path.resolve(projectDir);
+    const files = [
+      ...listExtensionFiles(globalDir, this.diagnostics),
+      ...listExtensionFiles(projectDir, this.diagnostics),
+    ];
+    const hasProjectExtensions = files.some((filePath) =>
+      isWithinDirectory(filePath, projectDirResolved),
+    );
+    if (!this.extensionTrust.enforce && hasProjectExtensions) {
       this.diagnostics.push({
         source: 'extensions',
         message:
-          'Extension trust policy is disabled. Enable STATESET_EXTENSIONS_ENFORCE_TRUST=true to apply allow/deny rules.',
+          'Project extension trust policy is disabled. Enable STATESET_EXTENSIONS_ENFORCE_TRUST=true and configure trust rules (allow/deny) to run project-local extensions.',
       });
     }
 
@@ -188,6 +270,13 @@ export class ExtensionManager {
         continue;
       }
       if (!isExtensionFileSafe(filePath, this.diagnostics)) {
+        continue;
+      }
+      if (!this.extensionTrust.enforce && isWithinDirectory(filePath, projectDirResolved)) {
+        this.diagnostics.push({
+          source: filePath,
+          message: `Project extension "${extensionName}" is blocked until trust policy is enforced.`,
+        });
         continue;
       }
       if (!isExtensionTrusted(extensionName, filePath, this.extensionTrust, this.diagnostics)) {
@@ -441,6 +530,15 @@ function isExtensionFileSafe(filePath: string, diagnostics: ExtensionDiagnostic[
   return true;
 }
 
+function isWithinDirectory(filePath: string, parentDir: string): boolean {
+  const normalizedFile = path.resolve(filePath);
+  const normalizedParent = path.resolve(parentDir);
+  return (
+    normalizedFile === normalizedParent ||
+    normalizedFile.startsWith(`${normalizedParent}${path.sep}`)
+  );
+}
+
 function matchPattern(value: string, pattern: string): boolean {
   if (pattern === '*') return true;
   const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
@@ -475,6 +573,7 @@ function loadExtensionTrustPolicy(
 ): ExtensionTrustPolicy {
   const policy: ExtensionTrustPolicy = {
     enforce: false,
+    requiresAllowlist: false,
     allowed: new Set(),
     denied: new Set(),
   };
@@ -484,8 +583,14 @@ function loadExtensionTrustPolicy(
     process.env.STATESET_EXTENSIONS_ENFORCE_TRUST?.toLowerCase() === 'true';
   const envAllow = parseCommaSeparatedList(process.env.STATESET_EXTENSIONS_ALLOW);
   const envDeny = parseCommaSeparatedList(process.env.STATESET_EXTENSIONS_DENY);
+  let hasExplicitEnforce = false;
 
-  if (envEnforce || envAllow.size > 0) {
+  if (envEnforce) {
+    hasExplicitEnforce = true;
+    policy.enforce = true;
+  }
+  const hasEnvTrustEntries = envAllow.size > 0 || envDeny.size > 0;
+  if (hasEnvTrustEntries) {
     policy.enforce = true;
   }
 
@@ -498,40 +603,37 @@ function loadExtensionTrustPolicy(
   ]);
 
   for (const filePath of policyPaths) {
-    if (!fs.existsSync(filePath)) continue;
-    try {
-      const content = fs.readFileSync(filePath, 'utf-8');
-      const parsed = JSON.parse(content) as {
-        enforce?: boolean;
-        allow?: unknown;
-        allowed?: unknown;
-        deny?: unknown;
-        denied?: unknown;
-      };
+    const parsed = readSafeJsonFile<{
+      enforce?: boolean;
+      allow?: unknown;
+      allowed?: unknown;
+      deny?: unknown;
+      denied?: unknown;
+    }>(filePath, diagnostics, 'extension trust policy');
+    if (!parsed) continue;
 
-      if (typeof parsed.enforce === 'boolean' && parsed.enforce) {
-        policy.enforce = true;
-      }
-
-      const fileAllowed = parseTrustArray(parsed.allow ?? parsed.allowed);
-      const fileDenied = parseTrustArray(parsed.deny ?? parsed.denied);
-
-      for (const name of fileAllowed) {
-        policy.allowed.add(name);
-      }
-      for (const name of fileDenied) {
-        policy.denied.add(name);
-      }
-
-      if (fileAllowed.length > 0) {
-        policy.enforce = true;
-      }
-    } catch (err) {
-      diagnostics.push({
-        source: filePath,
-        message: `Failed to load extension trust policy: ${err instanceof Error ? err.message : String(err)}`,
-      });
+    if (typeof parsed.enforce === 'boolean' && parsed.enforce) {
+      policy.enforce = true;
+      hasExplicitEnforce = true;
     }
+
+    const fileAllowed = parseTrustArray(parsed.allow ?? parsed.allowed);
+    const fileDenied = parseTrustArray(parsed.deny ?? parsed.denied);
+
+    for (const name of fileAllowed) {
+      policy.allowed.add(name);
+    }
+    for (const name of fileDenied) {
+      policy.denied.add(name);
+    }
+
+    if (fileAllowed.length > 0 || fileDenied.length > 0) {
+      policy.enforce = true;
+    }
+  }
+
+  if (hasExplicitEnforce && policy.allowed.size === 0 && policy.denied.size === 0) {
+    policy.requiresAllowlist = true;
   }
 
   return policy;
@@ -552,15 +654,15 @@ function isExtensionTrusted(
     return false;
   }
   if (!policy.enforce) return true;
-  if (policy.allowed.size === 0) {
+  if (policy.requiresAllowlist && policy.allowed.size === 0) {
     diagnostics.push({
       source: filePath,
       message:
-        'Extension trust policy is enforced, but no allowlist is configured. Configure STATESET_EXTENSIONS_ALLOW.',
+        'Extension trust policy is enforced without an allowlist. Configure STATESET_EXTENSIONS_ALLOW.',
     });
     return false;
   }
-  if (!policy.allowed.has(normalized)) {
+  if (policy.allowed.size > 0 && !policy.allowed.has(normalized)) {
     diagnostics.push({
       source: filePath,
       message: `Extension "${extensionName}" blocked by trust policy. Add to allowlist.`,
@@ -585,28 +687,30 @@ function loadPolicyOverrides(
   const files = [globalPath, projectPath];
 
   for (const filePath of files) {
-    if (!fs.existsSync(filePath)) continue;
-    try {
-      const content = fs.readFileSync(filePath, 'utf-8');
-      const parsed = JSON.parse(content) as { toolHooks?: Record<string, string> };
-      if (!parsed || typeof parsed !== 'object') continue;
-      if (parsed.toolHooks && typeof parsed.toolHooks === 'object') {
-        for (const [key, value] of Object.entries(parsed.toolHooks)) {
-          if (value === 'allow' || value === 'deny') {
-            overrides[key] = value;
-          } else {
-            diagnostics.push({
-              source: filePath,
-              message: `Invalid policy value for "${key}": ${String(value)}`,
-            });
-          }
+    const parsed = readSafeJsonFile<{ toolHooks?: Record<string, string> }>(
+      filePath,
+      diagnostics,
+      'policy overrides file',
+    );
+    if (!parsed || typeof parsed !== 'object') {
+      continue;
+    }
+
+    if (
+      parsed.toolHooks &&
+      typeof parsed.toolHooks === 'object' &&
+      !Array.isArray(parsed.toolHooks)
+    ) {
+      for (const [key, value] of Object.entries(parsed.toolHooks)) {
+        if (value === 'allow' || value === 'deny') {
+          overrides[key] = value;
+        } else {
+          diagnostics.push({
+            source: filePath,
+            message: `Invalid policy value for "${key}": ${String(value)}`,
+          });
         }
       }
-    } catch (err) {
-      diagnostics.push({
-        source: filePath,
-        message: `Failed to parse policies.json: ${err instanceof Error ? err.message : String(err)}`,
-      });
     }
   }
 

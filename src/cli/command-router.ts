@@ -1,6 +1,7 @@
 import { handleChatCommand } from './commands-chat.js';
 import { handleSessionCommand } from './commands-session.js';
 import { handleExportCommand } from './commands-export.js';
+import { handleShortcutCommand } from './commands-shortcuts.js';
 import type { ChatContext, CommandResult } from './types.js';
 import { formatError } from '../utils/display.js';
 import type { ExtensionCommand } from '../extensions.js';
@@ -63,6 +64,17 @@ export async function routeSlashCommand(input: string, ctx: ChatContext): Promis
   try {
     if (await handleExportCommand(input, ctx)) {
       return { handled: true };
+    }
+  } catch (err) {
+    console.error(formatError(err instanceof Error ? err.message : String(err)));
+    return { handled: true, needsPrompt: true };
+  }
+
+  // Shortcut commands: /rules, /kb, /agents, /channels, /convos, /status, /test, etc.
+  try {
+    const shortcutResult = await handleShortcutCommand(input, ctx);
+    if (shortcutResult.handled) {
+      return shortcutResult;
     }
   } catch (err) {
     console.error(formatError(err instanceof Error ? err.message : String(err)));

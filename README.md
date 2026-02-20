@@ -189,12 +189,13 @@ On first run, scan the QR code with WhatsApp (Settings > Linked Devices > Link a
 **Options:**
 
 ```
---model <name>     Model to use (sonnet|haiku|opus or full model ID)
+--model <name>, -m  Model to use (sonnet|haiku|opus or full model ID)
 --allow <phones>   Comma-separated allowlist of phone numbers
 --groups           Allow messages from group chats
 --self-chat        Only respond to messages you send to yourself
 --auth-dir <path>  WhatsApp auth credential directory
 --reset            Clear stored auth and re-scan QR
+--version, -V      Show version
 --verbose, -v      Enable debug logging
 ```
 
@@ -238,8 +239,9 @@ export SLACK_APP_TOKEN=xapp-...
 **Options:**
 
 ```
---model <name>      Model to use (sonnet|haiku|opus or full model ID)
+--model <name>, -m   Model to use (sonnet|haiku|opus or full model ID)
 --allow <ids>       Comma-separated allowlist of Slack user IDs
+--version, -V       Show version
 --verbose, -v       Enable debug logging
 ```
 
@@ -300,7 +302,7 @@ On first WhatsApp run, scan the QR code (Settings > Linked Devices > Link a Devi
 **Options:**
 
 ```
---model <name>             Model to use (sonnet|haiku|opus or full model ID)
+--model <name>, -m        Model to use (sonnet|haiku|opus or full model ID)
 --no-slack                 Disable Slack channel
 --no-whatsapp              Disable WhatsApp channel
 --slack-allow <ids>        Comma-separated Slack user ID allowlist
@@ -308,6 +310,7 @@ On first WhatsApp run, scan the QR code (Settings > Linked Devices > Link a Devi
 --whatsapp-groups          Allow WhatsApp group messages
 --whatsapp-self-chat       Only respond to messages you send to yourself
 --whatsapp-auth-dir <path> WhatsApp auth credential directory
+--version, -V              Show version
 --verbose, -v              Enable debug logging
 ```
 
@@ -482,6 +485,13 @@ The CLI can load local context files, skills, and prompt templates from `~/.stat
 **Extensions**
 - Add JavaScript files in `.stateset/extensions/` or `~/.stateset/extensions/`
 - Each extension should export a default `register(api)` function and call `api.registerCommand(...)`
+- Project-local extensions require explicit trust policy configuration to run (`STATESET_EXTENSIONS_ENFORCE_TRUST=true` + allow/deny rules).
+- Trust policy behavior:
+  - `STATESET_EXTENSIONS_DENY` denies listed extensions (deny-only mode).
+  - `STATESET_EXTENSIONS_ALLOW` enables allowlist mode.
+  - `STATESET_EXTENSIONS_ENFORCE_TRUST=true` with no allow/deny entries blocks all project extensions.
+  - Trust files (`~/.stateset/extension-trust.json` or `.stateset/extension-trust.json`) support `enforce`, `allow`, and `deny` entries.
+    - `{"enforce": true, "allow": ["name"], "deny": ["name"]}`
 - Use `/extensions` to list loaded extensions and `/reload` to reload them
 - Extensions can also hook tool calls with `api.registerToolHook(...)` and `api.registerToolResultHook(...)`
 - Tool hook policies can be declared inline via `policy: "deny" | "allow"` plus `tools: ["shopify_*"]`

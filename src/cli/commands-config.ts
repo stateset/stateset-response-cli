@@ -157,7 +157,9 @@ export async function handleConfigCommand(input: string, ctx: ChatContext): Prom
     if (!modelArg) {
       console.log(formatSuccess(`Current model: ${ctx.agent.getModel()}`));
       console.log(
-        chalk.gray(`  Usage: /model <${getModelAliasText('list').replace(/,\s*/g, '|')}>`),
+        chalk.gray(
+          `  Usage: /model <${getModelAliasText('list').replace(/,\s*/g, '|')} | full model ID>`,
+        ),
       );
     } else {
       try {

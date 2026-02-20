@@ -155,6 +155,33 @@ export function printWelcome(orgId: string, version?: string, model?: string): v
   console.log(
     chalk.gray(`    /model    - Switch model (${getModelAliasText('list').replace(/,\s*/g, '/')})`),
   );
+  console.log(chalk.gray('    /rules    - List and manage rules'));
+  console.log(chalk.gray('    /kb       - Search and manage knowledge base entries'));
+  console.log(chalk.gray('    /agents   - List and manage agents'));
+  console.log(chalk.gray('    /convos   - Search and inspect conversations'));
+  console.log(chalk.gray('    /conversations - Alias for /convos'));
+  console.log(chalk.gray('    /channels - List and inspect channels'));
+  console.log(chalk.gray('    /messages - List and manage messages'));
+  console.log(chalk.gray('    /responses - List and rate responses'));
+  console.log(chalk.gray('    /analytics - Show analytics and usage snapshots'));
+  console.log(chalk.gray('    /status   - Show platform status summary'));
+  console.log(chalk.gray('    /stats    - Show platform stats'));
+  console.log(chalk.gray('    /snapshot - List/create/show local snapshots'));
+  console.log(chalk.gray('    /bulk     - Bulk import/export organization data'));
+  console.log(chalk.gray('    /pull     - Pull organization config into .stateset'));
+  console.log(chalk.gray('    /push     - Push .stateset config into current organization'));
+  console.log(chalk.gray('    /validate - Validate a local state-set bundle'));
+  console.log(chalk.gray('    /watch    - Watch .stateset and auto-sync changes'));
+  console.log(chalk.gray('    /test     - Test an input against active agent (--agent optional)'));
+  console.log(chalk.gray('    /diff     - Show config diff'));
+  console.log(chalk.gray('    /deploy   - Deploy pending changes (supports --schedule/--approve)'));
+  console.log(
+    chalk.gray('    /rollback - Rollback pending changes (supports --schedule/--approve)'),
+  );
+  console.log(chalk.gray('    /deployments - Inspect deployment history and scheduled jobs'));
+  console.log(chalk.gray('    /webhooks - Manage webhook subscriptions'));
+  console.log(chalk.gray('    /alerts   - Manage alert rules'));
+  console.log(chalk.gray('    /monitor  - Watch live platform metrics'));
   console.log(chalk.gray('    /apply    - Toggle write operations'));
   console.log(chalk.gray('    /redact   - Toggle redaction'));
   console.log(chalk.gray('    /usage    - Toggle usage summaries'));
@@ -283,6 +310,94 @@ export function printHelp(): void {
   console.log(
     chalk.cyan('    /session-meta [session] [json|md] [out=path] [--unsafe-path]') +
       chalk.gray('Show or export session metadata'),
+  );
+  console.log('');
+
+  console.log(chalk.bold('  Shortcut Commands'));
+  console.log(
+    chalk.cyan('    /rules [get|list|create|toggle|delete|import|export|agent|<id>]') +
+      chalk.gray('Manage agent rules'),
+  );
+  console.log(
+    chalk.cyan('    /kb [search|add|delete|scroll|list|info]') + chalk.gray('Manage KB entries'),
+  );
+  console.log(
+    chalk.cyan('    /agents [list|get|create|switch|export|import|bootstrap|<id>]') +
+      chalk.gray('Manage agents'),
+  );
+  console.log(
+    chalk.cyan('    /channels [list|create|messages|<id>]') +
+      chalk.gray('Manage conversation channels'),
+  );
+  console.log(
+    chalk.cyan('    /convos [get|recent|search|count|export|replay|tag|<id>]') +
+      chalk.gray('Inspect conversations'),
+  );
+  console.log(
+    chalk.cyan('    /conversations [get|recent|search|count|export|replay|tag|<id>]') +
+      chalk.gray('Alias for /convos'),
+  );
+  console.log(
+    chalk.cyan('    /messages [list|get|search|count|create|annotate|delete|<id>]') +
+      chalk.gray('Manage messages'),
+  );
+  console.log(
+    chalk.cyan('    /responses [list|search|count|get|rate|<id>]') +
+      chalk.gray('Inspect and rate responses'),
+  );
+  console.log(
+    chalk.cyan('    /status                ') + chalk.gray('Show platform status summary'),
+  );
+  console.log(
+    chalk.cyan('    /stats                 ') +
+      chalk.gray('Show analytics summary (supports positional window: 7d/30d/90d)'),
+  );
+  console.log(
+    chalk.cyan('    /analytics            ') +
+      chalk.gray('Show analytics summaries (supports positional window: 7d/30d/90d)'),
+  );
+  console.log(
+    chalk.cyan('    /snapshot [list|create|show]') + chalk.gray('Manage local snapshots'),
+  );
+  console.log(
+    chalk.cyan('    /bulk [export|import] ') + chalk.gray('Bulk import/export workflows'),
+  );
+  console.log(
+    chalk.cyan('    /pull [dir]           ') + chalk.gray('Pull remote config into a directory'),
+  );
+  console.log(
+    chalk.cyan('    /push [source]        ') + chalk.gray('Push a local config file or directory'),
+  );
+  console.log(
+    chalk.cyan('    /validate [source]    ') + chalk.gray('Validate local state-set payload'),
+  );
+  console.log(
+    chalk.cyan('    /watch [dir]          ') + chalk.gray('Watch .stateset for changes and sync'),
+  );
+  console.log(
+    chalk.cyan('    /webhooks [list|create|test|logs|delete]') +
+      chalk.gray('Manage webhook subscriptions'),
+  );
+  console.log(
+    chalk.cyan('    /alerts [list|get|create|delete]') + chalk.gray('Manage alert rules'),
+  );
+  console.log(chalk.cyan('    /monitor [status|live]') + chalk.gray('Watch live platform metrics'));
+  console.log(
+    chalk.cyan('    /test [message...] [--agent <agent-id>]') +
+      chalk.gray('Run a non-persistent test message'),
+  );
+  console.log(chalk.cyan('    /diff                  ') + chalk.gray('Show config diff'));
+  console.log(
+    chalk.cyan('    /deploy                ') +
+      chalk.gray('Push snapshot-backed changes (--schedule/--approve)'),
+  );
+  console.log(
+    chalk.cyan('    /rollback              ') +
+      chalk.gray('Rollback config changes (--schedule/--approve)'),
+  );
+  console.log(
+    chalk.cyan('    /deployments           ') +
+      chalk.gray('Inspect deployment history and scheduled jobs'),
   );
   console.log('');
 

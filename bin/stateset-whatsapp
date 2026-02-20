@@ -2,65 +2,56 @@
 
 import { WhatsAppGateway } from '../dist/whatsapp/gateway.js';
 import { clearAuth } from '../dist/whatsapp/session.js';
-import { configExists, getAnthropicApiKey, getCurrentOrg, resolveModel } from '../dist/config.js';
+import {
+  configExists,
+  getAnthropicApiKey,
+  getCurrentOrg,
+  resolveModelOrThrow,
+} from '../dist/config.js';
 import { logger } from '../dist/lib/logger.js';
 import { installGlobalErrorHandlers } from '../dist/lib/errors.js';
+import { createRequire } from 'node:module';
+import { parseWhatsAppArgs } from '../dist/cli/gateway-args.js';
 
 installGlobalErrorHandlers();
+const require = createRequire(import.meta.url);
+const pkg = require('../package.json') as { version?: string };
 
 // ---------------------------------------------------------------------------
 // CLI argument parsing
 // ---------------------------------------------------------------------------
 
 const args = process.argv.slice(2);
-const options = {
-  model: undefined,
-  allow: undefined,
-  groups: false,
-  selfChat: false,
-  authDir: undefined,
-  reset: false,
-  verbose: false,
+let options: {
+  model: string | undefined;
+  allow: string[] | undefined;
+  groups: boolean;
+  selfChat: boolean;
+  authDir: string | undefined;
+  reset: boolean;
+  verbose: boolean;
 };
 
-for (let i = 0; i < args.length; i++) {
-  switch (args[i]) {
-    case '--model':
-      options.model = args[++i];
-      break;
-    case '--allow':
-      options.allow = args[++i]?.split(',').map(s => s.trim()).filter(Boolean);
-      break;
-    case '--groups':
-      options.groups = true;
-      break;
-    case '--self-chat':
-      options.selfChat = true;
-      break;
-    case '--auth-dir':
-      options.authDir = args[++i];
-      break;
-    case '--reset':
-      options.reset = true;
-      break;
-    case '--verbose':
-    case '-v':
-      options.verbose = true;
-      break;
-    case '--help':
-    case '-h':
-      console.log(`
+try {
+  const parsed = parseWhatsAppArgs(args);
+  if (parsed.showVersion) {
+    console.log(pkg.version || '0.0.0');
+    process.exit(0);
+  }
+  if (parsed.showHelp) {
+    console.log(`
 StateSet Response — WhatsApp Gateway
 
 Usage: response-whatsapp [options]
 
 Options:
-  --model <name>     Model to use (sonnet, haiku, opus)       [default: config]
+  --model <name>, -m  Model to use (sonnet, haiku, opus or full model ID) [default: config]
   --allow <phones>   Comma-separated allowlist of phone numbers
   --groups           Allow messages from group chats           [default: false]
   --self-chat        Only respond to messages you send to yourself
   --auth-dir <path>  WhatsApp auth credential directory        [default: ~/.stateset/whatsapp-auth]
   --reset            Clear stored WhatsApp auth and re-scan QR
+  --version, -V      Show this version
   --verbose, -v      Enable debug logging
   --help, -h         Show this help message
 
@@ -71,8 +62,22 @@ Examples:
   response-whatsapp --self-chat               Only respond to your self-chat
   response-whatsapp --reset                   Re-authenticate with QR scan
 `);
-      process.exit(0);
+`);
+    process.exit(0);
   }
+  options = {
+    model: parsed.model,
+    allow: parsed.allowList,
+    groups: parsed.allowGroups,
+    selfChat: parsed.selfChatOnly,
+    authDir: parsed.authDir,
+    reset: parsed.resetAuth,
+    verbose: parsed.verbose,
+  };
+} catch (err) {
+  console.error(`Error: ${err instanceof Error ? err.message : err}`);
+  console.error('Run "response-whatsapp --help" for supported options.');
+  process.exit(1);
 }
 
 // ---------------------------------------------------------------------------
@@ -98,17 +103,19 @@ try {
   process.exit(1);
 }
 
+let orgId = '';
 try {
-  getCurrentOrg();
+  orgId = getCurrentOrg().orgId;
 } catch (err) {
   console.error(`Error: ${err instanceof Error ? err.message : err}`);
   process.exit(1);
 }
 
 if (options.model) {
-  const resolved = resolveModel(options.model);
-  if (!resolved) {
-    console.error(`Error: Unknown model "${options.model}". Valid: sonnet, haiku, opus`);
+  try {
+    options.model = resolveModelOrThrow(options.model, 'valid');
+  } catch (err) {
+    console.error(`Error: ${err instanceof Error ? err.message : err}`);
     process.exit(1);
   }
 }
@@ -118,15 +125,20 @@ if (options.model) {
 // ---------------------------------------------------------------------------
 
 if (options.reset) {
-  clearAuth(options.authDir);
-  console.log('WhatsApp auth credentials cleared. You will need to scan the QR code again.');
+  try {
+    clearAuth(options.authDir);
+    console.log('WhatsApp auth credentials cleared. You will need to scan the QR code again.');
+  } catch (err) {
+    console.error(
+      `Error: Unable to clear WhatsApp auth credentials (${err instanceof Error ? err.message : err})`,
+    );
+    process.exit(1);
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Banner
 // ---------------------------------------------------------------------------
-
-const { orgId } = getCurrentOrg();
 
 console.log(`
 ╔═══════════════════════════════════════════════════╗
@@ -152,14 +164,22 @@ const gateway = new WhatsAppGateway({
   verbose: options.verbose,
 });
 
+let isShuttingDown = false;
 const shutdown = async () => {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
   console.log('\nShutting down gracefully...');
-  await gateway.stop();
-  process.exit(0);
+  try {
+    await gateway.stop();
+  } catch (err) {
+    console.error(`Error during shutdown: ${err instanceof Error ? err.message : String(err)}`);
+  } finally {
+    process.exit(0);
+  }
 };
 
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+process.once('SIGINT', shutdown);
+process.once('SIGTERM', shutdown);
 
 gateway.start().catch(err => {
   console.error('Failed to start gateway:', err instanceof Error ? err.message : err);

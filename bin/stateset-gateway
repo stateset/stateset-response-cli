@@ -1,62 +1,45 @@
 #!/usr/bin/env node
 
 import { Orchestrator } from '../dist/gateway/orchestrator.js';
-import { configExists, getAnthropicApiKey, getCurrentOrg, resolveModel } from '../dist/config.js';
+import {
+  configExists,
+  getAnthropicApiKey,
+  getCurrentOrg,
+  resolveModelOrThrow,
+} from '../dist/config.js';
 import { logger } from '../dist/lib/logger.js';
 import { installGlobalErrorHandlers } from '../dist/lib/errors.js';
+import { createRequire } from 'node:module';
+import { parseGatewayArgs } from '../dist/cli/gateway-args.js';
 
 installGlobalErrorHandlers();
+const require = createRequire(import.meta.url);
+const pkg = require('../package.json') as { version?: string };
 
 // ---------------------------------------------------------------------------
 // CLI argument parsing
 // ---------------------------------------------------------------------------
 
 const args = process.argv.slice(2);
-const options = {
-  model: undefined,
-  slackAllow: undefined,
-  whatsappAllow: undefined,
-  whatsappGroups: false,
-  whatsappSelfChat: false,
-  whatsappAuthDir: undefined,
-  noSlack: false,
-  noWhatsapp: false,
-  verbose: false,
+let options: {
+  model: string | undefined;
+  slackAllowList?: string[] | undefined;
+  whatsappAllowList?: string[] | undefined;
+  whatsappGroups: boolean;
+  whatsappSelfChatOnly: boolean;
+  whatsappAuthDir: string | undefined;
+  slackEnabled: boolean;
+  whatsappEnabled: boolean;
+  verbose: boolean;
 };
-
-for (let i = 0; i < args.length; i++) {
-  switch (args[i]) {
-    case '--model':
-      options.model = args[++i];
-      break;
-    case '--slack-allow':
-      options.slackAllow = args[++i]?.split(',').map(s => s.trim()).filter(Boolean);
-      break;
-    case '--whatsapp-allow':
-      options.whatsappAllow = args[++i]?.split(',').map(s => s.trim()).filter(Boolean);
-      break;
-    case '--whatsapp-groups':
-      options.whatsappGroups = true;
-      break;
-    case '--whatsapp-self-chat':
-      options.whatsappSelfChat = true;
-      break;
-    case '--whatsapp-auth-dir':
-      options.whatsappAuthDir = args[++i];
-      break;
-    case '--no-slack':
-      options.noSlack = true;
-      break;
-    case '--no-whatsapp':
-      options.noWhatsapp = true;
-      break;
-    case '--verbose':
-    case '-v':
-      options.verbose = true;
-      break;
-    case '--help':
-    case '-h':
-      console.log(`
+try {
+  const parsed = parseGatewayArgs(args);
+  if (parsed.showVersion) {
+    console.log(pkg.version || '0.0.0');
+    process.exit(0);
+  }
+  if (parsed.showHelp) {
+    console.log(`
 StateSet Response — Multi-Channel Gateway
 
 Runs Slack and WhatsApp gateways simultaneously from a single process.
@@ -65,7 +48,7 @@ Channels auto-detect based on environment variables and installed packages.
 Usage: response-gateway [options]
 
 Options:
-  --model <name>             Model to use (sonnet, haiku, opus)     [default: config]
+  --model <name>, -m         Model to use (sonnet, haiku, opus or full model ID) [default: config]
   --no-slack                 Disable Slack channel
   --no-whatsapp              Disable WhatsApp channel
   --slack-allow <ids>        Comma-separated Slack user ID allowlist
@@ -73,6 +56,7 @@ Options:
   --whatsapp-groups          Allow WhatsApp group messages          [default: false]
   --whatsapp-self-chat       Only respond to messages you send to yourself
   --whatsapp-auth-dir <path> WhatsApp auth credential directory
+  --version, -V              Show this version
   --verbose, -v              Enable debug logging
   --help, -h                 Show this help message
 
@@ -90,8 +74,23 @@ Examples:
   response-gateway --no-whatsapp            Slack only
   response-gateway --model opus --verbose   Use Opus with debug logging
 `);
-      process.exit(0);
+    process.exit(0);
   }
+  options = {
+    model: parsed.model,
+    slackAllowList: parsed.slackAllowList,
+    whatsappAllowList: parsed.whatsappAllowList,
+    whatsappGroups: parsed.whatsappAllowGroups,
+    whatsappSelfChatOnly: parsed.whatsappSelfChatOnly,
+    whatsappAuthDir: parsed.whatsappAuthDir,
+    slackEnabled: parsed.slackEnabled,
+    whatsappEnabled: parsed.whatsappEnabled,
+    verbose: parsed.verbose,
+  };
+} catch (err) {
+  console.error(`Error: ${err instanceof Error ? err.message : err}`);
+  console.error('Run "response-gateway --help" for supported options.');
+  process.exit(1);
 }
 
 // ---------------------------------------------------------------------------
@@ -115,15 +114,19 @@ try { getAnthropicApiKey(); } catch (err) {
   process.exit(1);
 }
 
-try { getCurrentOrg(); } catch (err) {
+let currentOrgId = '';
+try {
+  currentOrgId = getCurrentOrg().orgId;
+} catch (err) {
   console.error(`Error: ${err instanceof Error ? err.message : err}`);
   process.exit(1);
 }
 
 if (options.model) {
-  const resolved = resolveModel(options.model);
-  if (!resolved) {
-    console.error(`Error: Unknown model "${options.model}". Valid: sonnet, haiku, opus`);
+  try {
+    options.model = resolveModelOrThrow(options.model, 'valid');
+  } catch (err) {
+    console.error(`Error: ${err instanceof Error ? err.message : err}`);
     process.exit(1);
   }
 }
@@ -132,13 +135,11 @@ if (options.model) {
 // Banner
 // ---------------------------------------------------------------------------
 
-const { orgId } = getCurrentOrg();
-
 console.log(`
 ╔═══════════════════════════════════════════════════╗
 ║     StateSet Response — Multi-Channel Gateway     ║
 ╠═══════════════════════════════════════════════════╣
-║  Organization: ${orgId.padEnd(34)}║
+║  Organization: ${currentOrgId.padEnd(34)}║
 ║  Model:        ${(options.model ?? 'default').padEnd(34)}║
 ╚═══════════════════════════════════════════════════╝
 `);
@@ -150,23 +151,33 @@ console.log(`
 const orchestrator = new Orchestrator({
   model: options.model,
   verbose: options.verbose,
-  slackEnabled: !options.noSlack,
-  slackAllowList: options.slackAllow,
-  whatsappEnabled: !options.noWhatsapp,
-  whatsappAllowList: options.whatsappAllow,
+  slackEnabled: options.slackEnabled,
+  slackAllowList: options.slackAllowList,
+  whatsappEnabled: options.whatsappEnabled,
+  whatsappAllowList: options.whatsappAllowList,
   whatsappAllowGroups: options.whatsappGroups,
-  whatsappSelfChatOnly: options.whatsappSelfChat,
+  whatsappSelfChatOnly: options.whatsappSelfChatOnly,
   whatsappAuthDir: options.whatsappAuthDir,
 });
 
+let isShuttingDown = false;
 const shutdown = async () => {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
   console.log('\nShutting down gracefully...');
-  await orchestrator.stop();
-  process.exit(0);
+  try {
+    await orchestrator.stop();
+  } catch (err) {
+    console.error(
+      `Error during shutdown: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  } finally {
+    process.exit(0);
+  }
 };
 
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+process.once('SIGINT', shutdown);
+process.once('SIGTERM', shutdown);
 
 orchestrator.start().catch(err => {
   console.error('Failed to start gateway:', err instanceof Error ? err.message : err);

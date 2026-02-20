@@ -1,45 +1,48 @@
 #!/usr/bin/env node
 
 import { SlackGateway } from '../dist/slack/gateway.js';
-import { configExists, getAnthropicApiKey, getCurrentOrg, resolveModel } from '../dist/config.js';
+import {
+  configExists,
+  getAnthropicApiKey,
+  getCurrentOrg,
+  resolveModelOrThrow,
+} from '../dist/config.js';
 import { logger } from '../dist/lib/logger.js';
 import { installGlobalErrorHandlers } from '../dist/lib/errors.js';
+import { createRequire } from 'node:module';
+import { parseSlackArgs } from '../dist/cli/gateway-args.js';
 
 installGlobalErrorHandlers();
+const require = createRequire(import.meta.url);
+const pkg = require('../package.json') as { version?: string };
 
 // ---------------------------------------------------------------------------
 // CLI argument parsing
 // ---------------------------------------------------------------------------
 
 const args = process.argv.slice(2);
-const options = {
-  model: undefined,
-  allow: undefined,
-  verbose: false,
+let options: {
+  model: string | undefined;
+  allow: string[] | undefined;
+  verbose: boolean;
 };
 
-for (let i = 0; i < args.length; i++) {
-  switch (args[i]) {
-    case '--model':
-      options.model = args[++i];
-      break;
-    case '--allow':
-      options.allow = args[++i]?.split(',').map(s => s.trim()).filter(Boolean);
-      break;
-    case '--verbose':
-    case '-v':
-      options.verbose = true;
-      break;
-    case '--help':
-    case '-h':
-      console.log(`
+try {
+  const parsed = parseSlackArgs(args);
+  if (parsed.showVersion) {
+    console.log(pkg.version || '0.0.0');
+    process.exit(0);
+  }
+  if (parsed.showHelp) {
+    console.log(`
 StateSet Response — Slack Gateway
 
 Usage: response-slack [options]
 
 Options:
-  --model <name>      Model to use (sonnet, haiku, opus)       [default: config]
+  --model <name>, -m  Model to use (sonnet, haiku, opus or full model ID) [default: config]
   --allow <ids>       Comma-separated allowlist of Slack user IDs
+  --version, -V       Show this version
   --verbose, -v       Enable debug logging
   --help, -h          Show this help message
 
@@ -70,8 +73,18 @@ Examples:
   response-slack --allow U12345678,U87654321  Only allow specific users
   response-slack --verbose                    Debug logging
 `);
-      process.exit(0);
+`);
+    process.exit(0);
   }
+  options = {
+    model: parsed.model,
+    allow: parsed.allowList,
+    verbose: parsed.verbose,
+  };
+} catch (err) {
+  console.error(`Error: ${err instanceof Error ? err.message : err}`);
+  console.error('Run "response-slack --help" for supported options.');
+  process.exit(1);
 }
 
 // ---------------------------------------------------------------------------
@@ -97,17 +110,19 @@ try {
   process.exit(1);
 }
 
+let orgId = '';
 try {
-  getCurrentOrg();
+  orgId = getCurrentOrg().orgId;
 } catch (err) {
   console.error(`Error: ${err instanceof Error ? err.message : err}`);
   process.exit(1);
 }
 
 if (options.model) {
-  const resolved = resolveModel(options.model);
-  if (!resolved) {
-    console.error(`Error: Unknown model "${options.model}". Valid: sonnet, haiku, opus`);
+  try {
+    options.model = resolveModelOrThrow(options.model, 'valid');
+  } catch (err) {
+    console.error(`Error: ${err instanceof Error ? err.message : err}`);
     process.exit(1);
   }
 }
@@ -128,8 +143,6 @@ if (!process.env.SLACK_APP_TOKEN) {
 // Banner
 // ---------------------------------------------------------------------------
 
-const { orgId } = getCurrentOrg();
-
 console.log(`
 ╔═══════════════════════════════════════════════════╗
 ║        StateSet Response — Slack Gateway          ║
@@ -149,14 +162,22 @@ const gateway = new SlackGateway({
   verbose: options.verbose,
 });
 
+let isShuttingDown = false;
 const shutdown = async () => {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
   console.log('\nShutting down gracefully...');
-  await gateway.stop();
-  process.exit(0);
+  try {
+    await gateway.stop();
+  } catch (err) {
+    console.error(`Error during shutdown: ${err instanceof Error ? err.message : String(err)}`);
+  } finally {
+    process.exit(0);
+  }
 };
 
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+process.once('SIGINT', shutdown);
+process.once('SIGTERM', shutdown);
 
 gateway.start().catch(err => {
   console.error('Failed to start gateway:', err instanceof Error ? err.message : err);

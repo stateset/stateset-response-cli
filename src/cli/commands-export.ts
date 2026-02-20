@@ -218,8 +218,9 @@ export async function handleExportCommand(input: string, ctx: ChatContext): Prom
     let deleted = 0;
     for (const file of toDelete) {
       try {
-        fs.unlinkSync(file.path);
-        deleted++;
+        if (deleteExportFile(target, file.name)) {
+          deleted++;
+        }
       } catch {
         // ignore
       }

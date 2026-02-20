@@ -61,6 +61,96 @@ export function printIntegrationStatus(cwd: string): void {
   console.log(chalk.gray('  Tip: run "response integrations setup" to configure.'));
 }
 
+function buildIntegrationRows(cwd: string, integrationId?: string): Array<Record<string, string>> {
+  const lowerTarget = (integrationId || '').trim().toLowerCase();
+  const integrations = listIntegrations();
+  const { scope, store } = loadIntegrationsStore(cwd);
+
+  const rows: Array<Record<string, string>> = [];
+  const matched = integrations.filter((def) => {
+    if (!lowerTarget) return true;
+    return def.id.toLowerCase() === lowerTarget || def.label.toLowerCase() === lowerTarget;
+  });
+
+  for (const def of matched) {
+    const entry = store.integrations[def.id];
+    const envStatus = getIntegrationEnvStatus(def);
+    const configKeys = entry?.config ? Object.keys(entry.config).length : 0;
+    const status = entry
+      ? entry.enabled === false
+        ? 'disabled'
+        : configKeys > 0
+          ? 'configured'
+          : 'empty'
+      : 'not configured';
+    const row: Record<string, string> = {
+      integration: def.label,
+      id: def.id,
+      env: envStatus.status,
+      config: status,
+      scope: scope || 'local',
+    };
+    row.configKeys = String(configKeys);
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+export function printIntegrationHealth(
+  cwd: string,
+  integrationId?: string,
+  detailed = false,
+): void {
+  const rows = buildIntegrationRows(cwd, integrationId);
+  if (rows.length === 0) {
+    console.log(formatWarning(`Integration not found: ${integrationId}`));
+    return;
+  }
+  const columns = detailed
+    ? ['integration', 'id', 'env', 'config', 'configKeys', 'scope']
+    : ['integration', 'env', 'config'];
+  console.log(formatSuccess('Integration health'));
+  console.log(formatTable(rows, columns));
+  if (detailed) {
+    console.log(
+      chalk.gray('  Health checks are configured by the integration endpoint availability.'),
+    );
+  }
+}
+
+export function printIntegrationLimits(cwd: string, integrationId?: string): void {
+  const rows = buildIntegrationRows(cwd, integrationId);
+  if (rows.length === 0) {
+    console.log(formatWarning(`Integration not found: ${integrationId}`));
+    return;
+  }
+  const limitsRows = rows.map((row) => ({
+    integration: row.integration,
+    id: row.id,
+    status: row.config === 'configured' ? 'limits not wired' : row.config,
+    env: row.env,
+  }));
+  console.log(formatSuccess('Integration limits'));
+  console.log(formatTable(limitsRows, ['integration', 'status', 'env']));
+}
+
+export function printIntegrationLogs(cwd: string, integrationId?: string): void {
+  const rows = buildIntegrationRows(cwd, integrationId);
+  if (rows.length === 0) {
+    console.log(formatWarning(`Integration not found: ${integrationId}`));
+    return;
+  }
+  const logRows = rows.map((row) => ({
+    integration: row.integration,
+    id: row.id,
+    status: row.config === 'configured' ? 'local logs unavailable' : 'not configured',
+  }));
+  console.log(formatSuccess('Integration logs'));
+  console.log(formatTable(logRows, ['integration', 'status']));
+  console.log(chalk.gray('  No transport logs are persisted by default.'));
+}
+
 export async function runIntegrationsSetup(cwd: string): Promise<void> {
   const { scope: existingScope } = loadIntegrationsStore(cwd);
   const { scope } = await inquirer.prompt([
@@ -210,5 +300,37 @@ export function registerIntegrationsCommands(program: Command): void {
         return;
       }
       console.log(formatSuccess(`Integrations config (${scope}): ${storePath}`));
+    });
+
+  integrations
+    .command('health')
+    .description('Show integration health and connectivity')
+    .argument('[integration]', 'Integration id (optional)')
+    .option('--detailed', 'Include extra placeholders')
+    .action((integration: string | undefined, opts: { detailed?: boolean }) => {
+      printIntegrationHealth(process.cwd(), integration, Boolean(opts.detailed));
+    });
+
+  integrations
+    .command('limits')
+    .description('Show API rate limits and quotas')
+    .argument('[integration]', 'Integration id (optional)')
+    .action((integration: string | undefined) => {
+      printIntegrationLimits(process.cwd(), integration);
+    });
+
+  integrations
+    .command('logs')
+    .description('Show integration event logs')
+    .argument('[integration]', 'Integration id (optional)')
+    .option('--last <n>', 'Number of recent log rows')
+    .action((integration: string | undefined, opts: { last?: string }) => {
+      printIntegrationLogs(process.cwd(), integration);
+      if (opts.last) {
+        const count = Number.parseInt(opts.last, 10);
+        if (Number.isFinite(count) && count > 0) {
+          console.log(chalk.gray(`  Requested rows: ${count}`));
+        }
+      }
     });
 }

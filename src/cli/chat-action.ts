@@ -64,6 +64,14 @@ const KNOWN_SLASH_COMMANDS = [
   '/clear',
   '/history',
   '/model',
+  '/rules',
+  '/kb',
+  '/agents',
+  '/channels',
+  '/convos',
+  '/conversations',
+  '/messages',
+  '/responses',
   '/apply',
   '/redact',
   '/usage',
@@ -102,6 +110,18 @@ const KNOWN_SLASH_COMMANDS = [
   '/attach',
   '/attachments',
   '/attach-clear',
+  '/status',
+  '/snapshot',
+  '/bulk',
+  '/analytics',
+  '/stats',
+  '/test',
+  '/diff',
+  '/deploy',
+  '/rollback',
+  '/webhooks',
+  '/alerts',
+  '/monitor',
   '/exit',
   '/quit',
 ];
@@ -250,6 +270,18 @@ export async function startChatSession(
     await extensions.load(cwd);
   } catch (err) {
     console.error(formatError(err instanceof Error ? err.message : String(err)));
+  }
+  const extensionDiagnostics = extensions.listDiagnostics();
+  const blockedProjectExtensionWarning = extensionDiagnostics.find((entry) =>
+    entry.message.includes('Project extension trust policy is disabled'),
+  );
+  if (blockedProjectExtensionWarning) {
+    console.log('');
+    console.log(formatWarning(blockedProjectExtensionWarning.message));
+    console.log(
+      chalk.gray('  Tip: keep project extensions enabled only when running trusted repositories.'),
+    );
+    console.log('');
   }
 
   printWelcome(orgId, meta.version, model);

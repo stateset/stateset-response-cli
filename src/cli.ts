@@ -26,6 +26,7 @@ import { assertNodeVersion } from './cli/utils.js';
 import { registerAuthCommands } from './cli/auth.js';
 import { registerIntegrationsCommands } from './cli/commands-integrations.js';
 import { registerDoctorCommand } from './cli/commands-doctor.js';
+import { registerShortcutTopLevelCommands } from './cli/commands-shortcuts.js';
 import { startChatSession } from './cli/chat-action.js';
 
 const require = createRequire(import.meta.url);
@@ -43,6 +44,7 @@ program
 registerAuthCommands(program);
 registerIntegrationsCommands(program);
 registerDoctorCommand(program);
+registerShortcutTopLevelCommands(program);
 
 // Config commands
 const configCmd = program.command('config').description('Manage CLI configuration');
@@ -237,7 +239,7 @@ program
 program
   .command('events')
   .description('Run the event watcher for scheduled agent runs')
-  .option('--model <model>', `Model to use (${getModelAliasText('list')})`)
+  .option('--model <model>', `Model to use (${getModelAliasText('list')} or full model ID)`)
   .option('--session <name>', 'Default session name', 'default')
   .option('--apply', 'Allow write operations for integration tools')
   .option('--redact', 'Redact customer emails in integration outputs')
@@ -278,7 +280,7 @@ program
       let model: ModelId = getConfiguredModel();
       if (options.model) {
         try {
-          model = resolveModelOrThrow(options.model, 'valid');
+          model = resolveModelOrThrow(options.model);
         } catch (e: unknown) {
           console.error(formatError(e instanceof Error ? e.message : String(e)));
           process.exit(1);
@@ -324,7 +326,7 @@ program
 program
   .command('chat', { isDefault: true })
   .description('Start an interactive AI agent session')
-  .option('--model <model>', `Model to use (${getModelAliasText('list')})`)
+  .option('--model <model>', `Model to use (${getModelAliasText('list')} or full model ID)`)
   .option('--session <name>', 'Session name (default: "default")')
   .option(
     '--file <path>',
