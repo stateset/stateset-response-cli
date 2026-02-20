@@ -3,7 +3,7 @@
 AI-powered CLI for managing the [StateSet ResponseCX](https://response.cx) platform. Chat with an AI agent that can manage your agents, rules, skills, knowledge base, channels, messages, and more — all from the terminal.
 
 Includes optional WhatsApp and Slack gateways for connecting your agent to messaging platforms.
-Current version: `1.3.3`.
+Current version: `1.3.5`.
 
 ## Install
 
@@ -272,6 +272,80 @@ Event files live in `~/.stateset/events/` and support three types:
 
 Use `--session` to set a default session, `--usage` for token summaries, `--apply` to enable writes, `--redact` to enable PII redaction, and `--stdout` to print event results to the terminal.
 
+### Shortcut Commands
+
+Direct CLI commands for common platform operations — no interactive chat required.
+
+```bash
+# List resources
+response agents
+response rules
+response kb
+response channels
+response messages
+response responses
+
+# Platform status & analytics
+response status
+response stats
+response analytics --from 2026-02-01 --to 2026-02-19
+
+# Snapshots & diff
+response snapshot                          # Take a point-in-time snapshot
+response diff --from snap1 --to snap2      # Compare two snapshots
+
+# Deploy & rollback
+response deploy <source> [--dry-run] [--strict] [--yes]
+response rollback <source> [--dry-run] [--yes]
+response deployments [--status applied] [--limit 10]
+
+# Pull & push configuration
+response pull [--out ./backup]             # Export org config to disk
+response push <source> [--dry-run]         # Import config from file/directory
+
+# Bulk operations
+response bulk <resource> <action> [--json]
+
+# Backup & restore
+response backup [--out ./backup]
+response restore <source> [--dry-run] [--yes]
+
+# Validate configuration
+response validate <source> [--strict]
+
+# Watch for changes
+response watch [--interval 30] [--once]
+
+# Webhooks, alerts & monitoring
+response webhooks
+response alerts
+response monitor [--interval 60]
+```
+
+Most commands accept `--json` for machine-readable output and `--agent <id>` to scope to a specific agent.
+
+### Integrations Management
+
+Configure, inspect, and troubleshoot third-party integrations from the CLI.
+
+```bash
+# Show configuration status for all integrations
+response integrations status
+
+# Interactive setup wizard
+response integrations setup
+
+# Show config file path
+response integrations edit
+
+# Health, limits & logs
+response integrations health [integration] [--detailed]
+response integrations limits [integration]
+response integrations logs [integration]
+```
+
+Settings are stored in `~/.stateset/integrations.json` (global) or `.stateset/integrations.json` (project). Environment variables always override stored settings.
+
 ### Multi-Channel Gateway
 
 Run Slack and WhatsApp gateways together:
@@ -521,6 +595,10 @@ The CLI can load local context files, skills, and prompt templates from `~/.stat
 - When an extension hook denies a tool call, the CLI prompts to allow/deny once or persist the choice
 - `/permissions` lists stored decisions and `/permissions clear` resets them
 
+**Operations Store**
+
+The shortcut commands track webhooks, alerts, and deployments in a local store at `~/.stateset/platform-operations.json`. This powers `response webhooks`, `response alerts`, `response deployments`, and `response monitor`.
+
 ## Architecture
 
 The CLI uses the [Model Context Protocol (MCP)](https://modelcontextprotocol.io) to expose platform tools to Claude. On startup, the CLI spawns an MCP server as a child process over stdio. Claude calls tools through this server, which executes GraphQL queries against the StateSet backend.
@@ -547,6 +625,19 @@ npm run build
 
 # Run production build
 npm start
+
+# Run tests
+npm test
+
+# Run tests in watch mode
+npm run test:watch
+
+# Run tests with coverage
+npm run test:coverage
+
+# Lint & format
+npm run lint
+npm run format
 ```
 
 ## License
