@@ -137,6 +137,12 @@ export class Orchestrator {
         continue;
       }
 
+      const depReason = optionalDependencyErrorReason(startup.reason, plan.name);
+      if (depReason) {
+        results.push({ name: plan.name, status: 'skipped', reason: depReason });
+        continue;
+      }
+
       const msg = startup.reason instanceof Error ? startup.reason.message : String(startup.reason);
       results.push({ name: plan.name, status: 'error', reason: msg });
       this.log.error(`${plan.name} failed to start: ${msg}`);
@@ -158,6 +164,11 @@ export class Orchestrator {
           .map((entry) => `${entry.name}: ${entry.reason ?? 'unknown error'}`)
           .join('; ');
         throw new Error(`No channels started. Channel startup failures: ${reasons}`);
+      }
+      const skipped = results.filter((entry) => entry.status === 'skipped');
+      if (skipped.length > 0) {
+        this.log.info('All channels skipped; nothing to run.');
+        return;
       }
       throw new Error(
         'No channels started. Check environment variables, optional dependencies, and command flags.',

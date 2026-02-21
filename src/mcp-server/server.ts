@@ -3,6 +3,7 @@ import { logger } from '../lib/logger.js';
 import { createGraphQLClient, type GraphQLAuth } from './graphql-client.js';
 import { getCurrentOrg } from '../config.js';
 import {
+  type IntegrationFlags,
   getGorgiasConfigFromEnv,
   getIntegrationFlagsFromEnv,
   getKlaviyoConfigFromEnv,
@@ -43,6 +44,77 @@ import { registerShipFusionTools } from './tools/shipfusion.js';
 import { registerShipHawkTools } from './tools/shiphawk.js';
 import { registerZendeskTools } from './tools/zendesk.js';
 
+/* ------------------------------------------------------------------ */
+/*  Declarative integration registry                                   */
+/* ------------------------------------------------------------------ */
+
+interface IntegrationEntry {
+  /** Human-readable name used in warning messages. */
+  name: string;
+  /** Return the config object or null when the integration is not configured. May throw. */
+  getConfig: () => unknown;
+  /** One or more register functions to call with (server, config, flags). */
+  register: Array<(server: McpServer, config: any, flags: IntegrationFlags) => void>;
+}
+
+const INTEGRATIONS: IntegrationEntry[] = [
+  {
+    name: 'Shopify',
+    getConfig: getShopifyConfigFromEnv,
+    register: [
+      registerShopifyOrderTools,
+      registerShopifyHoldsTools,
+      registerShopifyRefundTools,
+      registerShopifyAdvancedTools,
+    ],
+  },
+  {
+    name: 'Gorgias',
+    getConfig: getGorgiasConfigFromEnv,
+    register: [registerGorgiasTools],
+  },
+  {
+    name: 'Recharge',
+    getConfig: getRechargeConfigFromEnv,
+    register: [registerRechargeTools],
+  },
+  {
+    name: 'Klaviyo',
+    getConfig: getKlaviyoConfigFromEnv,
+    register: [registerKlaviyoTools],
+  },
+  {
+    name: 'Loop Returns',
+    getConfig: getLoopConfigFromEnv,
+    register: [registerLoopTools],
+  },
+  {
+    name: 'ShipStation',
+    getConfig: getShipStationConfigFromEnv,
+    register: [registerShipStationTools],
+  },
+  {
+    name: 'ShipHero',
+    getConfig: getShipHeroConfigFromEnv,
+    register: [registerShipHeroTools],
+  },
+  {
+    name: 'ShipFusion',
+    getConfig: getShipFusionConfigFromEnv,
+    register: [registerShipFusionTools],
+  },
+  {
+    name: 'ShipHawk',
+    getConfig: getShipHawkConfigFromEnv,
+    register: [registerShipHawkTools],
+  },
+  {
+    name: 'Zendesk',
+    getConfig: getZendeskConfigFromEnv,
+    register: [registerZendeskTools],
+  },
+];
+
 export function createServer(): McpServer {
   const { orgId, config: orgConfig } = getCurrentOrg();
   const cliToken = orgConfig.cliToken?.trim();
@@ -82,117 +154,19 @@ export function createServer(): McpServer {
 
   const integrationFlags = getIntegrationFlagsFromEnv();
 
-  try {
-    const shopify = getShopifyConfigFromEnv();
-    if (shopify) {
-      registerShopifyOrderTools(server, shopify, integrationFlags);
-      registerShopifyHoldsTools(server, shopify, integrationFlags);
-      registerShopifyRefundTools(server, shopify, integrationFlags);
-      registerShopifyAdvancedTools(server, shopify, integrationFlags);
+  for (const integration of INTEGRATIONS) {
+    try {
+      const config = integration.getConfig();
+      if (config) {
+        for (const registerFn of integration.register) {
+          registerFn(server, config, integrationFlags);
+        }
+      }
+    } catch (error) {
+      logger.warn(
+        `${integration.name} tools disabled: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
-  } catch (error) {
-    logger.warn(
-      `Shopify tools disabled: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-
-  try {
-    const gorgias = getGorgiasConfigFromEnv();
-    if (gorgias) {
-      registerGorgiasTools(server, gorgias, integrationFlags);
-    }
-  } catch (error) {
-    logger.warn(
-      `Gorgias tools disabled: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-
-  try {
-    const recharge = getRechargeConfigFromEnv();
-    if (recharge) {
-      registerRechargeTools(server, recharge, integrationFlags);
-    }
-  } catch (error) {
-    logger.warn(
-      `Recharge tools disabled: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-
-  try {
-    const klaviyo = getKlaviyoConfigFromEnv();
-    if (klaviyo) {
-      registerKlaviyoTools(server, klaviyo, integrationFlags);
-    }
-  } catch (error) {
-    logger.warn(
-      `Klaviyo tools disabled: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-
-  try {
-    const loop = getLoopConfigFromEnv();
-    if (loop) {
-      registerLoopTools(server, loop, integrationFlags);
-    }
-  } catch (error) {
-    logger.warn(
-      `Loop Returns tools disabled: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-
-  try {
-    const shipstation = getShipStationConfigFromEnv();
-    if (shipstation) {
-      registerShipStationTools(server, shipstation, integrationFlags);
-    }
-  } catch (error) {
-    logger.warn(
-      `ShipStation tools disabled: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-
-  try {
-    const shiphero = getShipHeroConfigFromEnv();
-    if (shiphero) {
-      registerShipHeroTools(server, shiphero, integrationFlags);
-    }
-  } catch (error) {
-    logger.warn(
-      `ShipHero tools disabled: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-
-  try {
-    const shipfusion = getShipFusionConfigFromEnv();
-    if (shipfusion) {
-      registerShipFusionTools(server, shipfusion, integrationFlags);
-    }
-  } catch (error) {
-    logger.warn(
-      `ShipFusion tools disabled: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-
-  try {
-    const shiphawk = getShipHawkConfigFromEnv();
-    if (shiphawk) {
-      registerShipHawkTools(server, shiphawk, integrationFlags);
-    }
-  } catch (error) {
-    logger.warn(
-      `ShipHawk tools disabled: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-
-  try {
-    const zendesk = getZendeskConfigFromEnv();
-    if (zendesk) {
-      registerZendeskTools(server, zendesk, integrationFlags);
-    }
-  } catch (error) {
-    logger.warn(
-      `Zendesk tools disabled: ${error instanceof Error ? error.message : String(error)}`,
-    );
   }
 
   return server;

@@ -9,6 +9,7 @@ import {
   printHelp,
   printWelcome,
 } from '../utils/display.js';
+import { registerAllCommands } from '../cli/command-registry.js';
 
 describe('formatElapsed', () => {
   it('formats milliseconds under 1000', () => {
@@ -168,6 +169,7 @@ describe('formatDuration', () => {
 
 describe('cli help text', () => {
   it('includes /exit and /quit in printHelp', () => {
+    registerAllCommands();
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
     printHelp();
     const output = spy.mock.calls.map((c) => String(c[0])).join('\n');
@@ -177,11 +179,16 @@ describe('cli help text', () => {
     spy.mockRestore();
   });
 
-  it('includes /exit and /quit in printWelcome', () => {
+  it('includes essential commands in printWelcome', () => {
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
     printWelcome('org-id', '1.2.3', 'model-id');
     const output = spy.mock.calls.map((c) => String(c[0])).join('\n');
-    expect(output).toContain('/exit /quit');
+    expect(output).toContain('/help');
+    expect(output).toContain('/agents');
+    expect(output).toContain('/rules');
+    expect(output).toContain('/status');
+    expect(output).toContain('org-id');
+    expect(output).toContain('model-id');
     spy.mockRestore();
   });
 });

@@ -178,14 +178,14 @@ export async function handlePolicyCommand(input: string, ctx: ChatContext): Prom
       const data = readPolicyOverridesDetailed(ctx.cwd);
       const view = mode === 'local' ? data.local : mode === 'global' ? data.global : data.merged;
       const defaultPath = mode === 'global' ? data.globalPath : data.localPath;
-      const resolved = outPath
-        ? resolveSafeOutputPath(outPath, {
-            label: 'Policy export target',
-            allowOutside: allowUnsafePath,
-            allowedRoots: [ctx.cwd, getStateSetDir()],
-          })
-        : defaultPath;
       try {
+        const resolved = outPath
+          ? resolveSafeOutputPath(outPath, {
+              label: 'Policy export target',
+              allowOutside: allowUnsafePath,
+              allowedRoots: [ctx.cwd, getStateSetDir()],
+            })
+          : defaultPath;
         ensureDirExists(resolved);
         fs.writeFileSync(resolved, JSON.stringify(view, null, 2), 'utf-8');
         console.log(formatSuccess(`Policy overrides (${mode}) exported to ${resolved}`));

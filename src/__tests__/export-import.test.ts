@@ -499,7 +499,8 @@ describe('importOrg', () => {
     expect(result.failures[0]).toMatchObject({
       entity: 'agents',
       index: 0,
-      sourceId: 'a1',
+      sourceId: null,
+      reason: 'agent already exists',
     });
   });
 

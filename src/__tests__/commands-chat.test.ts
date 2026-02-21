@@ -1,6 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import { handleChatCommand } from '../cli/commands-chat.js';
 import type { ChatContext } from '../cli/types.js';
+import { registerAllCommands } from '../cli/command-registry.js';
+
+beforeAll(() => {
+  registerAllCommands();
+});
 
 vi.mock('../cli/commands-config.js', () => ({
   handleConfigCommand: vi.fn(async () => ({ handled: false })),

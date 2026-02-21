@@ -144,6 +144,16 @@ export class SessionStore {
     }
   }
 
+  getMessageCount(): number {
+    if (!fs.existsSync(this.contextPath)) return 0;
+    try {
+      const content = fs.readFileSync(this.contextPath, 'utf-8');
+      return content.split(/\n/).filter(Boolean).length;
+    } catch {
+      return 0;
+    }
+  }
+
   clear(): void {
     if (fs.existsSync(this.contextPath)) {
       fs.writeFileSync(this.contextPath, '', 'utf-8');

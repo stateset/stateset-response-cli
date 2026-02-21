@@ -34,7 +34,7 @@ vi.mock('inquirer', () => ({
 import inquirer from 'inquirer';
 import { registerAuthCommands } from '../cli/auth.js';
 
-const mockedPrompt = vi.mocked(inquirer.prompt as unknown as typeof mockPrompt);
+const _mockedPrompt = vi.mocked(inquirer.prompt as unknown as typeof mockPrompt);
 const mockedSaveConfig = vi.mocked(mockSaveConfig);
 
 describe('auth command', () => {
@@ -53,24 +53,26 @@ describe('auth command', () => {
     mockPrompt
       .mockResolvedValueOnce({ loginMethod: 'manual' })
       .mockResolvedValueOnce({ anthropicApiKey: '  sk-ant-test  ' })
-      .mockResolvedValueOnce({ orgId: '  org-123  ' })
-      .mockResolvedValueOnce({ orgName: '  Acme Org  ' })
-      .mockResolvedValueOnce({ graphqlEndpoint: '  https://example.com/graphql  ' })
-      .mockResolvedValueOnce({ adminSecret: '  admin-secret  ' });
+      .mockResolvedValueOnce({
+        orgId: 'org-123',
+        orgName: 'Acme Org',
+        graphqlEndpoint: 'https://example.com/graphql',
+        adminSecret: 'admin-secret',
+      });
 
     const program = new Command();
     registerAuthCommands(program);
 
     await program.parseAsync(['node', 'response', 'auth', 'login']);
 
-    expect(mockedPrompt).toHaveBeenCalled();
+    expect(mockPrompt).toHaveBeenCalled();
     expect(mockedSaveConfig).toHaveBeenCalledWith({
       currentOrg: 'org-123',
       organizations: {
         'org-123': {
           name: 'Acme Org',
           graphqlEndpoint: 'https://example.com/graphql',
-          adminSecret: 'secret',
+          adminSecret: 'admin-secret',
         },
       },
       anthropicApiKey: 'sk-ant-test',

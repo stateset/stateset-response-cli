@@ -10,9 +10,9 @@ vi.mock('node:fs', () => ({
   },
 }));
 vi.mock('../lib/secrets.js', () => ({
-  encryptSecret: (v: string) => v,
-  decryptSecret: (v: string) => v,
-  isEncrypted: () => false,
+  encryptSecret: vi.fn((v: string) => v),
+  decryptSecret: vi.fn((v: string) => v),
+  isEncrypted: vi.fn(() => false),
 }));
 
 import fs from 'node:fs';
@@ -49,7 +49,7 @@ describe('loadConfig validation', () => {
       JSON.stringify({
         currentOrg: 'acme',
         anthropicApiKey: 'sk-ant-test',
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-sonnet-4-6-20250514',
         organizations: {
           acme: {
             name: 'Acme',
@@ -62,7 +62,7 @@ describe('loadConfig validation', () => {
     );
     const cfg = loadConfig();
     expect(cfg.anthropicApiKey).toBe('sk-ant-test');
-    expect(cfg.model).toBe('claude-sonnet-4-20250514');
+    expect(cfg.model).toBe('claude-sonnet-4-6-20250514');
   });
 
   it('throws ConfigurationError for missing currentOrg', () => {

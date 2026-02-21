@@ -276,8 +276,8 @@ export class StateSetAgent {
         callbacks?.onUsage?.(finalMessage.usage);
       }
 
-      // If no more tool calls, we're done
-      if (finalMessage.stop_reason === 'end_turn' || finalMessage.stop_reason !== 'tool_use') {
+      // Continue only if the model explicitly requested tool use
+      if (finalMessage.stop_reason !== 'tool_use') {
         break;
       }
 

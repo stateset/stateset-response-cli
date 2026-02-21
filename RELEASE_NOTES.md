@@ -1,22 +1,28 @@
-# StateSet ResponseCLI Release Notes (v1.3.4)
+# StateSet ResponseCLI Release Notes (v1.3.5)
 
 ## Overview
 
-StateSet ResponseCLI `v1.3.4` is the latest release in the repo and focuses on:
+StateSet ResponseCLI `v1.3.5` is a major architecture and quality release. The CLI internals have been modularized, a declarative command registry now powers help and tab completion, and 31 previously-failing tests have been fixed.
 
-- Cleaner version publishing flow
-- A complete view of available integrations and command surfaces
-- Better visibility into platform capabilities for operators and AI sessions
+## What's new in v1.3.5
 
-## Quick feature highlights
+### Architecture overhaul
+- Slash command handlers split from a monolithic 5,000-line file into 11 focused modules under `cli/shortcuts/`.
+- New declarative command registry (`cli/command-registry.ts`) — 70+ commands self-register with metadata, driving auto-generated `/help` output and tab completion.
+- MCP server integration logic consolidated from 10 copy-paste try-catch blocks into a single declarative registry loop.
 
-- Chat-first AI workflows for ResponseCX administration
-- Session persistence with searchable history, exports, and metadata summaries
-- Attachments and multimodal input support (`--file`, `/attach`)
-- Policy and permission controls for safer write operations (`/apply`, `/policy`, `/permissions`, `/audit`)
-- Skills, prompt templates, and extensions loading for local customization
-- Audit tooling for traceability in high-risk operations
-- Dedicated command surfaces for gateways and integrations
+### Key features
+- **Tab completion** for all slash commands (press Tab to autocomplete).
+- **Richer session switching** — `/resume` and session switch now display message count, last activity, and tags.
+- **Updated model aliases** to the Claude 4.6 family (`claude-sonnet-4-6-20250514`, `claude-haiku-4-5-20251001`, `claude-opus-4-6-20250514`).
+- **Redesigned welcome screen** — concise essential-commands view replaces the previous 70-line wall of text.
+
+### Stability & fixes
+- Fixed 31 failing tests across 12 test files (mock ordering, vi.mock hoisting, syntax errors, assertion mismatches).
+- Fixed syntax error in MCP helpers module (extra parenthesis in spread expression).
+- Gateway orchestrator now gracefully handles missing optional dependencies (Slack/WhatsApp).
+- Corrected `resolveSafeOutputPath` error handling in export, policy, and session commands.
+- Simplified agent loop termination condition (removed redundant check).
 
 ## Integration support (10 total)
 
@@ -44,7 +50,3 @@ StateSet ResponseCLI `v1.3.4` is the latest release in the repo and focuses on:
 - Responses, Knowledge Base, Channels, Messages, Settings, Organizations
 - Integration tool groups for Shopify, Gorgias, Recharge, Klaviyo, Loop, ShipStation, ShipHero, ShipFusion, ShipHawk, Zendesk
 - Event scheduling and export/session management support
-
-## Release caveat
-
-Versioned artifacts and changelog now reflect `1.3.4`. A publish attempt previously failed in this environment due network/DNS registry reachability (`EAI_AGAIN`), but repository metadata is ready for publish once registry access is available.

@@ -270,15 +270,15 @@ export async function handleExportCommand(input: string, ctx: ChatContext): Prom
     const defaultName = `session-${targetSession}-${timestamp}.${defaultExt}`;
     const defaultDir = getSessionExportPath(targetSession);
     const resolvedPath = outPath ? path.resolve(outPath) : path.join(defaultDir, defaultName);
-    const finalOutputPath = outPath
-      ? resolveSafeOutputPath(outPath, {
-          label: 'Export output',
-          allowOutside: allowUnsafePath,
-          allowedRoots: [defaultDir, ctx.cwd, getStateSetDir()],
-        })
-      : resolvedPath;
 
     try {
+      const finalOutputPath = outPath
+        ? resolveSafeOutputPath(outPath, {
+            label: 'Export output',
+            allowOutside: allowUnsafePath,
+            allowedRoots: [defaultDir, ctx.cwd, getStateSetDir()],
+          })
+        : resolvedPath;
       ensureDirExists(finalOutputPath);
       if (format === 'jsonl') {
         const lines = entries.map((entry) => JSON.stringify(entry));

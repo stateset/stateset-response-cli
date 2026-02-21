@@ -737,12 +737,12 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
     }
 
     if (outPath) {
-      const resolved = resolveSafeOutputPath(outPath, {
-        label: 'Session meta output',
-        allowOutside: allowUnsafePath,
-        allowedRoots: [ctx.cwd, getStateSetDir()],
-      });
       try {
+        const resolved = resolveSafeOutputPath(outPath, {
+          label: 'Session meta output',
+          allowOutside: allowUnsafePath,
+          allowedRoots: [ctx.cwd, getStateSetDir()],
+        });
         ensureDirExists(resolved);
         fs.writeFileSync(resolved, outputText, 'utf-8');
         console.log(formatSuccess(`Session meta saved to ${resolved}`));

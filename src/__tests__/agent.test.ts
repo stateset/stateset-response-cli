@@ -140,14 +140,14 @@ describe('StateSetAgent', () => {
     });
 
     it('accepts a custom model via the constructor', () => {
-      const agent = new StateSetAgent('test-key', 'claude-haiku-35-20241022');
-      expect(agent.getModel()).toBe('claude-haiku-35-20241022');
+      const agent = new StateSetAgent('test-key', 'claude-haiku-4-5-20251001');
+      expect(agent.getModel()).toBe('claude-haiku-4-5-20251001');
     });
 
     it('setModel updates the model returned by getModel', () => {
       const agent = new StateSetAgent('test-key');
-      agent.setModel('claude-opus-4-20250514');
-      expect(agent.getModel()).toBe('claude-opus-4-20250514');
+      agent.setModel('claude-opus-4-6-20250514');
+      expect(agent.getModel()).toBe('claude-opus-4-6-20250514');
     });
 
     it('setSystemPrompt stores the prompt (observable via chat)', () => {
@@ -328,8 +328,8 @@ describe('StateSetAgent', () => {
     });
 
     it('clears transport if connect fails after spawning', async () => {
-      mockMcpClientInstance.connect.mockRejectedValueOnce(new Error('spawn failed'));
       const agent = new StateSetAgent('test-key');
+      mockMcpClientInstance.connect.mockRejectedValueOnce(new Error('spawn failed'));
 
       await expect(agent.connect()).rejects.toThrow('spawn failed');
 
@@ -338,8 +338,8 @@ describe('StateSetAgent', () => {
     });
 
     it('clears transport if tool discovery fails during connect', async () => {
-      mockMcpClientInstance.listTools.mockRejectedValueOnce(new Error('tools failed'));
       const agent = new StateSetAgent('test-key');
+      mockMcpClientInstance.listTools.mockRejectedValueOnce(new Error('tools failed'));
 
       await expect(agent.connect()).rejects.toThrow('tools failed');
 
@@ -370,6 +370,7 @@ describe('StateSetAgent', () => {
     });
 
     it('clears cached tools when disconnecting', async () => {
+      const agent = new StateSetAgent('test-key');
       mockMcpClientInstance.listTools.mockResolvedValueOnce({
         tools: [
           {
@@ -380,7 +381,6 @@ describe('StateSetAgent', () => {
         ],
       });
 
-      const agent = new StateSetAgent('test-key');
       await agent.connect();
 
       expect((agent as unknown as { tools: unknown[] }).tools).toHaveLength(1);
@@ -400,6 +400,7 @@ describe('StateSetAgent', () => {
     });
 
     it('clears cached tools when a reconnect attempt fails', async () => {
+      const agent = new StateSetAgent('test-key');
       mockMcpClientInstance.listTools
         .mockResolvedValueOnce({
           tools: [
@@ -411,8 +412,6 @@ describe('StateSetAgent', () => {
           ],
         })
         .mockRejectedValueOnce(new Error('tools failed'));
-
-      const agent = new StateSetAgent('test-key');
 
       await agent.connect();
       expect((agent as unknown as { tools: unknown[] }).tools).toHaveLength(1);
@@ -474,7 +473,7 @@ describe('StateSetAgent', () => {
     });
 
     it('passes the correct model and system prompt to Anthropic', async () => {
-      const agent = new StateSetAgent('test-key', 'claude-opus-4-20250514');
+      const agent = new StateSetAgent('test-key', 'claude-opus-4-6-20250514');
       agent.setSystemPrompt('You are a test bot');
 
       const stream = createMockStream('ok');
@@ -483,7 +482,7 @@ describe('StateSetAgent', () => {
       await agent.chat('ping');
 
       const callArgs = mockAnthropicInstance.messages.stream.mock.calls[0][0];
-      expect(callArgs.model).toBe('claude-opus-4-20250514');
+      expect(callArgs.model).toBe('claude-opus-4-6-20250514');
       expect(callArgs.system).toBe('You are a test bot');
       expect(callArgs.max_tokens).toBe(4096);
     });

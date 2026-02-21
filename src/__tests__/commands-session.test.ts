@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { handleSessionCommand } from '../cli/commands-session.js';
 import type { ChatContext } from '../cli/types.js';
 
 const mockMeta = { tags: ['test'], archived: false };
@@ -26,7 +25,10 @@ const mockEntries = [
   { role: 'assistant', content: 'hi there', ts: '2025-01-01T00:01:00Z' },
   { role: 'user', content: 'search target text', ts: '2025-01-02T00:00:00Z' },
 ];
-const mockWriteFileSync = vi.fn();
+
+const { mockWriteFileSync } = vi.hoisted(() => ({
+  mockWriteFileSync: vi.fn(),
+}));
 
 vi.mock('../session.js', () => ({
   sanitizeSessionId: vi.fn((id: string) => id.replace(/[^a-zA-Z0-9_-]/g, '')),
@@ -65,6 +67,11 @@ vi.mock('node:fs', async () => {
     default: {
       ...actual,
       existsSync: vi.fn(() => true),
+      lstatSync: vi.fn(() => ({
+        isDirectory: () => false,
+        isSymbolicLink: () => false,
+      })),
+      realpathSync: vi.fn((p: string) => p),
       renameSync: vi.fn(),
       rmSync: vi.fn(),
       writeFileSync: mockWriteFileSync,
@@ -72,6 +79,7 @@ vi.mock('node:fs', async () => {
   };
 });
 
+import { handleSessionCommand } from '../cli/commands-session.js';
 import {
   writeSessionMeta,
   readSessionMeta,

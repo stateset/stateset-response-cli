@@ -1,13 +1,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import path from 'node:path';
-import { handleExportCommand } from '../cli/commands-export.js';
 import type { ChatContext } from '../cli/types.js';
 
 const mockEntries = [{ role: 'user' as const, content: 'hello', ts: '2025-01-01T00:00:00Z' }];
-const mockReadSessionEntries = vi.fn(() => [...mockEntries]);
-const mockExportSessionToMarkdown = vi.fn(() => '# Session Export');
-const mockGetSessionExportPath = vi.fn((sessionId: string) => `/tmp/sessions/${sessionId}/exports`);
-const mockWriteFileSync = vi.fn();
+
+const {
+  mockWriteFileSync,
+  mockReadSessionEntries,
+  mockExportSessionToMarkdown,
+  mockGetSessionExportPath,
+} = vi.hoisted(() => ({
+  mockWriteFileSync: vi.fn(),
+  mockReadSessionEntries: vi.fn(() => [...mockEntries]),
+  mockExportSessionToMarkdown: vi.fn(() => '# Session Export'),
+  mockGetSessionExportPath: vi.fn((sessionId: string) => `/tmp/sessions/${sessionId}/exports`),
+}));
 
 vi.mock('node:fs', async () => {
   const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
@@ -16,6 +23,12 @@ vi.mock('node:fs', async () => {
     default: {
       ...actual,
       writeFileSync: mockWriteFileSync,
+      existsSync: vi.fn(() => false),
+      lstatSync: vi.fn(() => ({
+        isDirectory: () => false,
+        isSymbolicLink: () => false,
+      })),
+      realpathSync: vi.fn((p: string) => p),
     },
   };
 });
@@ -39,6 +52,8 @@ vi.mock('../cli/session-meta.js', () => ({
   listExportFiles: vi.fn(() => []),
   deleteExportFile: vi.fn(),
 }));
+
+import { handleExportCommand } from '../cli/commands-export.js';
 
 function createMockCtx(overrides: Partial<ChatContext> = {}): ChatContext {
   return {

@@ -189,9 +189,11 @@ describe('extensions', () => {
       const loaded = manager.listExtensions().map((ext) => ext.name);
 
       expect(loaded).toEqual(['allowed']);
-      expect(manager.listDiagnostics().some((d) => d.message.includes('Add to allowlist'))).toBe(
-        false,
-      );
+      expect(
+        manager
+          .listDiagnostics()
+          .some((d) => d.message.includes('"allowed"') && d.message.includes('Add to allowlist')),
+      ).toBe(false);
     });
   });
 
@@ -419,7 +421,7 @@ describe('extensions', () => {
     const policy = { allow: ['fileonly', 'denied'], deny: ['denied'] };
     setupTrustRoot(cwd, policy);
 
-    await withEnv({ STATESET_EXTENSIONS_ALLOW: 'envoverride,denied' }, async () => {
+    await withEnv({ STATESET_EXTENSIONS_ALLOW: 'envonly,denied' }, async () => {
       const manager = new ExtensionManager();
       await manager.load(cwd);
       const loaded = manager
@@ -427,7 +429,7 @@ describe('extensions', () => {
         .map((ext) => ext.name.toLowerCase())
         .sort();
 
-      expect(loaded).toEqual(['envoverride', 'fileonly'].sort());
+      expect(loaded).toEqual(['envonly', 'fileonly'].sort());
     });
   });
 

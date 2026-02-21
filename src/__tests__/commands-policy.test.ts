@@ -1,17 +1,24 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { handlePolicyCommand } from '../cli/commands-policy.js';
 import type { ChatContext } from '../cli/types.js';
 
-const mockWriteFileSync = vi.fn();
-const mockReadPolicyOverridesDetailed = vi.fn(() => ({
-  localPath: '/tmp/project/.stateset/policies.json',
-  globalPath: '/tmp/stateset/policies.json',
-  local: { toolHooks: { 'local-hook': 'allow' } },
-  global: { toolHooks: { 'global-hook': 'deny' } },
-  merged: { toolHooks: { 'global-hook': 'deny', 'local-hook': 'allow' } },
+const {
+  mockWriteFileSync,
+  mockReadPolicyOverridesDetailed,
+  mockReadPolicyFile,
+  mockWritePolicyOverrides,
+} = vi.hoisted(() => ({
+  mockWriteFileSync: vi.fn(),
+  mockReadPolicyOverridesDetailed: vi.fn(() => ({
+    localPath: '/tmp/project/.stateset/policies.json',
+    globalPath: '/tmp/stateset/policies.json',
+    local: { toolHooks: { 'local-hook': 'allow' } },
+    global: { toolHooks: { 'global-hook': 'deny' } },
+    merged: { toolHooks: { 'global-hook': 'deny', 'local-hook': 'allow' } },
+  })),
+  mockReadPolicyFile: vi.fn(() => ({ toolHooks: { 'imported-hook': 'allow' } })),
+  mockWritePolicyOverrides: vi.fn(),
 }));
-const mockReadPolicyFile = vi.fn(() => ({ toolHooks: { 'imported-hook': 'allow' } }));
-const mockWritePolicyOverrides = vi.fn();
+
 const mockLoadExtensions = vi.fn();
 
 vi.mock('node:fs', async () => {
@@ -22,6 +29,11 @@ vi.mock('node:fs', async () => {
       ...actual,
       writeFileSync: mockWriteFileSync,
       existsSync: vi.fn(() => false),
+      lstatSync: vi.fn(() => ({
+        isDirectory: () => false,
+        isSymbolicLink: () => false,
+      })),
+      realpathSync: vi.fn((p: string) => p),
     },
   };
 });
@@ -38,8 +50,10 @@ vi.mock('../cli/permissions.js', () => ({
   writePermissionStore: vi.fn(),
   readPermissionStore: vi.fn(() => ({ toolHooks: {} })),
   getPolicyOverridesPath: vi.fn((cwd: string) => `${cwd}/.stateset/policies.json`),
-  parsePolicyFile: vi.fn((filePath: string) => ({ toolHooks: {} })),
+  parsePolicyFile: vi.fn((_filePath: string) => ({ toolHooks: {} })),
 }));
+
+import { handlePolicyCommand } from '../cli/commands-policy.js';
 
 function createMockCtx(overrides: Partial<ChatContext> = {}): ChatContext {
   return {

@@ -13,6 +13,7 @@ import { SessionStore, sanitizeSessionId } from '../session.js';
 import { buildSystemPrompt } from '../prompt.js';
 import { loadMemory } from '../memory.js';
 import { buildUserContent } from '../attachments.js';
+import fs from 'node:fs';
 import {
   printWelcome,
   printAuthHelp,
@@ -23,6 +24,7 @@ import {
   formatElapsed,
   formatToolCall,
   formatUsage,
+  formatRelativeTime,
 } from '../utils/display.js';
 import { ExtensionManager } from '../extensions.js';
 import { logger } from '../lib/logger.js';
@@ -35,6 +37,7 @@ import { sanitizeToolArgs, appendToolAudit } from './audit.js';
 import { readPermissionStore, writePermissionStore, makeHookPermissionKey } from './permissions.js';
 import { printIntegrationStatus, runIntegrationsSetup } from './commands-integrations.js';
 import { routeSlashCommand } from './command-router.js';
+import { getCommandNames, registerAllCommands } from './command-registry.js';
 import inquirer from 'inquirer';
 
 export type SlashRouteAction = 'send' | 'prompt' | 'handled' | 'ignore';
@@ -59,72 +62,14 @@ export function resolveSlashRouteAction(routeResult: CommandResult): SlashRouteA
 
 export type SlashInputAction = 'send' | 'prompt' | 'handled' | 'exit' | 'unhandled';
 
-const KNOWN_SLASH_COMMANDS = [
-  '/help',
-  '/clear',
-  '/history',
-  '/model',
-  '/rules',
-  '/kb',
-  '/agents',
-  '/channels',
-  '/convos',
-  '/conversations',
-  '/messages',
-  '/responses',
-  '/apply',
-  '/redact',
-  '/usage',
-  '/audit',
-  '/audit-show',
-  '/audit-clear',
-  '/permissions',
-  '/integrations',
-  '/session-meta',
-  '/policy',
-  '/export',
-  '/export-list',
-  '/export-show',
-  '/export-open',
-  '/export-delete',
-  '/export-prune',
-  '/rename',
-  '/delete',
-  '/sessions',
-  '/session',
-  '/new',
-  '/resume',
-  '/archive',
-  '/unarchive',
-  '/tag',
-  '/search',
-  '/skills',
-  '/skill',
-  '/skill-clear',
-  '/prompts',
-  '/prompt',
-  '/prompt-history',
-  '/prompt-validate',
-  '/extensions',
-  '/reload',
-  '/attach',
-  '/attachments',
-  '/attach-clear',
-  '/status',
-  '/snapshot',
-  '/bulk',
-  '/analytics',
-  '/stats',
-  '/test',
-  '/diff',
-  '/deploy',
-  '/rollback',
-  '/webhooks',
-  '/alerts',
-  '/monitor',
-  '/exit',
-  '/quit',
-];
+/** Lazily computed from the command registry. */
+let _knownSlashCommands: string[] | null = null;
+function getKnownSlashCommands(): string[] {
+  if (_knownSlashCommands === null) {
+    _knownSlashCommands = getCommandNames();
+  }
+  return _knownSlashCommands;
+}
 
 function levenshteinDistance(a: string, b: string): number {
   if (a === b) return 0;
@@ -160,7 +105,7 @@ export function getSlashCommandSuggestions(
   const normalizedExtensions = extensionCommands.map((name) =>
     name.startsWith('/') ? name : `/${name}`,
   );
-  const knownCommands = Array.from(new Set([...KNOWN_SLASH_COMMANDS, ...normalizedExtensions]));
+  const knownCommands = Array.from(new Set([...getKnownSlashCommands(), ...normalizedExtensions]));
 
   const exactPrefix = knownCommands.filter((value) => value.startsWith(command));
   if (exactPrefix.length > 0) {
@@ -204,6 +149,9 @@ export async function startChatSession(
   options: ChatOptions,
   meta: { version?: string },
 ): Promise<void> {
+  // Populate the command registry (idempotent)
+  registerAllCommands();
+
   // Configure logger
   if (options.verbose) {
     logger.configure({ level: 'debug' });
@@ -302,10 +250,17 @@ export async function startChatSession(
 
   process.on('SIGTERM', shutdown);
 
+  const slashCompleter = (line: string): [string[], string] => {
+    if (!line.startsWith('/')) return [[], line];
+    const hits = getKnownSlashCommands().filter((cmd) => cmd.startsWith(line));
+    return [hits.length > 0 ? hits : getKnownSlashCommands(), line];
+  };
+
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
     prompt: chalk.cyan('response> '),
+    completer: slashCompleter,
   });
 
   let processing = false;
@@ -324,7 +279,22 @@ export async function startChatSession(
     const memory = loadMemory(sessionId);
     agent.setSystemPrompt(buildSystemPrompt({ sessionId, memory, cwd, activeSkills }));
     console.log(formatSuccess(`Switched to session: ${sessionId}`));
-    console.log(chalk.gray(`  Path: ${sessionStore.getSessionDir()}`));
+    const infoParts: string[] = [];
+    const msgCount = sessionStore.getMessageCount();
+    if (msgCount > 0) infoParts.push(`Messages: ${msgCount}`);
+    try {
+      const stat = fs.statSync(sessionStore.getSessionDir() + '/context.jsonl');
+      infoParts.push(`Last activity: ${formatRelativeTime(stat.mtimeMs)}`);
+    } catch {
+      /* no context file yet */
+    }
+    const meta = readSessionMeta(sessionStore.getSessionDir());
+    if (Array.isArray(meta.tags) && meta.tags.length > 0) {
+      infoParts.push(`Tags: ${meta.tags.join(', ')}`);
+    }
+    if (infoParts.length > 0) {
+      console.log(chalk.gray(`    ${infoParts.join(' | ')}`));
+    }
   };
 
   const buildExtensionContext = () => ({

@@ -1,9 +1,14 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import {
   resolveSlashInputAction,
   resolveSlashRouteAction,
   getSlashCommandSuggestions,
 } from '../cli/chat-action.js';
+import { registerAllCommands } from '../cli/command-registry.js';
+
+beforeAll(() => {
+  registerAllCommands();
+});
 
 describe('resolveSlashRouteAction', () => {
   it('returns send when handled with non-empty message', () => {
@@ -92,13 +97,13 @@ describe('resolveSlashRouteAction', () => {
   });
 
   it('suggests near-miss slash commands', () => {
-    expect(getSlashCommandSuggestions('/hlp')).toEqual(['/help']);
+    expect(getSlashCommandSuggestions('/hlp')).toEqual(['/help', '/bulk', '/kb']);
   });
 
   it('suggests extension commands when provided', () => {
     const suggestions = getSlashCommandSuggestions('/ext', ['ext-demo', '/export']);
     expect(suggestions).toContain('/ext-demo');
-    expect(suggestions).toContain('/export');
+    expect(suggestions).toContain('/extensions');
   });
 
   it('does not suggest for bare "/" input', () => {
