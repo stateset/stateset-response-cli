@@ -28,6 +28,7 @@ import {
 } from '../utils/display.js';
 import { ExtensionManager } from '../extensions.js';
 import { logger } from '../lib/logger.js';
+import { getErrorMessage } from '../lib/errors.js';
 import { extractInlineFlags, readBooleanEnv } from './utils.js';
 import type { ChatContext, ToolAuditEntry, CommandResult } from './types.js';
 
@@ -172,7 +173,7 @@ export async function startChatSession(
     orgId = runtime.orgId;
     apiKey = runtime.anthropicApiKey;
   } catch (e: unknown) {
-    console.error(formatError(e instanceof Error ? e.message : String(e)));
+    console.error(formatError(getErrorMessage(e)));
     process.exit(1);
   }
 
@@ -185,7 +186,7 @@ export async function startChatSession(
     try {
       model = resolveModelOrThrow(options.model);
     } catch (e: unknown) {
-      console.error(formatError(e instanceof Error ? e.message : String(e)));
+      console.error(formatError(getErrorMessage(e)));
       process.exit(1);
     }
   }
@@ -211,14 +212,14 @@ export async function startChatSession(
     spinner.succeed('Connected');
   } catch (e: unknown) {
     spinner.fail('Failed to connect');
-    console.error(formatError(e instanceof Error ? e.message : String(e)));
+    console.error(formatError(getErrorMessage(e)));
     process.exit(1);
   }
 
   try {
     await extensions.load(cwd);
   } catch (err) {
-    console.error(formatError(err instanceof Error ? err.message : String(err)));
+    console.error(formatError(getErrorMessage(err)));
   }
   const extensionDiagnostics = extensions.listDiagnostics();
   const blockedProjectExtensionWarning = extensionDiagnostics.find((entry) =>
@@ -238,14 +239,23 @@ export async function startChatSession(
   console.log('');
 
   // Graceful shutdown
+  const SHUTDOWN_FORCE_EXIT_MS = 10_000;
   let shuttingDown = false;
   const shutdown = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log('');
+
+    const forceExitTimer = setTimeout(() => {
+      console.error('\nForce exit after timeout.');
+      process.exit(1);
+    }, SHUTDOWN_FORCE_EXIT_MS);
+    forceExitTimer.unref();
+
     const exitSpinner = ora('Disconnecting...').start();
     await agent.disconnect();
     exitSpinner.succeed('Disconnected');
+    clearTimeout(forceExitTimer);
     process.exit(0);
   };
 
@@ -437,7 +447,7 @@ export async function startChatSession(
             STATESET_ALLOW_APPLY: allowApply ? 'true' : 'false',
             STATESET_REDACT: redactEmails ? 'true' : 'false',
           });
-          console.error(formatError(err instanceof Error ? err.message : String(err)));
+          console.error(formatError(getErrorMessage(err)));
           console.log('');
           rl.prompt();
           return;
@@ -492,7 +502,7 @@ export async function startChatSession(
       try {
         routeResult = await routeSlashCommand(input, ctx);
       } catch (err) {
-        console.error(formatError(err instanceof Error ? err.message : String(err)));
+        console.error(formatError(getErrorMessage(err)));
         rl.prompt();
         return;
       }
@@ -644,13 +654,13 @@ export async function startChatSession(
 
             return decision;
           } catch (err) {
-            console.error(formatError(err instanceof Error ? err.message : String(err)));
+            console.error(formatError(getErrorMessage(err)));
             return undefined;
           }
         },
         onToolCallEnd: (result) => {
           extensions.runToolResultHooks(result, buildToolHookContext()).catch((err) => {
-            console.error(formatError(err instanceof Error ? err.message : String(err)));
+            console.error(formatError(getErrorMessage(err)));
           });
           if (auditEnabled) {
             const entry: ToolAuditEntry = {
@@ -686,7 +696,7 @@ export async function startChatSession(
         console.log(usageLine);
       }
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = getErrorMessage(e);
       if (msg !== 'Request cancelled') {
         console.log('\n' + formatError(msg));
       }

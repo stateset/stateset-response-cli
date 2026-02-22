@@ -18,6 +18,7 @@ import {
   type ModelId,
 } from '../config.js';
 import { logger } from '../lib/logger.js';
+import { getErrorMessage } from '../lib/errors.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -343,7 +344,7 @@ export class SlackGateway {
     try {
       await this.ensureAgentConnected(session, userId);
     } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
+      const errMsg = getErrorMessage(err);
       this.log.error(`Failed to connect agent for ${userId}: ${errMsg}`);
       const response = 'I encountered an error processing your request. Please try again.';
       const formatted = cleanForSlack(response);
@@ -359,7 +360,7 @@ export class SlackGateway {
     try {
       response = await session.agent.chat(text);
     } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
+      const errMsg = getErrorMessage(err);
       this.log.error(`Agent error for ${channel}: ${errMsg}`);
       response = 'I encountered an error processing your request. Please try again.';
     }

@@ -14,6 +14,7 @@ import {
   DEFAULT_STATESET_BUNDLE_FILE,
   DEFAULT_STATESET_CONFIG_FILE,
 } from './types.js';
+import { getErrorMessage } from '../../lib/errors.js';
 import {
   toLines,
   parseCommandArgs,
@@ -370,7 +371,7 @@ export async function runDeploymentsCommand(
         json,
       );
     } catch (error) {
-      logger.warning(error instanceof Error ? error.message : String(error));
+      logger.warning(getErrorMessage(error));
     }
     return;
   }
@@ -396,7 +397,7 @@ export async function runDeploymentsCommand(
       const updated = updateDeployment(targetRef, { status: 'cancelled' });
       logger.success(`Deployment ${updated.id} cancelled.`);
     } catch (error) {
-      logger.warning(error instanceof Error ? error.message : String(error));
+      logger.warning(getErrorMessage(error));
     }
     return;
   }
@@ -415,7 +416,7 @@ export async function runDeploymentsCommand(
         logger.success(`Deployment ${removed.id} deleted.`);
       }
     } catch (error) {
-      logger.warning(error instanceof Error ? error.message : String(error));
+      logger.warning(getErrorMessage(error));
     }
     return;
   }
@@ -524,9 +525,7 @@ export async function runBulkCommand(
         return;
       }
     } catch (error) {
-      logger.error(
-        `Unable to inspect import source: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      logger.error(`Unable to inspect import source: ${getErrorMessage(error)}`);
       return;
     }
     if (!fs.existsSync(importSource) || !fs.lstatSync(importSource).isFile()) {
@@ -620,7 +619,7 @@ export async function runTopLevelDeployment(
     } catch (error) {
       updateDeployment(target.id, {
         status: 'failed',
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
       throw error;
     }
@@ -929,9 +928,7 @@ export async function runTopLevelWatch(
     try {
       currentFingerprint = readStateSetFingerprint(sourceDir);
     } catch (error) {
-      logger.warning(
-        `Failed to read state-set fingerprint: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      logger.warning(`Failed to read state-set fingerprint: ${getErrorMessage(error)}`);
       if (once) {
         return;
       }
@@ -977,7 +974,7 @@ export async function runTopLevelWatch(
     try {
       await runTopLevelPush([], pushOptions);
     } catch (error) {
-      logger.error(`Watch sync failed: ${error instanceof Error ? error.message : String(error)}`);
+      logger.error(`Watch sync failed: ${getErrorMessage(error)}`);
     }
 
     if (once) {

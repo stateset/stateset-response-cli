@@ -13,6 +13,7 @@ import {
   MAX_DESCRIPTION_LENGTH,
   MAX_ARRAY_LENGTH,
 } from '../../lib/validation.js';
+import { errorResult } from './helpers.js';
 
 const SKILL_FIELDS = `
   id skill_name skill_type activated description
@@ -159,7 +160,7 @@ export function registerSkillTools(server: McpServer, client: GraphQLClient, org
         { id, org_id: orgId, set: setFields },
       );
       if (!data.update_skills.returning.length) {
-        return { content: [{ type: 'text' as const, text: 'Skill not found' }], isError: true };
+        return errorResult('Skill not found');
       }
       return {
         content: [
@@ -185,7 +186,7 @@ export function registerSkillTools(server: McpServer, client: GraphQLClient, org
         { id, org_id: orgId },
       );
       if (!data.delete_skills.returning.length) {
-        return { content: [{ type: 'text' as const, text: 'Skill not found' }], isError: true };
+        return errorResult('Skill not found');
       }
       return {
         content: [

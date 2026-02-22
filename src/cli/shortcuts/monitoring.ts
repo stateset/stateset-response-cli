@@ -1,4 +1,5 @@
 import chalk from 'chalk';
+import { getErrorMessage } from '../../lib/errors.js';
 import type { ShortcutLogger, ShortcutRunner, TopLevelOptions, MonitorSnapshot } from './types.js';
 import {
   toLines,
@@ -73,7 +74,7 @@ export async function runWebhooksCommand(
       const result = getWebhook(webhookRef);
       logger.output(JSON.stringify(result, null, 2));
     } catch (error) {
-      logger.warning(error instanceof Error ? error.message : String(error));
+      logger.warning(getErrorMessage(error));
     }
     return;
   }
@@ -108,7 +109,7 @@ export async function runWebhooksCommand(
           : formatToolResult(JSON.stringify({ webhook: created }, null, 2)),
       );
     } catch (error) {
-      logger.warning(error instanceof Error ? error.message : String(error));
+      logger.warning(getErrorMessage(error));
     }
     return;
   }
@@ -138,7 +139,7 @@ export async function runWebhooksCommand(
             ),
       );
     } catch (error) {
-      logger.warning(error instanceof Error ? error.message : String(error));
+      logger.warning(getErrorMessage(error));
     }
     return;
   }
@@ -172,7 +173,7 @@ export async function runWebhooksCommand(
         );
       }
     } catch (error) {
-      logger.warning(error instanceof Error ? error.message : String(error));
+      logger.warning(getErrorMessage(error));
     }
     return;
   }
@@ -190,7 +191,7 @@ export async function runWebhooksCommand(
           : formatToolResult(JSON.stringify({ removed }, null, 2)),
       );
     } catch (error) {
-      logger.warning(error instanceof Error ? error.message : String(error));
+      logger.warning(getErrorMessage(error));
     }
     return;
   }
@@ -286,7 +287,7 @@ export async function runAlertsCommand(
           : formatToolResult(JSON.stringify({ alert: created }, null, 2)),
       );
     } catch (error) {
-      logger.warning(error instanceof Error ? error.message : String(error));
+      logger.warning(getErrorMessage(error));
     }
     return;
   }
@@ -304,7 +305,7 @@ export async function runAlertsCommand(
           : formatToolResult(JSON.stringify({ removed }, null, 2)),
       );
     } catch (error) {
-      logger.warning(error instanceof Error ? error.message : String(error));
+      logger.warning(getErrorMessage(error));
     }
     return;
   }

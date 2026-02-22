@@ -14,6 +14,7 @@ import {
 } from './mcp-server/graphql-client.js';
 import { getCurrentOrg } from './config.js';
 import { readJsonFile } from './utils/file-read.js';
+import { getErrorMessage } from './lib/errors.js';
 
 // ─── Secret Redaction ────────────────────────────────────────────────────────
 
@@ -173,7 +174,7 @@ export async function exportOrg(
   try {
     fs.writeFileSync(outputPath, JSON.stringify(exportData, null, 2), 'utf-8');
   } catch (e) {
-    throw new Error(`Failed to write export file: ${e instanceof Error ? e.message : String(e)}`);
+    throw new Error(`Failed to write export file: ${getErrorMessage(e)}`);
   }
   return exportData;
 }
@@ -224,7 +225,7 @@ export async function importOrg(
   try {
     data = readJsonFile(inputPath, { label: 'import file', expectObject: true }) as OrgExport;
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
+    const message = getErrorMessage(e);
     if (message.includes('Invalid JSON in')) {
       if (message.includes('Invalid JSON in import file')) {
         throw new Error(message);
@@ -281,7 +282,7 @@ export async function importOrg(
           ? source.id
           : null
         : null;
-    const reason = error instanceof Error ? error.message : String(error);
+    const reason = getErrorMessage(error);
     result.skipped += 1;
     if (result.failures.length >= maxFailureReport) return;
     result.failures.push({ entity, index, sourceId, reason });

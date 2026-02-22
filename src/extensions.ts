@@ -4,6 +4,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { getStateSetDir } from './session.js';
 import { readJsonFile } from './utils/file-read.js';
+import { getErrorMessage } from './lib/errors.js';
 
 /** Return type for extension command handlers: void for no-op, string for display, `send` to chat, or `handled` to suppress further processing. */
 export type ExtensionCommandResult = void | string | { send: string } | { handled: true };
@@ -144,7 +145,7 @@ function listExtensionFiles(dir: string, diagnostics: ExtensionDiagnostic[]): st
     }
     diagnostics.push({
       source: dir,
-      message: `Failed to inspect extension directory "${dir}": ${err instanceof Error ? err.message : String(err)}`,
+      message: `Failed to inspect extension directory "${dir}": ${getErrorMessage(err)}`,
     });
     return [];
   }
@@ -182,7 +183,7 @@ function readSafeJsonFile(
     }
     diagnostics.push({
       source: filePath,
-      message: `Failed to inspect ${label}: ${err instanceof Error ? err.message : String(err)}`,
+      message: `Failed to inspect ${label}: ${getErrorMessage(err)}`,
     });
     return null;
   }
@@ -212,7 +213,7 @@ function readSafeJsonFile(
   } catch (err) {
     diagnostics.push({
       source: filePath,
-      message: `Failed to load ${label}: ${err instanceof Error ? err.message : String(err)}`,
+      message: `Failed to load ${label}: ${getErrorMessage(err)}`,
     });
     return null;
   }
@@ -398,7 +399,7 @@ export class ExtensionManager {
       } catch (err) {
         this.diagnostics.push({
           source: filePath,
-          message: err instanceof Error ? err.message : String(err),
+          message: getErrorMessage(err),
         });
       }
 
@@ -479,7 +480,7 @@ export class ExtensionManager {
       } catch (err) {
         this.runtimeDiagnostics.push({
           source: hook.source,
-          message: `Tool hook "${hook.name}" failed: ${err instanceof Error ? err.message : String(err)}`,
+          message: `Tool hook "${hook.name}" failed: ${getErrorMessage(err)}`,
         });
       }
     }
@@ -500,7 +501,7 @@ export class ExtensionManager {
       } catch (err) {
         this.runtimeDiagnostics.push({
           source: hook.source,
-          message: `Tool result hook "${hook.name}" failed: ${err instanceof Error ? err.message : String(err)}`,
+          message: `Tool result hook "${hook.name}" failed: ${getErrorMessage(err)}`,
         });
       }
     }
@@ -518,7 +519,7 @@ function isExtensionFileSafe(filePath: string, diagnostics: ExtensionDiagnostic[
   } catch (err) {
     diagnostics.push({
       source: filePath,
-      message: `Failed to inspect extension file: ${err instanceof Error ? err.message : String(err)}`,
+      message: `Failed to inspect extension file: ${getErrorMessage(err)}`,
     });
     return false;
   }

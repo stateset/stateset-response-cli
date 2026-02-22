@@ -34,6 +34,13 @@ export function guardWrite(options: {
   return null;
 }
 
+export function errorResult(message: string): {
+  content: [{ type: 'text'; text: string }];
+  isError: true;
+} {
+  return { content: [{ type: 'text' as const, text: message }], isError: true };
+}
+
 export function wrapToolResult(
   payload: unknown,
   maxChars?: number,

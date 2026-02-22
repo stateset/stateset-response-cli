@@ -2,6 +2,7 @@
  * Shopify integration — fulfillment hold release operations.
  */
 import { requestJsonWithRetry } from './http.js';
+import { getErrorMessage } from '../lib/errors.js';
 import type { ShopifyConfig } from './config.js';
 import { createLimiter } from './limit.js';
 import { getRestBaseUrl } from './shopify-core.js';
@@ -105,7 +106,7 @@ export async function releaseHoldsForOrders({
               orderId: order.id,
               orderName: order.name,
               fulfillmentOrderId: fulfillmentOrder.id,
-              error: error instanceof Error ? error.message : String(error),
+              error: getErrorMessage(error),
             });
           }
         }),

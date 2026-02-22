@@ -3,6 +3,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { getStateSetDir } from '../session.js';
 import { readJsonFile } from '../utils/file-read.js';
+import { getErrorMessage } from '../lib/errors.js';
 
 const STORE_VERSION = 1;
 const STORE_NAME = 'platform-operations.json';
@@ -293,9 +294,7 @@ function writeStore(pathName: string, store: PlatformOperationsStore): void {
     }
     fs.writeFileSync(pathName, JSON.stringify(store, null, 2), 'utf-8');
   } catch (error) {
-    throw new Error(
-      `Unable to persist platform operations state: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    throw new Error(`Unable to persist platform operations state: ${getErrorMessage(error)}`);
   }
 }
 

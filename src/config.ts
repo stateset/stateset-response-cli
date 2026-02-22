@@ -3,7 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { z } from 'zod';
 import { encryptSecret, decryptSecret, isEncrypted } from './lib/secrets.js';
-import { ConfigurationError } from './lib/errors.js';
+import { ConfigurationError, getErrorMessage } from './lib/errors.js';
 import { readJsonFile } from './utils/file-read.js';
 
 export interface OrgConfig {
@@ -95,7 +95,7 @@ function tryDecryptConfigSecret(value: string, label: string): DecryptResult {
   } catch (error) {
     return {
       value: undefined,
-      error: `${label}: ${error instanceof Error ? error.message : String(error)}`,
+      error: `${label}: ${getErrorMessage(error)}`,
     };
   }
 }
@@ -131,7 +131,7 @@ export function loadConfig(): StateSetConfig {
   try {
     parsed = readJsonFile(CONFIG_FILE, { label: 'config file', expectObject: true });
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
+    const message = getErrorMessage(e);
     if (message.includes('Invalid JSON in')) {
       if (message.includes('Invalid JSON in config file')) {
         throw new ConfigurationError(message);
@@ -242,9 +242,7 @@ export function saveConfig(config: StateSetConfig): void {
       mode: 0o600,
     });
   } catch (e) {
-    throw new ConfigurationError(
-      `Failed to write config file: ${e instanceof Error ? e.message : String(e)}`,
-    );
+    throw new ConfigurationError(`Failed to write config file: ${getErrorMessage(e)}`);
   }
   try {
     fs.chmodSync(CONFIG_FILE, 0o600);

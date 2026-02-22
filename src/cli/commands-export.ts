@@ -5,6 +5,7 @@ import path from 'node:path';
 import { sanitizeSessionId, getStateSetDir } from '../session.js';
 import { getSessionExportPath, resolveExportFilePath } from '../utils/session-exports.js';
 import { formatSuccess, formatWarning, formatError, formatTable } from '../utils/display.js';
+import { getErrorMessage } from '../lib/errors.js';
 import { readTextFile, MAX_TEXT_FILE_SIZE_BYTES } from '../utils/file-read.js';
 import type { ChatContext } from './types.js';
 import { formatTimestamp, ensureDirExists, hasCommand, resolveSafeOutputPath } from './utils.js';
@@ -95,7 +96,7 @@ export async function handleExportCommand(input: string, ctx: ChatContext): Prom
       console.log(formatSuccess(`Showing ${lines.length} lines from ${filename}:`));
       console.log(chalk.gray(lines.join('\n')));
     } catch (err) {
-      console.error(formatError(err instanceof Error ? err.message : String(err)));
+      console.error(formatError(getErrorMessage(err)));
     }
     console.log('');
     ctx.rl.prompt();
@@ -180,7 +181,7 @@ export async function handleExportCommand(input: string, ctx: ChatContext): Prom
       deleteExportFile(target, filename);
       console.log(formatSuccess(`Deleted export "${filename}".`));
     } catch (err) {
-      console.error(formatError(err instanceof Error ? err.message : String(err)));
+      console.error(formatError(getErrorMessage(err)));
     }
     console.log('');
     ctx.rl.prompt();
@@ -308,7 +309,7 @@ export async function handleExportCommand(input: string, ctx: ChatContext): Prom
       }
       console.log(formatSuccess(`Exported ${entries.length} messages to ${finalOutputPath}`));
     } catch (err) {
-      console.error(formatError(err instanceof Error ? err.message : String(err)));
+      console.error(formatError(getErrorMessage(err)));
     }
 
     console.log('');

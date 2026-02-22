@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import inquirer from 'inquirer';
 import fs from 'node:fs';
 import { formatError, formatSuccess, formatWarning, formatTable } from '../utils/display.js';
+import { getErrorMessage } from '../lib/errors.js';
 import type { ChatContext, CommandResult, PermissionDecision } from './types.js';
 import { getStateSetDir } from '../session.js';
 import { hasCommand, ensureDirExists, resolveSafeOutputPath } from './utils.js';
@@ -191,7 +192,7 @@ export async function handlePolicyCommand(input: string, ctx: ChatContext): Prom
         fs.writeFileSync(resolved, JSON.stringify(view, null, 2), 'utf-8');
         console.log(formatSuccess(`Policy overrides (${mode}) exported to ${resolved}`));
       } catch (err) {
-        console.error(formatError(err instanceof Error ? err.message : String(err)));
+        console.error(formatError(getErrorMessage(err)));
       }
       console.log('');
       ctx.rl.prompt();
@@ -232,7 +233,7 @@ export async function handlePolicyCommand(input: string, ctx: ChatContext): Prom
         console.log(formatSuccess('Created policy file.'));
         console.log(chalk.gray(`  ${target}`));
       } catch (err) {
-        console.error(formatError(err instanceof Error ? err.message : String(err)));
+        console.error(formatError(getErrorMessage(err)));
       }
       console.log('');
       ctx.rl.prompt();
@@ -259,7 +260,7 @@ export async function handlePolicyCommand(input: string, ctx: ChatContext): Prom
         await ctx.extensions.load(ctx.cwd);
         console.log(formatSuccess(`Policy overrides imported (${mode}).`));
       } catch (err) {
-        console.error(formatError(err instanceof Error ? err.message : String(err)));
+        console.error(formatError(getErrorMessage(err)));
       }
       console.log('');
       ctx.rl.prompt();

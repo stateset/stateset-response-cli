@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { executeQuery } from '../graphql-client.js';
 import { requestJson } from '../../integrations/http.js';
+import { errorResult } from './helpers.js';
 
 const EMBEDDING_MODEL = 'text-embedding-ada-002';
 const SIMILARITY_THRESHOLD = 0.95;
@@ -345,10 +346,7 @@ export function registerKnowledgeBaseTools(
         )) as { result: Array<{ id: string }> };
 
         if (!searchResult.result?.length) {
-          return {
-            content: [{ type: 'text' as const, text: 'No matching entry found to update' }],
-            isError: true,
-          };
+          return errorResult('No matching entry found to update');
         }
         targetId = searchResult.result[0].id as string;
       }

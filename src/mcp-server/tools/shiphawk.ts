@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { ShipHawkConfig } from '../../integrations/config.js';
 import { shiphawkRequest } from '../../integrations/shiphawk.js';
+import { getErrorMessage } from '../../lib/errors.js';
 import {
   type IntegrationToolOptions,
   MaxCharsSchema,
@@ -367,7 +368,7 @@ export function registerShipHawkTools(
         } catch (error) {
           errors.push({
             id: shipment.id,
-            error: error instanceof Error ? error.message : String(error),
+            error: getErrorMessage(error),
           });
         }
       }

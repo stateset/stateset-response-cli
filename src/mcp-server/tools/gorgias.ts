@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { GorgiasConfig } from '../../integrations/config.js';
 import { createGorgiasApi } from '../../integrations/gorgias.js';
 import { redactPii } from '../../integrations/redact.js';
+import { getErrorMessage } from '../../lib/errors.js';
 import {
   type IntegrationToolOptions,
   guardWrite,
@@ -416,7 +417,7 @@ async function executeBatchCloseTickets(
     } catch (error) {
       errors.push({
         ticket_id: ticketId,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
     }
   }
@@ -460,7 +461,7 @@ async function executeBatchTagTickets(
     } catch (error) {
       errors.push({
         ticket_id: ticketId,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
     }
   }

@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { ShipStationConfig } from '../../integrations/config.js';
 import { shipstationRequest } from '../../integrations/shipstation.js';
+import { getErrorMessage } from '../../lib/errors.js';
 import {
   type IntegrationToolOptions,
   MaxCharsSchema,
@@ -365,7 +366,7 @@ export function registerShipStationTools(
         } catch (error) {
           errors.push({
             order_id: orderId,
-            error: error instanceof Error ? error.message : String(error),
+            error: getErrorMessage(error),
           });
         }
       }

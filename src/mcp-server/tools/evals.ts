@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { GraphQLClient } from 'graphql-request';
 import { z } from 'zod';
 import { executeQuery } from '../graphql-client.js';
+import { errorResult } from './helpers.js';
 
 const EVAL_FIELDS = `
   id eval_name eval_type eval_status response_id
@@ -118,7 +119,7 @@ export function registerEvalTools(server: McpServer, client: GraphQLClient, orgI
         { id, org_id: orgId, set: setFields },
       );
       if (!data.update_evals.returning.length) {
-        return { content: [{ type: 'text' as const, text: 'Eval not found' }], isError: true };
+        return errorResult('Eval not found');
       }
       return {
         content: [
@@ -144,7 +145,7 @@ export function registerEvalTools(server: McpServer, client: GraphQLClient, orgI
         { id, org_id: orgId },
       );
       if (!data.delete_evals.returning.length) {
-        return { content: [{ type: 'text' as const, text: 'Eval not found' }], isError: true };
+        return errorResult('Eval not found');
       }
       return {
         content: [

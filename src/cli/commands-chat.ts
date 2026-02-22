@@ -9,6 +9,7 @@ import {
   formatTable,
 } from '../utils/display.js';
 import { getSkill, listSkills } from '../resources.js';
+import { getErrorMessage } from '../lib/errors.js';
 import type { ChatContext, CommandResult } from './types.js';
 import { handleConfigCommand } from './commands-config.js';
 import { handleAuditCommand } from './commands-audit.js';
@@ -111,7 +112,7 @@ export async function handleChatCommand(input: string, ctx: ChatContext): Promis
       await ctx.extensions.load(ctx.cwd);
       console.log(formatSuccess('Extensions reloaded.'));
     } catch (err) {
-      console.error(formatError(err instanceof Error ? err.message : String(err)));
+      console.error(formatError(getErrorMessage(err)));
     }
     console.log('');
     ctx.rl.prompt();
@@ -154,7 +155,7 @@ export async function handleChatCommand(input: string, ctx: ChatContext): Promis
         await ctx.runIntegrationsSetup();
         setupSucceeded = true;
       } catch (err) {
-        console.error(formatError(err instanceof Error ? err.message : String(err)));
+        console.error(formatError(getErrorMessage(err)));
       } finally {
         if (!ctx.rl.listeners('line').includes(ctx.handleLine)) {
           ctx.rl.on('line', ctx.handleLine);
@@ -175,7 +176,7 @@ export async function handleChatCommand(input: string, ctx: ChatContext): Promis
           );
           console.log(formatSuccess('Integration tools refreshed.'));
         } catch (err) {
-          console.error(formatError(err instanceof Error ? err.message : String(err)));
+          console.error(formatError(getErrorMessage(err)));
           console.log(formatWarning('Restart the chat session if tools appear missing.'));
         }
       }

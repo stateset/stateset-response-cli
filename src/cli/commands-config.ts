@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import { loadMemory } from '../memory.js';
 import { buildSystemPrompt } from '../prompt.js';
 import { resolveModelOrThrow, formatUnknownModelError, getModelAliasText } from '../config.js';
+import { getErrorMessage } from '../lib/errors.js';
 import { formatError, formatSuccess, formatWarning } from '../utils/display.js';
 import type { ChatContext, CommandResult } from './types.js';
 import { parseToggleValue } from './utils.js';
@@ -47,11 +48,7 @@ export async function handleConfigCommand(input: string, ctx: ChatContext): Prom
         STATESET_ALLOW_APPLY: ctx.allowApply ? 'true' : 'false',
         STATESET_REDACT: ctx.redactEmails ? 'true' : 'false',
       });
-      console.error(
-        formatError(
-          `Unable to apply writes toggle: ${err instanceof Error ? err.message : String(err)}`,
-        ),
-      );
+      console.error(formatError(`Unable to apply writes toggle: ${getErrorMessage(err)}`));
       console.log(chalk.gray('  Writes setting unchanged.'));
       console.log('');
       ctx.rl.prompt();
@@ -113,11 +110,7 @@ export async function handleConfigCommand(input: string, ctx: ChatContext): Prom
         STATESET_ALLOW_APPLY: ctx.allowApply ? 'true' : 'false',
         STATESET_REDACT: ctx.redactEmails ? 'true' : 'false',
       });
-      console.error(
-        formatError(
-          `Unable to apply redaction toggle: ${err instanceof Error ? err.message : String(err)}`,
-        ),
-      );
+      console.error(formatError(`Unable to apply redaction toggle: ${getErrorMessage(err)}`));
       console.log(chalk.gray('  Redaction setting unchanged.'));
       console.log('');
       ctx.rl.prompt();

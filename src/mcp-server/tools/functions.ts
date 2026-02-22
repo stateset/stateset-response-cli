@@ -16,6 +16,7 @@ import {
   MAX_NAME_LENGTH,
   MAX_DESCRIPTION_LENGTH,
 } from '../../lib/validation.js';
+import { errorResult } from './helpers.js';
 
 const FUNCTION_FIELDS = `
   id function_name function_type activated description
@@ -171,7 +172,7 @@ export function registerFunctionTools(server: McpServer, client: GraphQLClient, 
         { id, org_id: orgId, set: setFields },
       );
       if (!data.update_functions.returning.length) {
-        return { content: [{ type: 'text' as const, text: 'Function not found' }], isError: true };
+        return errorResult('Function not found');
       }
       return {
         content: [
@@ -200,7 +201,7 @@ export function registerFunctionTools(server: McpServer, client: GraphQLClient, 
         { id, org_id: orgId },
       );
       if (!data.delete_functions.returning.length) {
-        return { content: [{ type: 'text' as const, text: 'Function not found' }], isError: true };
+        return errorResult('Function not found');
       }
       return {
         content: [

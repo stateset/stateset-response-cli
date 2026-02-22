@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { getErrorMessage } from '../lib/errors.js';
 
 export const MAX_JSON_FILE_SIZE_BYTES = 1_048_576;
 export const MAX_TEXT_FILE_SIZE_BYTES = 1_048_576;
@@ -25,7 +26,7 @@ export function readTextFile(filePath: string, options: SafeTextReadOptions = {}
   try {
     stats = fs.lstatSync(filePath);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = getErrorMessage(error);
     throw new Error(`Failed to read ${label}: ${message}`);
   }
 
@@ -40,9 +41,7 @@ export function readTextFile(filePath: string, options: SafeTextReadOptions = {}
   try {
     raw = fs.readFileSync(filePath, encoding);
   } catch (error) {
-    throw new Error(
-      `Failed to read ${label}: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    throw new Error(`Failed to read ${label}: ${getErrorMessage(error)}`);
   }
 
   if (Buffer.byteLength(raw, encoding) > maxBytes) {
@@ -73,9 +72,7 @@ export function readJsonFile(filePath: string, options: SafeJsonReadOptions = {}
   } catch (error) {
     const code = getErrnoCode(error);
     if (code && code !== 'ENOENT') {
-      throw new Error(
-        `Unable to access ${label}: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      throw new Error(`Unable to access ${label}: ${getErrorMessage(error)}`);
     }
     stats = null;
   }
@@ -93,9 +90,7 @@ export function readJsonFile(filePath: string, options: SafeJsonReadOptions = {}
   try {
     raw = fs.readFileSync(filePath, 'utf-8');
   } catch (error) {
-    throw new Error(
-      `Failed to read ${label}: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    throw new Error(`Failed to read ${label}: ${getErrorMessage(error)}`);
   }
 
   if (Buffer.byteLength(raw, 'utf-8') > maxBytes) {
@@ -106,9 +101,7 @@ export function readJsonFile(filePath: string, options: SafeJsonReadOptions = {}
   try {
     parsed = JSON.parse(raw);
   } catch (error) {
-    throw new Error(
-      `Invalid JSON in ${label}: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    throw new Error(`Invalid JSON in ${label}: ${getErrorMessage(error)}`);
   }
 
   if (options.expectObject && (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))) {

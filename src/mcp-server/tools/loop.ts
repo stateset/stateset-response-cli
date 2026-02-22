@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { LoopConfig } from '../../integrations/config.js';
 import { loopRequest } from '../../integrations/loop.js';
+import { getErrorMessage } from '../../lib/errors.js';
 import {
   type IntegrationToolOptions,
   createRequestRunner,
@@ -297,7 +298,7 @@ export function registerLoopTools(server: McpServer, loop: LoopConfig, options: 
         } catch (error) {
           errors.push({
             return_id: returnId,
-            error: error instanceof Error ? error.message : String(error),
+            error: getErrorMessage(error),
           });
         }
       }

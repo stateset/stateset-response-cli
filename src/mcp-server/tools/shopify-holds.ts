@@ -8,6 +8,7 @@ import {
   type ShopifyOrder,
 } from '../../integrations/shopify.js';
 import { formatMoney } from '../../integrations/format.js';
+import { getErrorMessage } from '../../lib/errors.js';
 import { type IntegrationToolOptions, wrapToolResult } from './helpers.js';
 
 export type ShopifyToolOptions = IntegrationToolOptions;
@@ -189,7 +190,7 @@ async function executeReleaseHolds(
         tagFailures.push({
           orderId,
           orderName: order.name,
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
         });
       }
     }
@@ -232,7 +233,7 @@ async function executeAddTags(
       await addOrderTags({ shopify, orderId, tags });
       results.push({ orderId, success: true });
     } catch (error) {
-      failures.push({ orderId, error: error instanceof Error ? error.message : String(error) });
+      failures.push({ orderId, error: getErrorMessage(error) });
     }
   }
 

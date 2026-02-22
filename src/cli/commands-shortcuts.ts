@@ -10,6 +10,7 @@ import {
   addCommonJsonOption,
 } from './shortcuts/utils.js';
 import { formatError } from '../utils/display.js';
+import { getErrorMessage } from '../lib/errors.js';
 
 import { runRulesCommand, runTopLevelRules } from './shortcuts/rules.js';
 import { runKnowledgeBaseCommand, runTopLevelKb } from './shortcuts/knowledge-base.js';
@@ -331,7 +332,7 @@ export async function handleShortcutCommand(input: string, ctx: ChatContext) {
       return { handled: true };
     }
   } catch (error) {
-    logger.error(error instanceof Error ? error.message : String(error));
+    logger.error(getErrorMessage(error));
     logger.done();
     return { handled: true };
   }

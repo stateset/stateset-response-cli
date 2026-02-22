@@ -4,6 +4,7 @@ import { handleExportCommand } from './commands-export.js';
 import { handleShortcutCommand } from './commands-shortcuts.js';
 import type { ChatContext, CommandResult } from './types.js';
 import { formatError } from '../utils/display.js';
+import { getErrorMessage } from '../lib/errors.js';
 import type { ExtensionCommand } from '../extensions.js';
 
 const isNonEmptyString = (value: unknown): value is string => {
@@ -29,7 +30,7 @@ export async function routeSlashCommand(input: string, ctx: ChatContext): Promis
   try {
     chatResult = await handleChatCommand(input, ctx);
   } catch (err) {
-    console.error(formatError(err instanceof Error ? err.message : String(err)));
+    console.error(formatError(getErrorMessage(err)));
     return { handled: true, needsPrompt: true };
   }
   if (chatResult?.handled === true) {
@@ -55,7 +56,7 @@ export async function routeSlashCommand(input: string, ctx: ChatContext): Promis
       return { handled: true };
     }
   } catch (err) {
-    console.error(formatError(err instanceof Error ? err.message : String(err)));
+    console.error(formatError(getErrorMessage(err)));
     return { handled: true, needsPrompt: true };
   }
 
@@ -66,7 +67,7 @@ export async function routeSlashCommand(input: string, ctx: ChatContext): Promis
       return { handled: true };
     }
   } catch (err) {
-    console.error(formatError(err instanceof Error ? err.message : String(err)));
+    console.error(formatError(getErrorMessage(err)));
     return { handled: true, needsPrompt: true };
   }
 
@@ -77,7 +78,7 @@ export async function routeSlashCommand(input: string, ctx: ChatContext): Promis
       return shortcutResult;
     }
   } catch (err) {
-    console.error(formatError(err instanceof Error ? err.message : String(err)));
+    console.error(formatError(getErrorMessage(err)));
     return { handled: true, needsPrompt: true };
   }
 
@@ -88,7 +89,7 @@ export async function routeSlashCommand(input: string, ctx: ChatContext): Promis
     try {
       extCommand = ctx.extensions?.getCommand ? ctx.extensions.getCommand(commandName) : null;
     } catch (err) {
-      console.error(formatError(err instanceof Error ? err.message : String(err)));
+      console.error(formatError(getErrorMessage(err)));
       return { handled: true, needsPrompt: true };
     }
     if (extCommand) {
@@ -117,7 +118,7 @@ export async function routeSlashCommand(input: string, ctx: ChatContext): Promis
         }
         return { handled: true, needsPrompt: true };
       } catch (err) {
-        console.error(formatError(err instanceof Error ? err.message : String(err)));
+        console.error(formatError(getErrorMessage(err)));
         return { handled: true, needsPrompt: true };
       }
     }

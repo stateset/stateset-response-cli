@@ -12,6 +12,7 @@ import {
   type ModelId,
 } from '../config.js';
 import { logger } from '../lib/logger.js';
+import { getErrorMessage } from '../lib/errors.js';
 
 export interface OrchestratorOptions {
   model?: string;
@@ -43,7 +44,7 @@ interface ChannelPlan {
 }
 
 function isModuleNotFoundError(err: unknown): boolean {
-  const message = err instanceof Error ? err.message : String(err);
+  const message = getErrorMessage(err);
   const errno =
     err && typeof err === 'object' && 'code' in err ? (err as { code?: unknown }).code : undefined;
   return (
@@ -54,7 +55,7 @@ function isModuleNotFoundError(err: unknown): boolean {
 }
 
 function optionalDependencyErrorReason(err: unknown, channel: 'Slack' | 'WhatsApp'): string | null {
-  const message = err instanceof Error ? err.message : String(err);
+  const message = getErrorMessage(err);
   const normalized = message.toLowerCase();
   if (isModuleNotFoundError(err)) {
     return channel === 'Slack' ? 'slack/bolt not installed' : 'baileys not installed';
@@ -143,7 +144,7 @@ export class Orchestrator {
         continue;
       }
 
-      const msg = startup.reason instanceof Error ? startup.reason.message : String(startup.reason);
+      const msg = getErrorMessage(startup.reason);
       results.push({ name: plan.name, status: 'error', reason: msg });
       this.log.error(`${plan.name} failed to start: ${msg}`);
     }
@@ -183,7 +184,7 @@ export class Orchestrator {
     const stops = this.gateways.map((gw) => {
       this.log.info(`Stopping ${gw.name}...`);
       return gw.stop().catch((err) => {
-        this.log.error(`Error stopping ${gw.name}: ${err instanceof Error ? err.message : err}`);
+        this.log.error(`Error stopping ${gw.name}: ${getErrorMessage(err)}`);
       });
     });
     await Promise.all(stops);

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { ShortcutLogger, ShortcutRunner, TopLevelOptions } from './types.js';
 import { readJsonFile } from '../../utils/file-read.js';
+import { getErrorMessage } from '../../lib/errors.js';
 import {
   toLines,
   parseCommandArgs,
@@ -95,9 +96,7 @@ export async function runAgentsCommand(
         fs.writeFileSync(outputPath, JSON.stringify(result.payload, null, 2), 'utf-8');
         logger.success(`Agent exported to ${outputPath}`);
       } catch (error) {
-        logger.error(
-          `Failed to write export file: ${error instanceof Error ? error.message : String(error)}`,
-        );
+        logger.error(`Failed to write export file: ${getErrorMessage(error)}`);
       }
     } else {
       printPayload(logger, `Agent ${agentId}`, result.payload, json);
@@ -118,9 +117,7 @@ export async function runAgentsCommand(
         expectObject: true,
       });
     } catch (error) {
-      logger.error(
-        `Unable to read import file: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      logger.error(`Unable to read import file: ${getErrorMessage(error)}`);
       return;
     }
 

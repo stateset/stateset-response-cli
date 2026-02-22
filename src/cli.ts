@@ -19,7 +19,7 @@ import {
 } from './config.js';
 import { sanitizeSessionId } from './session.js';
 import { printAuthHelp, formatError } from './utils/display.js';
-import { installGlobalErrorHandlers } from './lib/errors.js';
+import { installGlobalErrorHandlers, getErrorMessage } from './lib/errors.js';
 import { exportOrg, importOrg, type ImportResult } from './export-import.js';
 import { EventsRunner, validateEventsPrereqs } from './events.js';
 import { assertNodeVersion } from './cli/utils.js';
@@ -84,7 +84,7 @@ configCmd
       };
       console.log(JSON.stringify(display, null, 2));
     } catch (e: unknown) {
-      console.error(formatError(e instanceof Error ? e.message : String(e)));
+      console.error(formatError(getErrorMessage(e)));
       process.exit(1);
     }
   });
@@ -118,7 +118,7 @@ program
       console.log(chalk.gray(`  ${counts.join(', ')}`));
     } catch (e: unknown) {
       spinner.fail('Export failed');
-      console.error(formatError(e instanceof Error ? e.message : String(e)));
+      console.error(formatError(getErrorMessage(e)));
       process.exit(1);
     }
   });
@@ -173,7 +173,7 @@ program
       try {
         preview = await importOrg(file, { dryRun: true });
       } catch (e: unknown) {
-        console.error(formatError(e instanceof Error ? e.message : String(e)));
+        console.error(formatError(getErrorMessage(e)));
         process.exit(1);
         return;
       }
@@ -229,7 +229,7 @@ program
         }
       } catch (e: unknown) {
         spinner.fail('Import failed');
-        console.error(formatError(e instanceof Error ? e.message : String(e)));
+        console.error(formatError(getErrorMessage(e)));
         process.exit(1);
       }
     },
@@ -263,7 +263,7 @@ program
       try {
         runtime = validateEventsPrereqs();
       } catch (e: unknown) {
-        console.error(formatError(e instanceof Error ? e.message : String(e)));
+        console.error(formatError(getErrorMessage(e)));
         process.exit(1);
       }
       if (!runtime) {
@@ -283,7 +283,7 @@ program
         try {
           model = resolveModelOrThrow(options.model);
         } catch (e: unknown) {
-          console.error(formatError(e instanceof Error ? e.message : String(e)));
+          console.error(formatError(getErrorMessage(e)));
           process.exit(1);
         }
       }
@@ -300,7 +300,7 @@ program
           anthropicApiKey: runtime.anthropicApiKey,
         });
       } catch (e: unknown) {
-        console.error(formatError(e instanceof Error ? e.message : String(e)));
+        console.error(formatError(getErrorMessage(e)));
         process.exit(1);
         return;
       }
@@ -308,7 +308,7 @@ program
       try {
         runner.start();
       } catch (e: unknown) {
-        console.error(formatError(e instanceof Error ? e.message : String(e)));
+        console.error(formatError(getErrorMessage(e)));
         process.exit(1);
         return;
       }

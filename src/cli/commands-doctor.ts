@@ -12,6 +12,7 @@ import {
 import { requestText } from '../integrations/http.js';
 import { listIntegrations } from '../integrations/registry.js';
 import { getIntegrationEnvStatus } from './commands-integrations.js';
+import { getErrorMessage } from '../lib/errors.js';
 import { getStateSetDir, getSessionStorageStats, cleanupSessions } from '../session.js';
 
 export interface DoctorCheck {
@@ -109,7 +110,7 @@ async function checkGraphQLEndpoint(): Promise<DoctorCheck> {
     return {
       name: 'GraphQL',
       status: 'fail',
-      message: `GraphQL endpoint unreachable: ${e instanceof Error ? e.message : String(e)}`,
+      message: `GraphQL endpoint unreachable: ${getErrorMessage(e)}`,
     };
   }
 }
@@ -173,7 +174,7 @@ function checkFilePermissions(): DoctorCheck {
     return {
       name: 'Permissions',
       status: 'warn',
-      message: `Could not check permissions: ${e instanceof Error ? e.message : String(e)}`,
+      message: `Could not check permissions: ${getErrorMessage(e)}`,
     };
   }
 }
@@ -280,7 +281,7 @@ function checkDiskSpace(): DoctorCheck {
     return {
       name: 'Disk',
       status: 'warn',
-      message: `Could not measure disk usage: ${e instanceof Error ? e.message : String(e)}`,
+      message: `Could not measure disk usage: ${getErrorMessage(e)}`,
     };
   }
 }
@@ -353,9 +354,7 @@ export function registerDoctorCommand(program: Command): void {
               check.fix!();
               console.log(chalk.green(`  [FIXED] ${check.name}: ${check.fixDescription}`));
             } catch (e) {
-              console.log(
-                chalk.red(`  [ERROR] ${check.name}: ${e instanceof Error ? e.message : String(e)}`),
-              );
+              console.log(chalk.red(`  [ERROR] ${check.name}: ${getErrorMessage(e)}`));
             }
           }
         }

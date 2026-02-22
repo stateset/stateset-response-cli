@@ -17,6 +17,7 @@ import {
   type ModelId,
 } from '../config.js';
 import { logger } from '../lib/logger.js';
+import { getErrorMessage } from '../lib/errors.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -398,7 +399,7 @@ export class WhatsAppGateway {
     try {
       await this.ensureAgentConnected(session, jid);
     } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
+      const errMsg = getErrorMessage(err);
       this.log.error(`Failed to connect agent for ${jidToPhone(jid)}: ${errMsg}`);
       await this.sendText(jid, 'I encountered an error processing your request. Please try again.');
       return;
@@ -412,7 +413,7 @@ export class WhatsAppGateway {
     try {
       response = await session.agent.chat(text);
     } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
+      const errMsg = getErrorMessage(err);
       this.log.error(`Agent error for ${jidToPhone(jid)}: ${errMsg}`);
       response = 'I encountered an error processing your request. Please try again.';
     }

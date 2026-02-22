@@ -5,6 +5,7 @@ import { configExists, getRuntimeContext } from '../../config.js';
 import { StateSetAgent } from '../../agent.js';
 import { exportOrg, importOrg, type ImportResult, type OrgExport } from '../../export-import.js';
 import { readJsonFile } from '../../utils/file-read.js';
+import { getErrorMessage } from '../../lib/errors.js';
 import {
   formatError,
   formatBytes,
@@ -670,9 +671,7 @@ export function readStateSetBundle(source: string): OrgExport {
       }) as unknown;
       return coerceOrgExportPayload(parsed);
     } catch (error) {
-      throw new Error(
-        `Invalid state set file ${sourcePath}: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      throw new Error(`Invalid state set file ${sourcePath}: ${getErrorMessage(error)}`);
     }
   }
 

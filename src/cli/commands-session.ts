@@ -12,6 +12,7 @@ import {
 } from '../session.js';
 import { loadMemory } from '../memory.js';
 import { formatSuccess, formatWarning, formatError, formatTable } from '../utils/display.js';
+import { getErrorMessage } from '../lib/errors.js';
 import type { ChatContext } from './types.js';
 import {
   formatTimestamp,
@@ -306,7 +307,7 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
       fs.renameSync(currentDir, targetDir);
       ctx.switchSession(sanitized);
     } catch (err) {
-      console.error(formatError(err instanceof Error ? err.message : String(err)));
+      console.error(formatError(getErrorMessage(err)));
     }
 
     console.log('');
@@ -351,7 +352,7 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
         console.log(formatSuccess(`Deleted session "${target}".`));
       }
     } catch (err) {
-      console.error(formatError(err instanceof Error ? err.message : String(err)));
+      console.error(formatError(getErrorMessage(err)));
     }
 
     console.log('');
@@ -820,7 +821,7 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
         fs.writeFileSync(resolved, outputText, 'utf-8');
         console.log(formatSuccess(`Session meta saved to ${resolved}`));
       } catch (err) {
-        console.error(formatError(err instanceof Error ? err.message : String(err)));
+        console.error(formatError(getErrorMessage(err)));
       }
     } else {
       console.log(formatSuccess(`Session meta (${format}):`));

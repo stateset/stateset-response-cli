@@ -3,6 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import type Anthropic from '@anthropic-ai/sdk';
 import { readJsonFile, readTextFile, MAX_TEXT_FILE_SIZE_BYTES } from './utils/file-read.js';
+import { getErrorMessage } from './lib/errors.js';
 
 export interface CleanupOptions {
   maxAgeDays?: number;
@@ -45,12 +46,15 @@ export function getSessionsDir(): string {
   return path.join(getStateSetDir(), 'sessions');
 }
 
+const MAX_SESSION_ID_LENGTH = 200;
+
 /** Strips unsafe characters and prevents directory traversal. Falls back to "default" if empty. */
 export function sanitizeSessionId(input: string): string {
   const trimmed = input.trim() || 'default';
   const sanitized = trimmed.replace(/[^a-zA-Z0-9._-]/g, '_');
   const withoutTraversal = sanitized.replace(/\.\.+/g, '_').replace(/^\.+/, '');
-  return withoutTraversal.length > 0 ? withoutTraversal : 'default';
+  const bounded = withoutTraversal.slice(0, MAX_SESSION_ID_LENGTH);
+  return bounded.length > 0 ? bounded : 'default';
 }
 
 export function getSessionDir(sessionId: string): string {
@@ -291,7 +295,7 @@ export function cleanupSessions(options: CleanupOptions = {}, sessionsDir?: stri
       try {
         fs.rmSync(sessionDir, { recursive: true, force: true });
       } catch (err) {
-        result.errors.push(`${entry.name}: ${err instanceof Error ? err.message : String(err)}`);
+        result.errors.push(`${entry.name}: ${getErrorMessage(err)}`);
         continue;
       }
     }

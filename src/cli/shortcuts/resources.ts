@@ -3,6 +3,7 @@ import path from 'node:path';
 import chalk from 'chalk';
 import type { ShortcutLogger, ShortcutRunner, TopLevelOptions } from './types.js';
 import { DEFAULT_LIST_LIMIT, DEFAULT_LIST_OFFSET } from './types.js';
+import { getErrorMessage } from '../../lib/errors.js';
 import {
   toLines,
   parseCommandArgs,
@@ -163,9 +164,7 @@ export async function runConvosCommand(
         fs.writeFileSync(outputPath, JSON.stringify(result.payload, null, 2), 'utf-8');
         logger.success(`Conversation exported to ${outputPath}`);
       } catch (error) {
-        logger.error(
-          `Failed to export conversation: ${error instanceof Error ? error.message : String(error)}`,
-        );
+        logger.error(`Failed to export conversation: ${getErrorMessage(error)}`);
       }
       return;
     }

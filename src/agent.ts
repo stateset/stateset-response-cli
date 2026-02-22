@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { SessionStore } from './session.js';
 import { type ModelId, DEFAULT_MODEL } from './config.js';
 import { INTEGRATION_DEFINITIONS } from './integrations/registry.js';
-import { isRetryable } from './lib/errors.js';
+import { isRetryable, getErrorMessage } from './lib/errors.js';
 
 const THIS_FILE = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(THIS_FILE);
@@ -16,6 +16,17 @@ const DEFAULT_MAX_TOKENS = 16384;
 const MAX_TOOL_RETRIES = 2;
 const RETRY_BASE_DELAY_MS = 500;
 const MAX_TOOL_CALL_ARG_BYTES = 1_048_576;
+const MCP_CONNECT_TIMEOUT_MS = 30_000;
+const MCP_DISCONNECT_TIMEOUT_MS = 5_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms),
+    ),
+  ]);
+}
 
 const INTEGRATION_ENV_KEYS = new Set<string>([
   'STATESET_ALLOW_APPLY',
@@ -260,7 +271,7 @@ export class StateSetAgent {
         connected: false,
         toolCount: 0,
         latencyMs: Date.now() - start,
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       };
     }
   }
@@ -289,8 +300,12 @@ export class StateSetAgent {
     this.transport = transport;
 
     try {
-      await this.mcpClient.connect(transport);
-      const { tools } = await this.mcpClient.listTools();
+      await withTimeout(this.mcpClient.connect(transport), MCP_CONNECT_TIMEOUT_MS, 'MCP connect');
+      const { tools } = await withTimeout(
+        this.mcpClient.listTools(),
+        MCP_CONNECT_TIMEOUT_MS,
+        'MCP listTools',
+      );
       this.tools = tools.map((tool) => ({
         name: tool.name,
         description: tool.description || '',
@@ -378,7 +393,7 @@ export class StateSetAgent {
             args = this.parseToolCallArguments(block.input);
             this.validateToolCallArgs(block.name, args);
           } catch (error) {
-            const reason = error instanceof Error ? error.message : String(error);
+            const reason = getErrorMessage(error);
             toolResults.push({
               type: 'tool_result',
               tool_use_id: block.id,
@@ -440,7 +455,7 @@ export class StateSetAgent {
           try {
             this.validateToolCallArgs(block.name, args);
           } catch (error) {
-            const reason = error instanceof Error ? error.message : String(error);
+            const reason = getErrorMessage(error);
             toolResults.push({
               type: 'tool_result',
               tool_use_id: block.id,
@@ -480,7 +495,7 @@ export class StateSetAgent {
             });
           } catch (error: unknown) {
             const elapsed = Date.now() - startTime;
-            const errMsg = error instanceof Error ? error.message : String(error);
+            const errMsg = getErrorMessage(error);
             const resultText = `Error calling tool "${block.name}" (${elapsed}ms): ${errMsg}`;
             toolResults.push({
               type: 'tool_result',
@@ -510,7 +525,7 @@ export class StateSetAgent {
   async disconnect(): Promise<void> {
     if (this.transport) {
       try {
-        await this.transport.close();
+        await withTimeout(this.transport.close(), MCP_DISCONNECT_TIMEOUT_MS, 'MCP transport close');
       } catch {
         // Best-effort cleanup. Transport shutdown should not block shutdown flows.
       } finally {

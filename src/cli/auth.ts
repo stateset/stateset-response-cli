@@ -11,6 +11,7 @@ import {
   type StateSetConfig,
 } from '../config.js';
 import { formatError, printAuthHelp } from '../utils/display.js';
+import { getErrorMessage } from '../lib/errors.js';
 import { sleep, normalizeInstanceUrl } from './utils.js';
 import { requestJson } from '../integrations/http.js';
 
@@ -279,7 +280,7 @@ export function registerAuthCommands(program: Command): void {
           console.log('');
         }
       } catch (e: unknown) {
-        console.error(formatError(e instanceof Error ? e.message : String(e)));
+        console.error(formatError(getErrorMessage(e)));
       }
     });
 }

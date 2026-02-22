@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { ZendeskConfig } from '../../integrations/config.js';
 import { zendeskRequest } from '../../integrations/zendesk.js';
+import { getErrorMessage } from '../../lib/errors.js';
 import {
   type IntegrationToolOptions,
   MaxCharsSchema,
@@ -1288,7 +1289,7 @@ export function registerZendeskTools(
           } catch (error) {
             errors.push({
               ticket_id: ticketId,
-              error: error instanceof Error ? error.message : String(error),
+              error: getErrorMessage(error),
             });
           }
         }

@@ -3,6 +3,7 @@ import { GraphQLClient } from 'graphql-request';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { executeQuery } from '../graphql-client.js';
+import { errorResult } from './helpers.js';
 
 const CHANNEL_FIELDS = `
   id name uuid user_id org_id agent_id model
@@ -89,10 +90,7 @@ export function registerChannelTools(server: McpServer, client: GraphQLClient, o
         org_id: orgId,
       });
       if (!data.channel_thread.length) {
-        return {
-          content: [{ type: 'text' as const, text: 'Channel thread not found' }],
-          isError: true,
-        };
+        return errorResult('Channel thread not found');
       }
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(data.channel_thread[0], null, 2) }],
@@ -124,10 +122,7 @@ export function registerChannelTools(server: McpServer, client: GraphQLClient, o
         msg_limit: message_limit ?? 100,
       });
       if (!data.channel_thread.length) {
-        return {
-          content: [{ type: 'text' as const, text: 'Channel thread not found' }],
-          isError: true,
-        };
+        return errorResult('Channel thread not found');
       }
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(data.channel_thread[0], null, 2) }],
@@ -206,7 +201,7 @@ export function registerChannelTools(server: McpServer, client: GraphQLClient, o
         if (value !== undefined) setFields[key] = value;
       }
       if (Object.keys(setFields).length === 0) {
-        return { content: [{ type: 'text' as const, text: 'No fields to update' }], isError: true };
+        return errorResult('No fields to update');
       }
 
       const mutation = `mutation ($uuid: uuid!, $org_id: String!, $set: channel_thread_set_input!) {
@@ -222,10 +217,7 @@ export function registerChannelTools(server: McpServer, client: GraphQLClient, o
         update_channel_thread: { affected_rows: number; returning: unknown[] };
       }>(client, mutation, { uuid, org_id: orgId, set: setFields });
       if (!data.update_channel_thread.returning.length) {
-        return {
-          content: [{ type: 'text' as const, text: 'Channel thread not found' }],
-          isError: true,
-        };
+        return errorResult('Channel thread not found');
       }
       return {
         content: [
@@ -254,10 +246,7 @@ export function registerChannelTools(server: McpServer, client: GraphQLClient, o
         { uuid, org_id: orgId },
       );
       if (data.delete_channel_thread.affected_rows === 0) {
-        return {
-          content: [{ type: 'text' as const, text: 'Channel thread not found' }],
-          isError: true,
-        };
+        return errorResult('Channel thread not found');
       }
       return {
         content: [

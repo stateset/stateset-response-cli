@@ -25,6 +25,7 @@ import { buildSystemPrompt } from './prompt.js';
 import { loadMemory } from './memory.js';
 import { formatUsage } from './utils/display.js';
 import { readTextFile, MAX_TEXT_FILE_SIZE_BYTES } from './utils/file-read.js';
+import { getErrorMessage } from './lib/errors.js';
 
 const DEBOUNCE_MS = 100;
 const RETRY_BASE_MS = 100;
@@ -61,9 +62,7 @@ export function parseEvent(content: string, filename: string): ResponseEvent {
   try {
     raw = JSON.parse(content);
   } catch (e) {
-    throw new Error(
-      `Invalid JSON in event file ${filename}: ${e instanceof Error ? e.message : String(e)}`,
-    );
+    throw new Error(`Invalid JSON in event file ${filename}: ${getErrorMessage(e)}`);
   }
   if (!raw || typeof raw !== 'object') {
     throw new Error(`Invalid event data in ${filename}`);
@@ -176,7 +175,7 @@ class SessionAgentRunner {
     this.queue = this.queue
       .then(() => this.run(event))
       .catch((err) => {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = getErrorMessage(err);
         logger.error(`Event error (${this.store.getSessionId()}): ${msg}`);
       })
       .finally(() => {
@@ -308,9 +307,7 @@ export class EventsRunner {
     if (this.sessionCleanupTimer) return;
     this.sessionCleanupTimer = setInterval(() => {
       void this.cleanupSessionRunners().catch((error) => {
-        logger.error(
-          `Failed to cleanup session runners: ${error instanceof Error ? error.message : String(error)}`,
-        );
+        logger.error(`Failed to cleanup session runners: ${getErrorMessage(error)}`);
       });
     }, SESSION_RUNNER_CLEANUP_MS);
   }
@@ -383,7 +380,7 @@ export class EventsRunner {
 
     for (const filename of files) {
       void this.handleFile(filename).catch((err) => {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = getErrorMessage(err);
         logger.error(`Failed to process event file ${filename}: ${msg}`);
       });
     }
@@ -402,13 +399,18 @@ export class EventsRunner {
     }
 
     void this.handleFile(filename).catch((err) => {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       logger.error(`Failed to process event file ${filename}: ${msg}`);
     });
   }
 
   private handleDelete(filename: string): void {
     if (!this.knownFiles.has(filename)) return;
+    const timer = this.debounceTimers.get(filename);
+    if (timer) {
+      clearTimeout(timer);
+      this.debounceTimers.delete(filename);
+    }
     this.cancelScheduled(filename);
     this.knownFiles.delete(filename);
   }
@@ -432,7 +434,7 @@ export class EventsRunner {
     try {
       stats = lstatSync(filePath);
     } catch (err) {
-      throw new Error(err instanceof Error ? err.message : String(err));
+      throw new Error(getErrorMessage(err));
     }
     if (stats.isSymbolicLink() || !stats.isFile()) {
       throw new Error(`Skipping unsafe event file: ${filename}`);
@@ -541,9 +543,7 @@ export class EventsRunner {
 
   private execute(filename: string, event: ResponseEvent, deleteAfter: boolean): void {
     void this.cleanupSessionRunners().catch((error) => {
-      logger.error(
-        `Failed to cleanup session runners: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      logger.error(`Failed to cleanup session runners: ${getErrorMessage(error)}`);
     });
     const sessionId = sanitizeSessionId(event.session || this.options.defaultSession);
     const runner = this.getSessionRunner(sessionId);
@@ -608,7 +608,7 @@ export class EventsRunner {
       this.sessionRunners.delete(sessionId);
       disconnects.push(
         runner.disconnect().catch((error) => {
-          const msg = error instanceof Error ? error.message : String(error);
+          const msg = getErrorMessage(error);
           logger.error(`Failed to disconnect idle runner ${sessionId}: ${msg}`);
         }),
       );

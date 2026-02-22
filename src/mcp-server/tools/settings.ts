@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { GraphQLClient } from 'graphql-request';
 import { z } from 'zod';
 import { executeQuery } from '../graphql-client.js';
+import { errorResult } from './helpers.js';
 
 const AGENT_SETTINGS_FIELDS = `
   id org_id test
@@ -68,10 +69,7 @@ export function registerSettingsTools(server: McpServer, client: GraphQLClient, 
         org_id: orgId,
       });
       if (!data.agent_settings.length) {
-        return {
-          content: [{ type: 'text' as const, text: 'Agent settings not found' }],
-          isError: true,
-        };
+        return errorResult('Agent settings not found');
       }
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(data.agent_settings[0], null, 2) }],
@@ -154,10 +152,7 @@ export function registerSettingsTools(server: McpServer, client: GraphQLClient, 
         update_agent_settings: { affected_rows: number; returning: unknown[] };
       }>(client, mutation, { id, org_id: orgId, set: setFields });
       if (!data.update_agent_settings.returning.length) {
-        return {
-          content: [{ type: 'text' as const, text: 'Agent settings not found' }],
-          isError: true,
-        };
+        return errorResult('Agent settings not found');
       }
       return {
         content: [
@@ -191,10 +186,7 @@ export function registerSettingsTools(server: McpServer, client: GraphQLClient, 
         org_id: orgId,
       });
       if (!data.organizations.length) {
-        return {
-          content: [{ type: 'text' as const, text: 'Organization not found' }],
-          isError: true,
-        };
+        return errorResult('Organization not found');
       }
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(data.organizations[0], null, 2) }],

@@ -60,7 +60,8 @@ export async function executeQuery<T = Record<string, unknown>>(
   variables?: Record<string, unknown>,
   options?: ExecuteQueryOptions,
 ): Promise<T> {
-  const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const rawTimeout = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const timeoutMs = Number.isFinite(rawTimeout) && rawTimeout > 0 ? rawTimeout : DEFAULT_TIMEOUT_MS;
   let lastError: unknown;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {

@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { logger } from '../lib/logger.js';
+import { getErrorMessage } from '../lib/errors.js';
 import { createGraphQLClient, type GraphQLAuth } from './graphql-client.js';
 import { getCurrentOrg } from '../config.js';
 import {
@@ -53,7 +54,9 @@ interface IntegrationEntry {
   name: string;
   /** Return the config object or null when the integration is not configured. May throw. */
   getConfig: () => unknown;
-  /** One or more register functions to call with (server, config, flags). */
+  /** One or more register functions to call with (server, config, flags).
+   *  Each register function has its own typed config parameter (ShopifyConfig, etc.).
+   *  Runtime type safety is ensured by the getConfig/register pairing. */
   register: Array<(server: McpServer, config: any, flags: IntegrationFlags) => void>;
 }
 
@@ -163,9 +166,7 @@ export function createServer(): McpServer {
         }
       }
     } catch (error) {
-      logger.warn(
-        `${integration.name} tools disabled: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      logger.warn(`${integration.name} tools disabled: ${getErrorMessage(error)}`);
     }
   }
 

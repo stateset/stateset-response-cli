@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import inquirer from 'inquirer';
 import { formatError, formatSuccess, formatWarning, formatTable } from '../utils/display.js';
 import { getPromptTemplate, listPromptTemplates, getPromptTemplateFile } from '../resources.js';
+import { getErrorMessage } from '../lib/errors.js';
 import type { ChatContext, CommandResult } from './types.js';
 import { readPromptHistory, appendPromptHistory } from './audit.js';
 import { hasCommand } from './utils.js';
@@ -97,7 +98,7 @@ export async function handleTemplateCommand(
               const template = getPromptTemplate(target, ctx.cwd);
               return template ? [template] : [];
             } catch (err) {
-              console.error(formatError(err instanceof Error ? err.message : String(err)));
+              console.error(formatError(getErrorMessage(err)));
               return [];
             }
           })();
@@ -255,7 +256,7 @@ export async function handleTemplateCommand(
     try {
       template = getPromptTemplate(templateName, ctx.cwd);
     } catch (err) {
-      console.error(formatError(err instanceof Error ? err.message : String(err)));
+      console.error(formatError(getErrorMessage(err)));
       console.log('');
       ctx.rl.prompt();
       return { handled: true };

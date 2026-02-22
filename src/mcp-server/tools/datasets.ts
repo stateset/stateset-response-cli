@@ -10,6 +10,7 @@ import {
   MAX_DESCRIPTION_LENGTH,
   MAX_STRING_LENGTH,
 } from '../../lib/validation.js';
+import { errorResult } from './helpers.js';
 
 const DATASET_FIELDS = `
   id name description entry_count status
@@ -63,7 +64,7 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
         org_id: orgId,
       });
       if (!(data.datasets as unknown[]).length) {
-        return { content: [{ type: 'text' as const, text: 'Dataset not found' }], isError: true };
+        return errorResult('Dataset not found');
       }
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(data.datasets[0], null, 2) }],
@@ -141,7 +142,7 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
         { id, org_id: orgId, set: setFields },
       );
       if (!data.update_datasets.returning.length) {
-        return { content: [{ type: 'text' as const, text: 'Dataset not found' }], isError: true };
+        return errorResult('Dataset not found');
       }
       return {
         content: [
@@ -170,7 +171,7 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
         { id, org_id: orgId },
       );
       if (!data.delete_datasets.returning.length) {
-        return { content: [{ type: 'text' as const, text: 'Dataset not found' }], isError: true };
+        return errorResult('Dataset not found');
       }
       return {
         content: [
@@ -238,10 +239,7 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
         { id },
       );
       if (!data.delete_dataset_entries.returning.length) {
-        return {
-          content: [{ type: 'text' as const, text: 'Dataset entry not found' }],
-          isError: true,
-        };
+        return errorResult('Dataset entry not found');
       }
       return {
         content: [

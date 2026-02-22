@@ -84,6 +84,9 @@ vi.mock('../lib/errors.js', () => ({
     }
     return false;
   }),
+  getErrorMessage: vi.fn((error: unknown) =>
+    error instanceof Error ? error.message : String(error),
+  ),
 }));
 
 // ---------------------------------------------------------------------------

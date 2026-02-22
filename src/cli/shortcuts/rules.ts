@@ -2,6 +2,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import type { AnyPayload, ShortcutLogger, ShortcutRunner, TopLevelOptions } from './types.js';
 import { readJsonFile } from '../../utils/file-read.js';
+import { getErrorMessage } from '../../lib/errors.js';
 import {
   toLines,
   parseListArgs,
@@ -158,9 +159,7 @@ export async function runRulesCommand(
     try {
       parsed = readJsonFile(path.resolve(file), { label: 'rules import file' });
     } catch (error) {
-      logger.error(
-        `Unable to read rules import file: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      logger.error(`Unable to read rules import file: ${getErrorMessage(error)}`);
       return;
     }
     const rulesPayload = Array.isArray(parsed)
@@ -187,9 +186,7 @@ export async function runRulesCommand(
         fs.writeFileSync(outputPath, JSON.stringify(result.payload, null, 2), 'utf-8');
         logger.success(`Rules exported to ${outputPath}`);
       } catch (error) {
-        logger.error(
-          `Failed to write export file: ${error instanceof Error ? error.message : String(error)}`,
-        );
+        logger.error(`Failed to write export file: ${getErrorMessage(error)}`);
       }
     } else {
       printPayload(logger, 'Rules export', result.payload, json);

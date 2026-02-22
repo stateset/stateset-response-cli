@@ -3,6 +3,7 @@ import { GraphQLClient } from 'graphql-request';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { executeQuery } from '../graphql-client.js';
+import { errorResult } from './helpers.js';
 
 const MESSAGE_FIELDS = `
   id body chat_id user_id username from timestamp created_at
@@ -48,7 +49,7 @@ export function registerMessageTools(server: McpServer, client: GraphQLClient, o
       }`;
       const data = await executeQuery<{ message: unknown[] }>(client, query, { id });
       if (!data.message.length) {
-        return { content: [{ type: 'text' as const, text: 'Message not found' }], isError: true };
+        return errorResult('Message not found');
       }
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(data.message[0], null, 2) }],
@@ -132,7 +133,7 @@ export function registerMessageTools(server: McpServer, client: GraphQLClient, o
       if (body !== undefined) setFields.body = body;
       if (metadata !== undefined) setFields.metadata = metadata;
       if (Object.keys(setFields).length === 0) {
-        return { content: [{ type: 'text' as const, text: 'No fields to update' }], isError: true };
+        return errorResult('No fields to update');
       }
 
       const mutation = `mutation ($id: String!, $set: message_set_input!) {
@@ -146,7 +147,7 @@ export function registerMessageTools(server: McpServer, client: GraphQLClient, o
         { id, set: setFields },
       );
       if (!data.update_message.returning.length) {
-        return { content: [{ type: 'text' as const, text: 'Message not found' }], isError: true };
+        return errorResult('Message not found');
       }
       return {
         content: [
@@ -175,7 +176,7 @@ export function registerMessageTools(server: McpServer, client: GraphQLClient, o
         { id },
       );
       if (data.delete_message.affected_rows === 0) {
-        return { content: [{ type: 'text' as const, text: 'Message not found' }], isError: true };
+        return errorResult('Message not found');
       }
       return {
         content: [{ type: 'text' as const, text: JSON.stringify({ deleted: true, id }, null, 2) }],

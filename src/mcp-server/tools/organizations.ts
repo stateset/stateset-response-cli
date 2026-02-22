@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { GraphQLClient } from 'graphql-request';
 import { z } from 'zod';
 import { executeQuery } from '../graphql-client.js';
+import { errorResult } from './helpers.js';
 
 const ORG_FIELDS = `
   id org_id organization_name created_date created_by slug logo_url
@@ -22,10 +23,7 @@ export function registerOrganizationTools(server: McpServer, client: GraphQLClie
         org_id: orgId,
       });
       if (!data.organizations.length) {
-        return {
-          content: [{ type: 'text' as const, text: 'Organization not found' }],
-          isError: true,
-        };
+        return errorResult('Organization not found');
       }
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(data.organizations[0], null, 2) }],
@@ -73,10 +71,7 @@ export function registerOrganizationTools(server: McpServer, client: GraphQLClie
 
       const orgs = data.organizations as unknown[];
       if (!orgs?.length) {
-        return {
-          content: [{ type: 'text' as const, text: 'Organization not found' }],
-          isError: true,
-        };
+        return errorResult('Organization not found');
       }
 
       const agg = (key: string) =>
@@ -113,7 +108,7 @@ export function registerOrganizationTools(server: McpServer, client: GraphQLClie
         if (value !== undefined) setFields[key] = value;
       }
       if (Object.keys(setFields).length === 0) {
-        return { content: [{ type: 'text' as const, text: 'No fields to update' }], isError: true };
+        return errorResult('No fields to update');
       }
 
       const mutation = `mutation ($org_id: String!, $set: organizations_set_input!) {
@@ -129,10 +124,7 @@ export function registerOrganizationTools(server: McpServer, client: GraphQLClie
         update_organizations: { affected_rows: number; returning: unknown[] };
       }>(client, mutation, { org_id: orgId, set: setFields });
       if (!data.update_organizations.returning.length) {
-        return {
-          content: [{ type: 'text' as const, text: 'Organization not found' }],
-          isError: true,
-        };
+        return errorResult('Organization not found');
       }
       return {
         content: [

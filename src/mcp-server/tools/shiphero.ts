@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { ShipHeroConfig } from '../../integrations/config.js';
 import { shipheroGraphql } from '../../integrations/shiphero.js';
 import { redactPii } from '../../integrations/redact.js';
+import { getErrorMessage } from '../../lib/errors.js';
 import {
   type IntegrationToolOptions,
   guardWrite,
@@ -391,7 +392,7 @@ export function registerShipHeroTools(
         } catch (error) {
           errors.push({
             order_id: orderId,
-            error: error instanceof Error ? error.message : String(error),
+            error: getErrorMessage(error),
           });
         }
       }

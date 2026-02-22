@@ -3,6 +3,7 @@ import { GraphQLClient } from 'graphql-request';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { executeQuery } from '../graphql-client.js';
+import { errorResult } from './helpers.js';
 
 const AGENT_FIELDS = `
   id agent_name agent_type description activated
@@ -50,7 +51,7 @@ export function registerAgentTools(server: McpServer, client: GraphQLClient, org
         org_id: orgId,
       });
       if (!data.agents.length) {
-        return { content: [{ type: 'text' as const, text: 'Agent not found' }], isError: true };
+        return errorResult('Agent not found');
       }
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(data.agents[0], null, 2) }],
@@ -148,7 +149,7 @@ export function registerAgentTools(server: McpServer, client: GraphQLClient, org
         { id, org_id: orgId, set: setFields },
       );
       if (!data.update_agents.returning.length) {
-        return { content: [{ type: 'text' as const, text: 'Agent not found' }], isError: true };
+        return errorResult('Agent not found');
       }
       return {
         content: [
@@ -174,7 +175,7 @@ export function registerAgentTools(server: McpServer, client: GraphQLClient, org
         { id, org_id: orgId },
       );
       if (!data.delete_agents.returning.length) {
-        return { content: [{ type: 'text' as const, text: 'Agent not found' }], isError: true };
+        return errorResult('Agent not found');
       }
       return {
         content: [
@@ -263,7 +264,7 @@ export function registerAgentTools(server: McpServer, client: GraphQLClient, org
       ]);
 
       if (!agentData.agents.length) {
-        return { content: [{ type: 'text' as const, text: 'Agent not found' }], isError: true };
+        return errorResult('Agent not found');
       }
 
       const exportData = {

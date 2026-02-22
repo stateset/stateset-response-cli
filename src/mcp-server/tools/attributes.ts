@@ -11,6 +11,7 @@ import {
   MAX_DESCRIPTION_LENGTH,
   MAX_ARRAY_LENGTH,
 } from '../../lib/validation.js';
+import { errorResult } from './helpers.js';
 
 const ATTRIBUTE_FIELDS = `
   id attribute_name attribute_type value max_value min_value
@@ -160,7 +161,7 @@ export function registerAttributeTools(server: McpServer, client: GraphQLClient,
         { id, org_id: orgId, set: setFields },
       );
       if (!data.update_attributes.returning.length) {
-        return { content: [{ type: 'text' as const, text: 'Attribute not found' }], isError: true };
+        return errorResult('Attribute not found');
       }
       return {
         content: [
@@ -189,7 +190,7 @@ export function registerAttributeTools(server: McpServer, client: GraphQLClient,
         { id, org_id: orgId },
       );
       if (!data.delete_attributes.returning.length) {
-        return { content: [{ type: 'text' as const, text: 'Attribute not found' }], isError: true };
+        return errorResult('Attribute not found');
       }
       return {
         content: [

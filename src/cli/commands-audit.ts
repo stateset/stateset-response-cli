@@ -3,6 +3,7 @@ import inquirer from 'inquirer';
 import fs from 'node:fs';
 import { sanitizeSessionId } from '../session.js';
 import { formatError, formatSuccess, formatWarning, formatTable } from '../utils/display.js';
+import { getErrorMessage } from '../lib/errors.js';
 import type { ChatContext, CommandResult } from './types.js';
 import { parseToggleValue, hasCommand } from './utils.js';
 import { readToolAudit, getToolAuditPath } from './audit.js';
@@ -143,7 +144,7 @@ export async function handleAuditCommand(input: string, ctx: ChatContext): Promi
       fs.writeFileSync(auditPath, '', 'utf-8');
       console.log(formatSuccess(`Cleared audit log for "${target}".`));
     } catch (err) {
-      console.error(formatError(err instanceof Error ? err.message : String(err)));
+      console.error(formatError(getErrorMessage(err)));
     }
     console.log('');
     ctx.rl.prompt();

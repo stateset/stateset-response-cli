@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { GraphQLClient } from 'graphql-request';
 import { z } from 'zod';
 import { executeQuery } from '../graphql-client.js';
+import { errorResult } from './helpers.js';
 
 const RESPONSE_FIELDS = `
   id ticket_url channel customer_message agent_response rating
@@ -71,7 +72,7 @@ export function registerResponseTools(server: McpServer, client: GraphQLClient, 
         org_id: orgId,
       });
       if (!data.responses.length) {
-        return { content: [{ type: 'text' as const, text: 'Response not found' }], isError: true };
+        return errorResult('Response not found');
       }
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(data.responses[0], null, 2) }],
