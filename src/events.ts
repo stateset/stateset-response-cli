@@ -337,7 +337,7 @@ export class EventsRunner {
       const scheduled = this.oneShots.get(filename);
       if (!scheduled) continue;
       this.oneShots.delete(filename);
-      this.execute(scheduled.event, true);
+      this.execute(filename, scheduled.event, true);
     }
   }
 

@@ -8,16 +8,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const {
   mockGetCurrentOrg,
   mockGetIntegrationFlagsFromEnv,
-  mockGetShopifyConfigFromEnv,
-  mockGetGorgiasConfigFromEnv,
-  mockGetRechargeConfigFromEnv,
-  mockGetKlaviyoConfigFromEnv,
-  mockGetLoopConfigFromEnv,
-  mockGetShipStationConfigFromEnv,
-  mockGetShipHeroConfigFromEnv,
-  mockGetShipFusionConfigFromEnv,
-  mockGetShipHawkConfigFromEnv,
-  mockGetZendeskConfigFromEnv,
+  mockIsIntegrationConfigured,
   mockGetStateSetDir,
   mockLoadContextFiles,
   mockLoadSystemPromptFiles,
@@ -25,16 +16,7 @@ const {
 } = vi.hoisted(() => ({
   mockGetCurrentOrg: vi.fn(),
   mockGetIntegrationFlagsFromEnv: vi.fn(),
-  mockGetShopifyConfigFromEnv: vi.fn(),
-  mockGetGorgiasConfigFromEnv: vi.fn(),
-  mockGetRechargeConfigFromEnv: vi.fn(),
-  mockGetKlaviyoConfigFromEnv: vi.fn(),
-  mockGetLoopConfigFromEnv: vi.fn(),
-  mockGetShipStationConfigFromEnv: vi.fn(),
-  mockGetShipHeroConfigFromEnv: vi.fn(),
-  mockGetShipFusionConfigFromEnv: vi.fn(),
-  mockGetShipHawkConfigFromEnv: vi.fn(),
-  mockGetZendeskConfigFromEnv: vi.fn(),
+  mockIsIntegrationConfigured: vi.fn(),
   mockGetStateSetDir: vi.fn(),
   mockLoadContextFiles: vi.fn(),
   mockLoadSystemPromptFiles: vi.fn(),
@@ -47,17 +29,16 @@ vi.mock('../config.js', () => ({
 
 vi.mock('../integrations/config.js', () => ({
   getIntegrationFlagsFromEnv: mockGetIntegrationFlagsFromEnv,
-  getShopifyConfigFromEnv: mockGetShopifyConfigFromEnv,
-  getGorgiasConfigFromEnv: mockGetGorgiasConfigFromEnv,
-  getRechargeConfigFromEnv: mockGetRechargeConfigFromEnv,
-  getKlaviyoConfigFromEnv: mockGetKlaviyoConfigFromEnv,
-  getLoopConfigFromEnv: mockGetLoopConfigFromEnv,
-  getShipStationConfigFromEnv: mockGetShipStationConfigFromEnv,
-  getShipHeroConfigFromEnv: mockGetShipHeroConfigFromEnv,
-  getShipFusionConfigFromEnv: mockGetShipFusionConfigFromEnv,
-  getShipHawkConfigFromEnv: mockGetShipHawkConfigFromEnv,
-  getZendeskConfigFromEnv: mockGetZendeskConfigFromEnv,
+  isIntegrationConfigured: mockIsIntegrationConfigured,
 }));
+
+vi.mock('../integrations/registry.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../integrations/registry.js')>();
+  return {
+    ...actual,
+    INTEGRATION_DEFINITIONS: actual.INTEGRATION_DEFINITIONS,
+  };
+});
 
 vi.mock('../session.js', () => ({
   getStateSetDir: mockGetStateSetDir,
@@ -76,16 +57,7 @@ import { buildSystemPrompt } from '../prompt.js';
 function setupDefaults() {
   mockGetCurrentOrg.mockReturnValue({ orgId: 'org-test', config: {} });
   mockGetIntegrationFlagsFromEnv.mockReturnValue({ allowApply: false, redact: false });
-  mockGetShopifyConfigFromEnv.mockReturnValue(null);
-  mockGetGorgiasConfigFromEnv.mockReturnValue(null);
-  mockGetRechargeConfigFromEnv.mockReturnValue(null);
-  mockGetKlaviyoConfigFromEnv.mockReturnValue(null);
-  mockGetLoopConfigFromEnv.mockReturnValue(null);
-  mockGetShipStationConfigFromEnv.mockReturnValue(null);
-  mockGetShipHeroConfigFromEnv.mockReturnValue(null);
-  mockGetShipFusionConfigFromEnv.mockReturnValue(null);
-  mockGetShipHawkConfigFromEnv.mockReturnValue(null);
-  mockGetZendeskConfigFromEnv.mockReturnValue(null);
+  mockIsIntegrationConfigured.mockReturnValue(false);
   mockGetStateSetDir.mockReturnValue('/home/test/.stateset');
   mockLoadContextFiles.mockReturnValue([]);
   mockLoadSystemPromptFiles.mockReturnValue({ override: null, append: [] });
@@ -137,10 +109,10 @@ describe('buildSystemPrompt', () => {
     expect(result).toContain('Zendesk: not configured');
   });
 
-  it('shows integrations as configured when env configs return truthy', () => {
-    mockGetShopifyConfigFromEnv.mockReturnValue({ shop: 'test.myshopify.com' });
-    mockGetGorgiasConfigFromEnv.mockReturnValue({ domain: 'test' });
-    mockGetZendeskConfigFromEnv.mockReturnValue({ subdomain: 'test' });
+  it('shows integrations as configured when isIntegrationConfigured returns true', () => {
+    mockIsIntegrationConfigured.mockImplementation(
+      (id: string) => id === 'shopify' || id === 'gorgias' || id === 'zendesk',
+    );
 
     const result = buildSystemPrompt({ sessionId: 'sess-1' });
     expect(result).toContain('Shopify: configured');
@@ -288,13 +260,8 @@ describe('buildSystemPrompt', () => {
     expect(result).toContain('## Session');
   });
 
-  it('handles integration config functions that throw', () => {
-    mockGetShopifyConfigFromEnv.mockImplementation(() => {
-      throw new Error('missing env');
-    });
-    mockGetGorgiasConfigFromEnv.mockImplementation(() => {
-      throw new Error('missing env');
-    });
+  it('shows not configured when isIntegrationConfigured returns false', () => {
+    mockIsIntegrationConfigured.mockReturnValue(false);
 
     const result = buildSystemPrompt({ sessionId: 'sess-1' });
     expect(result).toContain('Shopify: not configured');

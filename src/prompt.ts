@@ -1,18 +1,7 @@
 import { BASE_SYSTEM_PROMPT } from './agent.js';
 import { getCurrentOrg } from './config.js';
-import {
-  getIntegrationFlagsFromEnv,
-  getGorgiasConfigFromEnv,
-  getKlaviyoConfigFromEnv,
-  getLoopConfigFromEnv,
-  getRechargeConfigFromEnv,
-  getShipFusionConfigFromEnv,
-  getShipHawkConfigFromEnv,
-  getShipHeroConfigFromEnv,
-  getShipStationConfigFromEnv,
-  getShopifyConfigFromEnv,
-  getZendeskConfigFromEnv,
-} from './integrations/config.js';
+import { getIntegrationFlagsFromEnv, isIntegrationConfigured } from './integrations/config.js';
+import { INTEGRATION_DEFINITIONS } from './integrations/registry.js';
 import { getStateSetDir } from './session.js';
 import { getSkill, loadContextFiles, loadSystemPromptFiles } from './resources.js';
 
@@ -53,80 +42,12 @@ export function buildSystemPrompt(context: PromptContext): string {
   );
 
   const integrationFlags = getIntegrationFlagsFromEnv();
-  let shopifyConfigured = false;
-  let gorgiasConfigured = false;
-  let rechargeConfigured = false;
-  let klaviyoConfigured = false;
-  let loopConfigured = false;
-  let shipstationConfigured = false;
-  let shipheroConfigured = false;
-  let shipfusionConfigured = false;
-  let shiphawkConfigured = false;
-  let zendeskConfigured = false;
-
-  try {
-    shopifyConfigured = Boolean(getShopifyConfigFromEnv());
-  } catch {
-    shopifyConfigured = false;
-  }
-
-  try {
-    gorgiasConfigured = Boolean(getGorgiasConfigFromEnv());
-  } catch {
-    gorgiasConfigured = false;
-  }
-
-  try {
-    rechargeConfigured = Boolean(getRechargeConfigFromEnv());
-  } catch {
-    rechargeConfigured = false;
-  }
-
-  try {
-    klaviyoConfigured = Boolean(getKlaviyoConfigFromEnv());
-  } catch {
-    klaviyoConfigured = false;
-  }
-
-  try {
-    loopConfigured = Boolean(getLoopConfigFromEnv());
-  } catch {
-    loopConfigured = false;
-  }
-
-  try {
-    shipstationConfigured = Boolean(getShipStationConfigFromEnv());
-  } catch {
-    shipstationConfigured = false;
-  }
-
-  try {
-    shipheroConfigured = Boolean(getShipHeroConfigFromEnv());
-  } catch {
-    shipheroConfigured = false;
-  }
-
-  try {
-    shipfusionConfigured = Boolean(getShipFusionConfigFromEnv());
-  } catch {
-    shipfusionConfigured = false;
-  }
-
-  try {
-    shiphawkConfigured = Boolean(getShipHawkConfigFromEnv());
-  } catch {
-    shiphawkConfigured = false;
-  }
-
-  try {
-    zendeskConfigured = Boolean(getZendeskConfigFromEnv());
-  } catch {
-    zendeskConfigured = false;
-  }
-
-  sections.push(
-    `## Integrations\n- Shopify: ${shopifyConfigured ? 'configured' : 'not configured'}\n- Gorgias: ${gorgiasConfigured ? 'configured' : 'not configured'}\n- Recharge: ${rechargeConfigured ? 'configured' : 'not configured'}\n- Klaviyo: ${klaviyoConfigured ? 'configured' : 'not configured'}\n- Loop Returns: ${loopConfigured ? 'configured' : 'not configured'}\n- ShipStation: ${shipstationConfigured ? 'configured' : 'not configured'}\n- ShipHero: ${shipheroConfigured ? 'configured' : 'not configured'}\n- ShipFusion: ${shipfusionConfigured ? 'configured' : 'not configured'}\n- ShipHawk: ${shiphawkConfigured ? 'configured' : 'not configured'}\n- Zendesk: ${zendeskConfigured ? 'configured' : 'not configured'}\n- Writes enabled: ${integrationFlags.allowApply ? 'yes' : 'no'}\n- Redaction: ${integrationFlags.redact ? 'enabled' : 'disabled'}`,
+  const integrationLines = INTEGRATION_DEFINITIONS.map(
+    (def) => `- ${def.label}: ${isIntegrationConfigured(def.id) ? 'configured' : 'not configured'}`,
   );
+  integrationLines.push(`- Writes enabled: ${integrationFlags.allowApply ? 'yes' : 'no'}`);
+  integrationLines.push(`- Redaction: ${integrationFlags.redact ? 'enabled' : 'disabled'}`);
+  sections.push(`## Integrations\n${integrationLines.join('\n')}`);
 
   const eventsDir = `${getStateSetDir()}/events`;
   sections.push(

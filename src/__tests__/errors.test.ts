@@ -212,6 +212,48 @@ describe('toStateSetError', () => {
     expect(result).toBeInstanceOf(InternalError);
     expect(result.message).toBe('string error');
   });
+
+  it('converts 400 to ValidationError', () => {
+    const err = new Error('bad request') as Error & { response: { status: number } };
+    err.response = { status: 400 };
+    expect(toStateSetError(err)).toBeInstanceOf(ValidationError);
+  });
+
+  it('converts 403 to AuthorizationError', () => {
+    const err = new Error('forbidden') as Error & { response: { status: number } };
+    err.response = { status: 403 };
+    expect(toStateSetError(err)).toBeInstanceOf(AuthorizationError);
+  });
+
+  it('converts 409 to ConflictError', () => {
+    const err = new Error('conflict') as Error & { response: { status: number } };
+    err.response = { status: 409 };
+    expect(toStateSetError(err)).toBeInstanceOf(ConflictError);
+  });
+
+  it('converts 503 to ServiceUnavailableError', () => {
+    const err = new Error('unavailable') as Error & { response: { status: number } };
+    err.response = { status: 503 };
+    expect(toStateSetError(err)).toBeInstanceOf(ServiceUnavailableError);
+  });
+
+  it('converts 504 to TimeoutError', () => {
+    const err = new Error('gateway timeout') as Error & { response: { status: number } };
+    err.response = { status: 504 };
+    expect(toStateSetError(err)).toBeInstanceOf(TimeoutError);
+  });
+
+  it('converts ETIMEDOUT to NetworkError', () => {
+    const err = new Error('timeout') as NodeJS.ErrnoException;
+    err.code = 'ETIMEDOUT';
+    expect(toStateSetError(err)).toBeInstanceOf(NetworkError);
+  });
+
+  it('converts ENOTFOUND to NetworkError', () => {
+    const err = new Error('dns fail') as NodeJS.ErrnoException;
+    err.code = 'ENOTFOUND';
+    expect(toStateSetError(err)).toBeInstanceOf(NetworkError);
+  });
 });
 
 describe('getUserMessage', () => {
@@ -241,6 +283,38 @@ describe('getUserMessage', () => {
 
   it('returns message for regular Error', () => {
     expect(getUserMessage(new Error('something broke'))).toBe('something broke');
+  });
+
+  it('returns friendly message for FORBIDDEN', () => {
+    const msg = getUserMessage(new AuthorizationError('no perm'));
+    expect(msg).toContain('permission');
+  });
+
+  it('returns friendly message for TIMEOUT', () => {
+    const msg = getUserMessage(new TimeoutError('slow'));
+    expect(msg).toContain('timed out');
+  });
+
+  it('returns friendly message for SERVICE_UNAVAILABLE', () => {
+    const msg = getUserMessage(new ServiceUnavailableError('down'));
+    expect(msg).toContain('temporarily unavailable');
+  });
+
+  it('returns friendly message for CONFIG_ERROR', () => {
+    const msg = getUserMessage(new ConfigurationError('missing key'));
+    expect(msg).toContain('Configuration error');
+    expect(msg).toContain('missing key');
+  });
+
+  it('returns friendly message for VALIDATION_ERROR', () => {
+    const msg = getUserMessage(new ValidationError('bad field'));
+    expect(msg).toContain('Invalid input');
+    expect(msg).toContain('bad field');
+  });
+
+  it('returns error.message for default code', () => {
+    const err = new StateSetError('custom msg', 'CUSTOM_CODE');
+    expect(getUserMessage(err)).toBe('custom msg');
   });
 });
 

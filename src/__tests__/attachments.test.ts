@@ -321,13 +321,15 @@ describe('buildUserContent - cwd path restriction', () => {
     const filePath = 'outside-link';
     const resolvedPath = path.resolve(cwd, filePath);
 
-    (mockedFs as unknown as { realpathSync: typeof fs.realpathSync }).realpathSync = vi.fn(
-      (value: string) => {
-        if (value === path.resolve(cwd)) return '/mnt/storage/secure';
-        if (value === resolvedPath) return '/etc/secret.txt';
-        return value;
-      },
-    );
+    const realpathFn = vi.fn((value: string) => {
+      if (value === path.resolve(cwd)) return '/mnt/storage/secure';
+      if (value === resolvedPath) return '/etc/secret.txt';
+      return value;
+    });
+    (mockedFs as unknown as { realpathSync: typeof fs.realpathSync }).realpathSync = Object.assign(
+      realpathFn,
+      { native: realpathFn },
+    ) as unknown as typeof fs.realpathSync;
 
     const result = buildUserContent('Read this', [filePath], { cwd });
 
@@ -343,17 +345,19 @@ describe('buildUserContent - cwd path restriction', () => {
     const filePath = 'broken-link.txt';
     const resolvedPath = path.resolve(cwd, filePath);
 
-    (mockedFs as unknown as { realpathSync: typeof fs.realpathSync }).realpathSync = vi
-      .fn()
-      .mockImplementation((value: string) => {
-        if (value === path.resolve(cwd)) {
-          return '/home/user/project';
-        }
-        if (value === resolvedPath) {
-          throw new Error('No such file');
-        }
-        return value;
-      });
+    const realpathFn2 = vi.fn().mockImplementation((value: string) => {
+      if (value === path.resolve(cwd)) {
+        return '/home/user/project';
+      }
+      if (value === resolvedPath) {
+        throw new Error('No such file');
+      }
+      return value;
+    });
+    (mockedFs as unknown as { realpathSync: typeof fs.realpathSync }).realpathSync = Object.assign(
+      realpathFn2,
+      { native: realpathFn2 },
+    ) as unknown as typeof fs.realpathSync;
 
     const result = buildUserContent('Check', [filePath], { cwd });
 

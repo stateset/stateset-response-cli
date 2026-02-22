@@ -222,6 +222,20 @@ export function registerAllCommands(): void {
 
   // ── Sessions ──────────────────────────────────────────────────────
   registerCommand({
+    name: '/session stats',
+    usage: '/session stats',
+    description: 'Show session storage statistics',
+    category: 'sessions',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/session cleanup',
+    usage: '/session cleanup [days=30] [--dry-run]',
+    description: 'Remove empty sessions older than N days',
+    category: 'sessions',
+    helpOnly: true,
+  });
+  registerCommand({
     name: '/session',
     usage: '/session',
     description: 'Show current session info',

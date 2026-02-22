@@ -8,15 +8,19 @@ const {
   mockWritePolicyOverrides,
 } = vi.hoisted(() => ({
   mockWriteFileSync: vi.fn(),
-  mockReadPolicyOverridesDetailed: vi.fn(() => ({
+  mockReadPolicyOverridesDetailed: vi.fn((_cwd?: string) => ({
     localPath: '/tmp/project/.stateset/policies.json',
     globalPath: '/tmp/stateset/policies.json',
-    local: { toolHooks: { 'local-hook': 'allow' } },
-    global: { toolHooks: { 'global-hook': 'deny' } },
-    merged: { toolHooks: { 'global-hook': 'deny', 'local-hook': 'allow' } },
+    local: { toolHooks: { 'local-hook': 'allow' } as Record<string, string> },
+    global: { toolHooks: { 'global-hook': 'deny' } as Record<string, string> },
+    merged: {
+      toolHooks: { 'global-hook': 'deny', 'local-hook': 'allow' } as Record<string, string>,
+    },
   })),
-  mockReadPolicyFile: vi.fn(() => ({ toolHooks: { 'imported-hook': 'allow' } })),
-  mockWritePolicyOverrides: vi.fn(),
+  mockReadPolicyFile: vi.fn((_path?: string) => ({
+    toolHooks: { 'imported-hook': 'allow' } as Record<string, string>,
+  })),
+  mockWritePolicyOverrides: vi.fn((_cwd?: string, _data?: Record<string, unknown>) => {}),
 }));
 
 const mockLoadExtensions = vi.fn();
@@ -132,7 +136,9 @@ describe('handlePolicyCommand', () => {
 
   it('/policy import handles merge mode through command handler', async () => {
     const ctx = createMockCtx({ cwd: '/tmp/project' });
-    mockReadPolicyFile.mockReturnValue({ toolHooks: { imported: 'allow' } });
+    mockReadPolicyFile.mockReturnValue({
+      toolHooks: { imported: 'allow' } as Record<string, string>,
+    });
 
     const result = await handlePolicyCommand('/policy import /tmp/policy-import.json', ctx);
 
@@ -147,7 +153,9 @@ describe('handlePolicyCommand', () => {
 
   it('/policy import supports replace mode through command handler', async () => {
     const ctx = createMockCtx({ cwd: '/tmp/project' });
-    mockReadPolicyFile.mockReturnValue({ toolHooks: { replaced: 'deny' } });
+    mockReadPolicyFile.mockReturnValue({
+      toolHooks: { replaced: 'deny' } as Record<string, string>,
+    });
 
     const result = await handlePolicyCommand('/policy import /tmp/policy-import.json replace', ctx);
 

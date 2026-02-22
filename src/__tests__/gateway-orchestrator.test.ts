@@ -59,11 +59,11 @@ describe('Orchestrator', () => {
     const slackStop = vi.spyOn(slack, 'stop');
 
     vi.spyOn(
-      orchestrator as { startSlack: (_model: unknown) => Promise<StartResult> },
+      orchestrator as unknown as { startSlack: (_model: unknown) => Promise<StartResult> },
       'startSlack',
     ).mockResolvedValue({ gateway: slack });
     vi.spyOn(
-      orchestrator as { startWhatsApp: (_model: unknown) => Promise<StartResult> },
+      orchestrator as unknown as { startWhatsApp: (_model: unknown) => Promise<StartResult> },
       'startWhatsApp',
     ).mockResolvedValue({ gateway: null, skippedReason: 'baileys not installed' });
 
@@ -81,11 +81,11 @@ describe('Orchestrator', () => {
   it('fails with explicit startup errors when all enabled channels fail', async () => {
     const orchestrator = new Orchestrator({});
     vi.spyOn(
-      orchestrator as { startSlack: (_model: unknown) => Promise<StartResult> },
+      orchestrator as unknown as { startSlack: (_model: unknown) => Promise<StartResult> },
       'startSlack',
     ).mockRejectedValue(new Error('slack startup failed'));
     vi.spyOn(
-      orchestrator as { startWhatsApp: (_model: unknown) => Promise<StartResult> },
+      orchestrator as unknown as { startWhatsApp: (_model: unknown) => Promise<StartResult> },
       'startWhatsApp',
     ).mockRejectedValue(new Error('baileys unavailable'));
 
@@ -97,11 +97,11 @@ describe('Orchestrator', () => {
   it('resolves configured model using strict validation', async () => {
     const orchestrator = new Orchestrator({ model: 'claude-sonnet-4-6-20250514' });
     vi.spyOn(
-      orchestrator as { startSlack: (_model: unknown) => Promise<StartResult> },
+      orchestrator as unknown as { startSlack: (_model: unknown) => Promise<StartResult> },
       'startSlack',
     ).mockResolvedValue({ gateway: makeGateway('Slack') });
     vi.spyOn(
-      orchestrator as { startWhatsApp: (_model: unknown) => Promise<StartResult> },
+      orchestrator as unknown as { startWhatsApp: (_model: unknown) => Promise<StartResult> },
       'startWhatsApp',
     ).mockResolvedValue({ gateway: makeGateway('WhatsApp') });
 
@@ -124,12 +124,12 @@ describe('Orchestrator', () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     vi.spyOn(
-      orchestrator as { startSlack: (_model: unknown) => Promise<StartResult> },
+      orchestrator as unknown as { startSlack: (_model: unknown) => Promise<StartResult> },
       'startSlack',
     ).mockResolvedValue({ gateway: null, skippedReason: 'slack/bolt not installed' });
 
     vi.spyOn(
-      orchestrator as { startWhatsApp: (_model: unknown) => Promise<StartResult> },
+      orchestrator as unknown as { startWhatsApp: (_model: unknown) => Promise<StartResult> },
       'startWhatsApp',
     ).mockResolvedValue({ gateway: makeGateway('WhatsApp') });
 
@@ -143,7 +143,7 @@ describe('Orchestrator', () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     vi.spyOn(
-      orchestrator as { startSlack: (_model: unknown) => Promise<StartResult> },
+      orchestrator as unknown as { startSlack: (_model: unknown) => Promise<StartResult> },
       'startSlack',
     ).mockRejectedValue(
       new Error('@slack/bolt is not installed. Install it with: npm install @slack/bolt'),
@@ -159,7 +159,7 @@ describe('Orchestrator', () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     vi.spyOn(
-      orchestrator as { startWhatsApp: (_model: unknown) => Promise<StartResult> },
+      orchestrator as unknown as { startWhatsApp: (_model: unknown) => Promise<StartResult> },
       'startWhatsApp',
     ).mockRejectedValue(
       new Error('WhatsApp gateway requires @whiskeysockets/baileys. Install it with: npm install'),

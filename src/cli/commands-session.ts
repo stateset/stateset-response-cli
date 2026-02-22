@@ -2,7 +2,14 @@ import chalk from 'chalk';
 import inquirer from 'inquirer';
 import fs from 'node:fs';
 import path from 'node:path';
-import { sanitizeSessionId, getSessionsDir, getSessionDir, getStateSetDir } from '../session.js';
+import {
+  sanitizeSessionId,
+  getSessionsDir,
+  getSessionDir,
+  getStateSetDir,
+  cleanupSessions,
+  getSessionStorageStats,
+} from '../session.js';
 import { loadMemory } from '../memory.js';
 import { formatSuccess, formatWarning, formatError, formatTable } from '../utils/display.js';
 import type { ChatContext } from './types.js';
@@ -45,7 +52,73 @@ function isUnsafeRegexPattern(pattern: string): string | null {
   return null;
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export async function handleSessionCommand(input: string, ctx: ChatContext): Promise<boolean> {
+  // /session stats — show session storage statistics
+  if (hasCommand(input, '/session stats')) {
+    const stats = getSessionStorageStats();
+    console.log(formatSuccess('Session Storage Stats'));
+    const rows = [
+      { key: 'Total sessions', value: String(stats.totalSessions) },
+      { key: 'Total size', value: formatBytes(stats.totalBytes) },
+      { key: 'Empty sessions', value: String(stats.emptySessions) },
+      { key: 'Archived', value: String(stats.archivedCount) },
+      {
+        key: 'Oldest',
+        value: stats.oldestMs ? new Date(stats.oldestMs).toLocaleDateString() : '-',
+      },
+      {
+        key: 'Newest',
+        value: stats.newestMs ? new Date(stats.newestMs).toLocaleDateString() : '-',
+      },
+    ];
+    console.log(formatTable(rows, ['key', 'value']));
+    console.log('');
+    ctx.rl.prompt();
+    return true;
+  }
+
+  // /session cleanup — remove empty sessions older than N days
+  if (hasCommand(input, '/session cleanup')) {
+    const tokens = input.split(/\s+/).slice(2);
+    const dryRun = tokens.includes('--dry-run');
+    let maxAgeDays = 30;
+    for (const token of tokens) {
+      if (token.startsWith('days=')) {
+        const val = Number(token.slice('days='.length));
+        if (Number.isFinite(val) && val > 0) maxAgeDays = Math.floor(val);
+      }
+    }
+
+    const result = cleanupSessions({ maxAgeDays, dryRun });
+    if (result.removed.length === 0) {
+      console.log(formatSuccess('No sessions to clean up.'));
+    } else {
+      const verb = dryRun ? 'Would remove' : 'Removed';
+      console.log(
+        formatSuccess(
+          `${verb} ${result.removed.length} session(s), freeing ${formatBytes(result.freedBytes)}.`,
+        ),
+      );
+      for (const id of result.removed) {
+        console.log(chalk.gray(`  - ${id}`));
+      }
+    }
+    if (result.errors.length > 0) {
+      for (const err of result.errors) {
+        console.log(formatError(err));
+      }
+    }
+    console.log('');
+    ctx.rl.prompt();
+    return true;
+  }
+
   // /session — show current session info
   if (hasCommand(input, '/session')) {
     const memory = loadMemory(ctx.sessionId);

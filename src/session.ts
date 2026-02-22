@@ -3,6 +3,26 @@ import path from 'node:path';
 import os from 'node:os';
 import type Anthropic from '@anthropic-ai/sdk';
 
+export interface CleanupOptions {
+  maxAgeDays?: number;
+  dryRun?: boolean;
+}
+
+export interface CleanupResult {
+  removed: string[];
+  freedBytes: number;
+  errors: string[];
+}
+
+export interface SessionStorageStats {
+  totalSessions: number;
+  totalBytes: number;
+  emptySessions: number;
+  archivedCount: number;
+  oldestMs: number | null;
+  newestMs: number | null;
+}
+
 export interface LogEntry {
   ts: string;
   role: 'user' | 'assistant';
@@ -154,6 +174,11 @@ export class SessionStore {
     }
   }
 
+  /** Returns the total size in bytes of all files in the session directory. */
+  getStorageBytes(): number {
+    return getDirSize(this.sessionDir);
+  }
+
   clear(): void {
     if (fs.existsSync(this.contextPath)) {
       fs.writeFileSync(this.contextPath, '', 'utf-8');
@@ -162,4 +187,165 @@ export class SessionStore {
       fs.writeFileSync(this.logPath, '', 'utf-8');
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Directory size helper
+// ---------------------------------------------------------------------------
+
+function getDirSize(dirPath: string): number {
+  if (!fs.existsSync(dirPath)) return 0;
+  let total = 0;
+  try {
+    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    for (const entry of entries) {
+      const full = path.join(dirPath, entry.name);
+      if (entry.isFile()) {
+        try {
+          total += fs.statSync(full).size;
+        } catch {
+          // skip unreadable files
+        }
+      } else if (entry.isDirectory()) {
+        total += getDirSize(full);
+      }
+    }
+  } catch {
+    // skip unreadable dirs
+  }
+  return total;
+}
+
+// ---------------------------------------------------------------------------
+// Session cleanup & stats
+// ---------------------------------------------------------------------------
+
+/**
+ * Remove empty sessions older than `maxAgeDays`.
+ * A session is "empty" if its context.jsonl has 0 messages.
+ */
+export function cleanupSessions(options: CleanupOptions = {}, sessionsDir?: string): CleanupResult {
+  const { maxAgeDays = 30, dryRun = false } = options;
+  const dir = sessionsDir ?? getSessionsDir();
+  const result: CleanupResult = { removed: [], freedBytes: 0, errors: [] };
+
+  if (!fs.existsSync(dir)) return result;
+
+  const cutoffMs = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return result;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const sessionDir = path.join(dir, entry.name);
+    const contextPath = path.join(sessionDir, 'context.jsonl');
+
+    // Check message count
+    let messageCount = 0;
+    try {
+      if (fs.existsSync(contextPath)) {
+        const content = fs.readFileSync(contextPath, 'utf-8');
+        messageCount = content.split(/\n/).filter(Boolean).length;
+      }
+    } catch {
+      // treat as empty
+    }
+    if (messageCount > 0) continue;
+
+    // Check age using the directory's mtime
+    let mtimeMs: number;
+    try {
+      mtimeMs = fs.statSync(sessionDir).mtimeMs;
+    } catch {
+      continue;
+    }
+    if (mtimeMs > cutoffMs) continue;
+
+    const dirBytes = getDirSize(sessionDir);
+
+    if (!dryRun) {
+      try {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+      } catch (err) {
+        result.errors.push(`${entry.name}: ${err instanceof Error ? err.message : String(err)}`);
+        continue;
+      }
+    }
+
+    result.removed.push(entry.name);
+    result.freedBytes += dirBytes;
+  }
+
+  return result;
+}
+
+/** Gather aggregate storage statistics across all sessions. */
+export function getSessionStorageStats(sessionsDir?: string): SessionStorageStats {
+  const dir = sessionsDir ?? getSessionsDir();
+  const stats: SessionStorageStats = {
+    totalSessions: 0,
+    totalBytes: 0,
+    emptySessions: 0,
+    archivedCount: 0,
+    oldestMs: null,
+    newestMs: null,
+  };
+
+  if (!fs.existsSync(dir)) return stats;
+
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return stats;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    stats.totalSessions++;
+    const sessionDir = path.join(dir, entry.name);
+
+    // Size
+    stats.totalBytes += getDirSize(sessionDir);
+
+    // Message count
+    const contextPath = path.join(sessionDir, 'context.jsonl');
+    let messageCount = 0;
+    try {
+      if (fs.existsSync(contextPath)) {
+        const content = fs.readFileSync(contextPath, 'utf-8');
+        messageCount = content.split(/\n/).filter(Boolean).length;
+      }
+    } catch {
+      // treat as empty
+    }
+    if (messageCount === 0) stats.emptySessions++;
+
+    // Archived
+    const metaPath = path.join(sessionDir, 'meta.json');
+    try {
+      if (fs.existsSync(metaPath)) {
+        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+        if (meta.archived) stats.archivedCount++;
+      }
+    } catch {
+      // skip
+    }
+
+    // Timestamps
+    try {
+      const dirStat = fs.statSync(sessionDir);
+      const mtime = dirStat.mtimeMs;
+      if (stats.oldestMs === null || mtime < stats.oldestMs) stats.oldestMs = mtime;
+      if (stats.newestMs === null || mtime > stats.newestMs) stats.newestMs = mtime;
+    } catch {
+      // skip
+    }
+  }
+
+  return stats;
 }

@@ -74,6 +74,18 @@ vi.mock('../integrations/registry.js', () => ({
   INTEGRATION_DEFINITIONS: [],
 }));
 
+vi.mock('../lib/errors.js', () => ({
+  isRetryable: vi.fn((error: unknown) => {
+    if (error instanceof Error) {
+      const code = (error as Error & { code?: string }).code;
+      if (code && ['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND'].includes(code)) {
+        return true;
+      }
+    }
+    return false;
+  }),
+}));
+
 // ---------------------------------------------------------------------------
 // Helper: build a mock Anthropic stream
 // ---------------------------------------------------------------------------
@@ -484,7 +496,7 @@ describe('StateSetAgent', () => {
       const callArgs = mockAnthropicInstance.messages.stream.mock.calls[0][0];
       expect(callArgs.model).toBe('claude-opus-4-6-20250514');
       expect(callArgs.system).toBe('You are a test bot');
-      expect(callArgs.max_tokens).toBe(4096);
+      expect(callArgs.max_tokens).toBe(16384);
     });
   });
 
@@ -737,10 +749,46 @@ describe('StateSetAgent', () => {
       expect(onToolCallEnd).toHaveBeenCalledWith(
         expect.objectContaining({
           name: 'get_agent',
-          resultText: 'Error: Agent not found',
+          resultText: expect.stringContaining('Agent not found'),
           isError: true,
         }),
       );
+    });
+
+    it('includes tool name and timing in error messages', async () => {
+      const agent = new StateSetAgent('test-key');
+
+      const toolUseStream = {
+        on: vi.fn().mockReturnThis(),
+        finalMessage: vi.fn().mockResolvedValue({
+          content: [
+            {
+              type: 'tool_use',
+              id: 'call_err2',
+              name: 'list_rules',
+              input: {},
+            },
+          ],
+          stop_reason: 'tool_use',
+          usage: { input_tokens: 10, output_tokens: 5 },
+        }),
+      };
+
+      mockMcpClientInstance.callTool.mockRejectedValueOnce(new Error('timeout'));
+
+      const endStream = createMockStream('Could not list rules.');
+      mockAnthropicInstance.messages.stream
+        .mockReturnValueOnce(toolUseStream)
+        .mockReturnValueOnce(endStream);
+
+      await agent.connect();
+
+      const onToolCallEnd = vi.fn();
+      await agent.chat('List rules', { onToolCallEnd });
+
+      const resultText = onToolCallEnd.mock.calls[0][0].resultText;
+      expect(resultText).toContain('list_rules');
+      expect(resultText).toMatch(/\d+ms/);
     });
   });
 
@@ -877,6 +925,110 @@ describe('StateSetAgent', () => {
       }
 
       expect(agent.getHistoryLength()).toBe(40);
+    });
+  });
+
+  // =========================================================================
+  // isConnected & healthCheck
+  // =========================================================================
+
+  describe('isConnected', () => {
+    it('returns false before connect', () => {
+      const agent = new StateSetAgent('test-key');
+      expect(agent.isConnected()).toBe(false);
+    });
+
+    it('returns true after connect', async () => {
+      const agent = new StateSetAgent('test-key');
+      await agent.connect();
+      expect(agent.isConnected()).toBe(true);
+    });
+
+    it('returns false after disconnect', async () => {
+      const agent = new StateSetAgent('test-key');
+      await agent.connect();
+      await agent.disconnect();
+      expect(agent.isConnected()).toBe(false);
+    });
+  });
+
+  describe('healthCheck', () => {
+    it('returns connected=false when not connected', async () => {
+      const agent = new StateSetAgent('test-key');
+      const result = await agent.healthCheck();
+      expect(result.connected).toBe(false);
+      expect(result.error).toBe('Not connected');
+    });
+
+    it('returns tool count and latency when connected', async () => {
+      const agent = new StateSetAgent('test-key');
+      mockMcpClientInstance.listTools.mockResolvedValue({
+        tools: [
+          { name: 'tool_a', description: 'A', inputSchema: { type: 'object' } },
+          { name: 'tool_b', description: 'B', inputSchema: { type: 'object' } },
+        ],
+      });
+      await agent.connect();
+
+      const result = await agent.healthCheck();
+      expect(result.connected).toBe(true);
+      expect(result.toolCount).toBe(2);
+      expect(result.latencyMs).toBeGreaterThanOrEqual(0);
+      expect(result.error).toBeUndefined();
+    });
+
+    it('returns error when listTools fails', async () => {
+      const agent = new StateSetAgent('test-key');
+      await agent.connect();
+      mockMcpClientInstance.listTools.mockRejectedValueOnce(new Error('connection lost'));
+
+      const result = await agent.healthCheck();
+      expect(result.connected).toBe(false);
+      expect(result.error).toBe('connection lost');
+    });
+  });
+
+  // =========================================================================
+  // callToolWithRetry (tested via callTool)
+  // =========================================================================
+
+  describe('callTool with retry', () => {
+    it('retries on transient EPIPE errors', async () => {
+      const agent = new StateSetAgent('test-key');
+      await agent.connect();
+
+      const epipeErr = new Error('write EPIPE');
+      mockMcpClientInstance.callTool.mockRejectedValueOnce(epipeErr).mockResolvedValueOnce({
+        content: [{ type: 'text', text: '{"ok":true}' }],
+      });
+
+      const result = await agent.callTool('list_agents');
+      expect(result.rawText).toBe('{"ok":true}');
+      expect(mockMcpClientInstance.callTool).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not retry on non-transient errors', async () => {
+      const agent = new StateSetAgent('test-key');
+      await agent.connect();
+
+      mockMcpClientInstance.callTool.mockRejectedValueOnce(new Error('Not found'));
+
+      await expect(agent.callTool('get_agent', { id: 'x' })).rejects.toThrow('Not found');
+      expect(mockMcpClientInstance.callTool).toHaveBeenCalledTimes(1);
+    });
+
+    it('throws after exhausting retries', async () => {
+      const agent = new StateSetAgent('test-key');
+      await agent.connect();
+
+      const transportErr = new Error('transport closed');
+      mockMcpClientInstance.callTool
+        .mockRejectedValueOnce(transportErr)
+        .mockRejectedValueOnce(transportErr)
+        .mockRejectedValueOnce(transportErr);
+
+      await expect(agent.callTool('list_agents')).rejects.toThrow('transport closed');
+      expect(mockMcpClientInstance.callTool).toHaveBeenCalledTimes(3);
     });
   });
 

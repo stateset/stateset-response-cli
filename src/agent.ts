@@ -6,12 +6,15 @@ import { fileURLToPath } from 'node:url';
 import { SessionStore } from './session.js';
 import { type ModelId, DEFAULT_MODEL } from './config.js';
 import { INTEGRATION_DEFINITIONS } from './integrations/registry.js';
+import { isRetryable } from './lib/errors.js';
 
 const THIS_FILE = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(THIS_FILE);
 const IS_TS = THIS_FILE.endsWith('.ts');
 const MAX_HISTORY_MESSAGES = 40;
-const DEFAULT_MAX_TOKENS = 4096;
+const DEFAULT_MAX_TOKENS = 16384;
+const MAX_TOOL_RETRIES = 2;
+const RETRY_BASE_DELAY_MS = 500;
 
 const INTEGRATION_ENV_KEYS = new Set<string>([
   'STATESET_ALLOW_APPLY',
@@ -126,6 +129,13 @@ export interface ToolCallPayload<T = unknown> {
   isError: boolean;
 }
 
+export interface HealthCheckResult {
+  connected: boolean;
+  toolCount: number;
+  latencyMs: number;
+  error?: string;
+}
+
 /**
  * Orchestrates conversation with Claude via the Anthropic API and delegates
  * tool execution to a co-located MCP server subprocess.
@@ -178,6 +188,34 @@ export class StateSetAgent {
     if (this.abortController) {
       this.abortController.abort();
       this.abortController = null;
+    }
+  }
+
+  /** Returns true if the MCP transport is active. */
+  isConnected(): boolean {
+    return this.transport !== null;
+  }
+
+  /** Pings the MCP server by listing tools and returns connection health info. */
+  async healthCheck(): Promise<HealthCheckResult> {
+    if (!this.transport) {
+      return { connected: false, toolCount: 0, latencyMs: 0, error: 'Not connected' };
+    }
+    const start = Date.now();
+    try {
+      const { tools } = await this.mcpClient.listTools();
+      return {
+        connected: true,
+        toolCount: tools.length,
+        latencyMs: Date.now() - start,
+      };
+    } catch (err: unknown) {
+      return {
+        connected: false,
+        toolCount: 0,
+        latencyMs: Date.now() - start,
+        error: err instanceof Error ? err.message : String(err),
+      };
     }
   }
 
@@ -332,10 +370,7 @@ export class StateSetAgent {
 
           const startTime = Date.now();
           try {
-            const result = await this.mcpClient.callTool({
-              name: block.name,
-              arguments: args,
-            });
+            const result = await this.callToolWithRetry(block.name, args);
 
             const resultText = (result.content as Array<{ type: string; text?: string }>)
               .map((c) => (c.type === 'text' ? c.text : JSON.stringify(c)))
@@ -355,8 +390,9 @@ export class StateSetAgent {
               durationMs: Date.now() - startTime,
             });
           } catch (error: unknown) {
+            const elapsed = Date.now() - startTime;
             const errMsg = error instanceof Error ? error.message : String(error);
-            const resultText = `Error: ${errMsg}`;
+            const resultText = `Error calling tool "${block.name}" (${elapsed}ms): ${errMsg}`;
             toolResults.push({
               type: 'tool_result',
               tool_use_id: block.id,
@@ -368,7 +404,7 @@ export class StateSetAgent {
               args,
               resultText,
               isError: true,
-              durationMs: Date.now() - startTime,
+              durationMs: elapsed,
             });
           }
         }
@@ -402,6 +438,28 @@ export class StateSetAgent {
   }
 
   /**
+   * Calls an MCP tool with automatic retry for transient errors.
+   * Retries up to MAX_TOOL_RETRIES times with exponential backoff.
+   */
+  private async callToolWithRetry(name: string, args: Record<string, unknown>) {
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= MAX_TOOL_RETRIES; attempt++) {
+      try {
+        return await this.mcpClient.callTool({ name, arguments: args });
+      } catch (err: unknown) {
+        lastError = err;
+        const isMcpTransport =
+          err instanceof Error && (/EPIPE|closed|transport/i.test(err.message) || isRetryable(err));
+        if (!isMcpTransport || attempt === MAX_TOOL_RETRIES) throw err;
+        await new Promise((resolve) =>
+          setTimeout(resolve, RETRY_BASE_DELAY_MS * Math.pow(2, attempt)),
+        );
+      }
+    }
+    throw lastError;
+  }
+
+  /**
    * Calls an MCP tool directly with optional JSON arguments.
    * Useful for slash commands and non-interactive command modes.
    */
@@ -413,21 +471,15 @@ export class StateSetAgent {
       await this.connect();
     }
 
-    const response = await this.mcpClient.callTool({
-      name: toolName,
-      arguments: args,
-    });
+    const response = await this.callToolWithRetry(toolName, args);
 
-    const rawText = (response.content || [])
+    const contentArray = Array.isArray(response.content)
+      ? (response.content as Array<{ type: string; text?: string }>)
+      : [];
+    const rawText = contentArray
       .map((c) => {
-        if (
-          typeof c === 'object' &&
-          c !== null &&
-          'type' in c &&
-          (c as { type?: unknown }).type === 'text'
-        ) {
-          const text = (c as { text?: unknown }).text;
-          return typeof text === 'string' ? text : JSON.stringify(text);
+        if (c.type === 'text' && typeof c.text === 'string') {
+          return c.text;
         }
         return JSON.stringify(c);
       })

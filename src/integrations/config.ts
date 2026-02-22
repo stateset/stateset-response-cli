@@ -1,5 +1,5 @@
 import { getIntegrationConfigFromStore } from './store.js';
-import { KLAVIYO_DEFAULT_REVISION } from './registry.js';
+import { KLAVIYO_DEFAULT_REVISION, type IntegrationId } from './registry.js';
 
 export interface ShopifyConfig {
   shop: string;
@@ -455,6 +455,35 @@ export function getZendeskConfigFromEnv(): ZendeskConfig | null {
     email: storedEmail,
     apiToken: validateGenericKey(storedToken, 'Zendesk API token', 'ZENDESK_API_TOKEN'),
   };
+}
+
+/**
+ * Maps each integration ID to its config getter function.
+ * Used by `isIntegrationConfigured()` to check status without
+ * requiring callers to import every individual getter.
+ */
+const CONFIG_CHECKERS: Record<IntegrationId, () => unknown> = {
+  shopify: getShopifyConfigFromEnv,
+  gorgias: getGorgiasConfigFromEnv,
+  recharge: getRechargeConfigFromEnv,
+  klaviyo: getKlaviyoConfigFromEnv,
+  loop: getLoopConfigFromEnv,
+  shipstation: getShipStationConfigFromEnv,
+  shiphero: getShipHeroConfigFromEnv,
+  shipfusion: getShipFusionConfigFromEnv,
+  shiphawk: getShipHawkConfigFromEnv,
+  zendesk: getZendeskConfigFromEnv,
+};
+
+/** Returns true if the integration's config getter returns a truthy value without throwing. */
+export function isIntegrationConfigured(id: IntegrationId): boolean {
+  const checker = CONFIG_CHECKERS[id];
+  if (!checker) return false;
+  try {
+    return Boolean(checker());
+  } catch {
+    return false;
+  }
 }
 
 export function getIntegrationFlagsFromEnv(): IntegrationFlags {

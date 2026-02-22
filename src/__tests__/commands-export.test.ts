@@ -11,8 +11,10 @@ const {
   mockGetSessionExportPath,
 } = vi.hoisted(() => ({
   mockWriteFileSync: vi.fn(),
-  mockReadSessionEntries: vi.fn(() => [...mockEntries]),
-  mockExportSessionToMarkdown: vi.fn(() => '# Session Export'),
+  mockReadSessionEntries: vi.fn((_sessionId?: string) => [...mockEntries]),
+  mockExportSessionToMarkdown: vi.fn(
+    (_sessionId?: string, _entries?: unknown[]) => '# Session Export',
+  ),
   mockGetSessionExportPath: vi.fn((sessionId: string) => `/tmp/sessions/${sessionId}/exports`),
 }));
 

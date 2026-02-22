@@ -1,6 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
+  formatToolCall,
+  formatToolResult,
+  formatError,
+  formatSuccess,
+  formatWarning,
+  formatAssistantMessage,
   formatElapsed,
+  formatUsage,
   formatTable,
   formatDate,
   formatRelativeTime,
@@ -8,6 +15,7 @@ import {
   formatDuration,
   printHelp,
   printWelcome,
+  printAuthHelp,
 } from '../utils/display.js';
 import { registerAllCommands } from '../cli/command-registry.js';
 
@@ -167,6 +175,164 @@ describe('formatDuration', () => {
   });
 });
 
+// =============================================================================
+// formatToolCall
+// =============================================================================
+
+describe('formatToolCall', () => {
+  it('formats tool call with no args', () => {
+    const result = formatToolCall('get_status', {});
+    expect(result).toContain('get_status');
+  });
+
+  it('formats tool call with args', () => {
+    const result = formatToolCall('get_order', { orderId: '123' });
+    expect(result).toContain('get_order');
+    expect(result).toContain('orderId');
+    expect(result).toContain('123');
+  });
+
+  it('truncates long argument values', () => {
+    const longValue = 'a'.repeat(100);
+    const result = formatToolCall('test', { data: longValue });
+    expect(result).toContain('...');
+  });
+
+  it('redacts sensitive keys', () => {
+    const result = formatToolCall('auth', { apiKey: 'secret123', name: 'test' });
+    expect(result).toContain('[redacted]');
+    expect(result).not.toContain('secret123');
+    expect(result).toContain('test');
+  });
+
+  it('redacts password fields', () => {
+    const result = formatToolCall('login', { password: 'pass123' });
+    expect(result).toContain('[redacted]');
+    expect(result).not.toContain('pass123');
+  });
+
+  it('redacts authorization fields', () => {
+    const result = formatToolCall('call', { authorization: 'Bearer tok' });
+    expect(result).toContain('[redacted]');
+  });
+
+  it('formats non-string args as JSON', () => {
+    const result = formatToolCall('test', { count: 42, active: true });
+    expect(result).toContain('42');
+    expect(result).toContain('true');
+  });
+
+  it('redacts nested secret fields in objects', () => {
+    const result = formatToolCall('test', { config: { api_key: 'hidden', name: 'ok' } });
+    expect(result).not.toContain('hidden');
+  });
+
+  it('redacts token fields', () => {
+    const result = formatToolCall('test', { token: 'abc' });
+    expect(result).toContain('[redacted]');
+    expect(result).not.toContain('abc');
+  });
+});
+
+// =============================================================================
+// formatToolResult
+// =============================================================================
+
+describe('formatToolResult', () => {
+  it('returns short text as-is', () => {
+    const result = formatToolResult('OK');
+    expect(result).toContain('OK');
+  });
+
+  it('truncates very long text', () => {
+    const longText = 'x'.repeat(3000);
+    const result = formatToolResult(longText);
+    expect(result).toContain('truncated');
+  });
+
+  it('returns text under 2000 chars without truncation', () => {
+    const text = 'y'.repeat(1999);
+    const result = formatToolResult(text);
+    expect(result).not.toContain('truncated');
+  });
+});
+
+// =============================================================================
+// formatError / formatSuccess / formatWarning / formatAssistantMessage
+// =============================================================================
+
+describe('formatting helpers', () => {
+  it('formatError wraps in error prefix', () => {
+    const result = formatError('something went wrong');
+    expect(result).toContain('something went wrong');
+    expect(result).toContain('Error');
+  });
+
+  it('formatSuccess wraps message', () => {
+    const result = formatSuccess('done');
+    expect(result).toContain('done');
+  });
+
+  it('formatWarning wraps message', () => {
+    const result = formatWarning('careful');
+    expect(result).toContain('careful');
+  });
+
+  it('formatAssistantMessage returns text', () => {
+    const result = formatAssistantMessage('hello');
+    expect(result).toContain('hello');
+  });
+});
+
+// =============================================================================
+// formatUsage
+// =============================================================================
+
+describe('formatUsage', () => {
+  it('formats basic input/output tokens', () => {
+    const result = formatUsage({
+      input_tokens: 100,
+      output_tokens: 50,
+      cache_read_input_tokens: null,
+      cache_creation_input_tokens: null,
+    });
+    expect(result).toContain('in 100');
+    expect(result).toContain('out 50');
+    expect(result).not.toContain('cache');
+  });
+
+  it('includes cache read when present', () => {
+    const result = formatUsage({
+      input_tokens: 100,
+      output_tokens: 50,
+      cache_read_input_tokens: 30,
+      cache_creation_input_tokens: null,
+    });
+    expect(result).toContain('cache read 30');
+  });
+
+  it('includes cache write when present', () => {
+    const result = formatUsage({
+      input_tokens: 100,
+      output_tokens: 50,
+      cache_read_input_tokens: null,
+      cache_creation_input_tokens: 20,
+    });
+    expect(result).toContain('cache write 20');
+  });
+
+  it('includes both cache fields when present', () => {
+    const result = formatUsage({
+      input_tokens: 100,
+      output_tokens: 50,
+      cache_read_input_tokens: 30,
+      cache_creation_input_tokens: 20,
+    });
+    expect(result).toContain('cache read 30');
+    expect(result).toContain('cache write 20');
+  });
+});
+
 describe('cli help text', () => {
   it('includes /exit and /quit in printHelp', () => {
     registerAllCommands();
@@ -189,6 +355,24 @@ describe('cli help text', () => {
     expect(output).toContain('/status');
     expect(output).toContain('org-id');
     expect(output).toContain('model-id');
+    spy.mockRestore();
+  });
+
+  it('printAuthHelp shows setup instructions', () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    printAuthHelp();
+    const output = spy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(output).toContain('response auth login');
+    expect(output).toContain('Setup required');
+    spy.mockRestore();
+  });
+
+  it('printWelcome omits model when not provided', () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    printWelcome('org-x', '1.0.0');
+    const output = spy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(output).toContain('org-x');
+    expect(output).toContain('v1.0.0');
     spy.mockRestore();
   });
 });

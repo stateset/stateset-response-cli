@@ -444,7 +444,7 @@ export class SlackGateway {
       this.log.debug(`Expiring stale session for ${userId}`);
       session.agent.disconnect().catch(() => {});
       this.sessions.delete(userId);
-      session = null;
+      session = undefined;
     }
 
     if (!session) {

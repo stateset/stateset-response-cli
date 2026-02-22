@@ -17,11 +17,11 @@ const mockGetCurrentOrg = vi.fn(() => ({
 const mockEnsureConfigDir = vi.fn();
 
 vi.mock('../config.js', () => ({
-  ensureConfigDir: (...args: never[]) => mockEnsureConfigDir(...args),
+  ensureConfigDir: () => mockEnsureConfigDir(),
   saveConfig: (...args: unknown[]) => mockSaveConfig(...args),
-  configExists: (...args: never[]) => mockConfigExists(...args),
-  loadConfig: (...args: unknown[]) => mockLoadConfig(...args),
-  getCurrentOrg: (...args: unknown[]) => mockGetCurrentOrg(...args),
+  configExists: () => mockConfigExists(),
+  loadConfig: () => mockLoadConfig(),
+  getCurrentOrg: () => mockGetCurrentOrg(),
 }));
 
 const mockPrompt = vi.fn();

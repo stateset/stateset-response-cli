@@ -603,13 +603,7 @@ function loadExtensionTrustPolicy(
   ]);
 
   for (const filePath of policyPaths) {
-    const parsed = readSafeJsonFile<{
-      enforce?: boolean;
-      allow?: unknown;
-      allowed?: unknown;
-      deny?: unknown;
-      denied?: unknown;
-    }>(filePath, diagnostics, 'extension trust policy');
+    const parsed = readSafeJsonFile(filePath, diagnostics, 'extension trust policy');
     if (!parsed) continue;
 
     if (typeof parsed.enforce === 'boolean' && parsed.enforce) {
@@ -687,11 +681,7 @@ function loadPolicyOverrides(
   const files = [globalPath, projectPath];
 
   for (const filePath of files) {
-    const parsed = readSafeJsonFile<{ toolHooks?: Record<string, string> }>(
-      filePath,
-      diagnostics,
-      'policy overrides file',
-    );
+    const parsed = readSafeJsonFile(filePath, diagnostics, 'policy overrides file');
     if (!parsed || typeof parsed !== 'object') {
       continue;
     }

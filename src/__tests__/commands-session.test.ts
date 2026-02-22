@@ -21,9 +21,9 @@ const mockSessions = [
   },
 ];
 const mockEntries = [
-  { role: 'user', content: 'hello world', ts: '2025-01-01T00:00:00Z' },
-  { role: 'assistant', content: 'hi there', ts: '2025-01-01T00:01:00Z' },
-  { role: 'user', content: 'search target text', ts: '2025-01-02T00:00:00Z' },
+  { role: 'user' as const, content: 'hello world', ts: '2025-01-01T00:00:00Z' },
+  { role: 'assistant' as const, content: 'hi there', ts: '2025-01-01T00:01:00Z' },
+  { role: 'user' as const, content: 'search target text', ts: '2025-01-02T00:00:00Z' },
 ];
 
 const { mockWriteFileSync } = vi.hoisted(() => ({

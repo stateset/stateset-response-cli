@@ -26,9 +26,15 @@ function ensureProcessHandler(
   event: 'uncaughtException' | 'unhandledRejection',
   handler: (...args: unknown[]) => void,
 ): void {
-  const listeners = process.listeners(event);
+  const listeners = (process.listeners as (event: string) => Array<(...args: unknown[]) => void>)(
+    event,
+  );
   if (!listeners.includes(handler)) {
-    process.on(event, handler as never);
+    if (event === 'uncaughtException') {
+      process.on('uncaughtException', handler as NodeJS.UncaughtExceptionListener);
+    } else {
+      process.on('unhandledRejection', handler as NodeJS.UnhandledRejectionListener);
+    }
   }
 }
 

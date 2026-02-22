@@ -498,7 +498,7 @@ export class WhatsAppGateway {
       this.log.debug(`Expiring stale session for ${phone}`);
       session.agent.disconnect().catch(() => {});
       this.sessions.delete(phone);
-      session = null;
+      session = undefined;
     }
 
     if (!session) {

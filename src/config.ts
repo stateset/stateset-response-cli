@@ -34,7 +34,7 @@ export function getModelAliasText(style: 'or' | 'list' = 'or'): string {
   if (style === 'list') {
     return MODEL_ALIAS_NAMES.join(', ');
   }
-  if (MODEL_ALIAS_NAMES.length === 1) {
+  if (MODEL_ALIAS_NAMES.length <= 1) {
     return MODEL_ALIAS_NAMES[0];
   }
   return `${MODEL_ALIAS_NAMES.slice(0, -1).join(', ')}, or ${MODEL_ALIAS_NAMES[MODEL_ALIAS_NAMES.length - 1]}`;
@@ -316,7 +316,8 @@ export function getConfiguredModel(): ModelId {
 /** Maps a model alias (e.g. "sonnet", "opus") or full ID to a valid ModelId. Returns null if unrecognized. */
 export function resolveModel(input: string): ModelId | null {
   const lower = input.toLowerCase().trim();
-  if (MODEL_ALIASES[lower]) return MODEL_ALIASES[lower];
+  const alias = lower as (typeof MODEL_ALIAS_NAMES)[number];
+  if (alias in MODEL_ALIASES) return MODEL_ALIASES[alias];
   if (MODEL_ID_SET.has(lower as ModelId)) return lower as ModelId;
   return null;
 }
