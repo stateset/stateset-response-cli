@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { ShortcutLogger, ShortcutRunner, TopLevelOptions } from './types.js';
+import { readJsonFile } from '../../utils/file-read.js';
 import {
   toLines,
   parseCommandArgs,
@@ -112,7 +113,10 @@ export async function runAgentsCommand(
     }
     let parsed: unknown;
     try {
-      parsed = JSON.parse(fs.readFileSync(path.resolve(sourceFile), 'utf-8'));
+      parsed = readJsonFile(path.resolve(sourceFile), {
+        label: 'agent import file',
+        expectObject: true,
+      });
     } catch (error) {
       logger.error(
         `Unable to read import file: ${error instanceof Error ? error.message : String(error)}`,

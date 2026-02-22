@@ -70,15 +70,11 @@ export async function executeQuery<T = Record<string, unknown>>(
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
       try {
-        // graphql-request doesn't directly support signal, so we race with timeout
-        const requestPromise = client.request<T>(query, variables);
-        const timeoutPromise = new Promise<never>((_, reject) => {
-          controller.signal.addEventListener('abort', () => {
-            reject(new Error(`Request timed out after ${timeoutMs}ms`));
-          });
+        const result = await client.request<T>({
+          document: query,
+          variables,
+          signal: controller.signal,
         });
-
-        const result = await Promise.race([requestPromise, timeoutPromise]);
         return result;
       } finally {
         clearTimeout(timeoutId);
@@ -87,7 +83,9 @@ export async function executeQuery<T = Record<string, unknown>>(
       lastError = error;
 
       // Check if it was a timeout
-      const isTimeout = error instanceof Error && error.message.includes('timed out');
+      const isTimeout =
+        error instanceof Error &&
+        (error.name === 'AbortError' || error.message.includes('timed out'));
 
       if (attempt < MAX_RETRIES && (isTimeout || isTransientError(error))) {
         const backoff = BASE_DELAY_MS * Math.pow(2, attempt);

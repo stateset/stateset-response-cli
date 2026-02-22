@@ -165,6 +165,8 @@ export async function startChatSession(
 
   let orgId: string;
   let apiKey: string;
+  let allowApply = false;
+  let redactEmails = false;
   try {
     const runtime = getRuntimeContext();
     orgId = runtime.orgId;
@@ -174,13 +176,8 @@ export async function startChatSession(
     process.exit(1);
   }
 
-  // Integration flags (propagate to MCP server via env)
-  if (options.apply) {
-    process.env.STATESET_ALLOW_APPLY = 'true';
-  }
-  if (options.redact) {
-    process.env.STATESET_REDACT = 'true';
-  }
+  allowApply = options.apply ? true : readBooleanEnv('STATESET_ALLOW_APPLY');
+  redactEmails = options.redact ? true : readBooleanEnv('STATESET_REDACT');
 
   // Resolve model
   let model: ModelId = getConfiguredModel();
@@ -196,6 +193,10 @@ export async function startChatSession(
   let sessionId = sanitizeSessionId(options.session || 'default');
   let sessionStore = new SessionStore(sessionId);
   const agent = new StateSetAgent(apiKey, model);
+  agent.setMcpEnvOverrides({
+    STATESET_ALLOW_APPLY: allowApply ? 'true' : 'false',
+    STATESET_REDACT: redactEmails ? 'true' : 'false',
+  });
   const cwd = process.cwd();
   const activeSkills: string[] = [];
   const extensions = new ExtensionManager();
@@ -314,8 +315,8 @@ export async function startChatSession(
     sessionTags: Array.isArray(readSessionMeta(sessionStore.getSessionDir()).tags)
       ? (readSessionMeta(sessionStore.getSessionDir()).tags as string[])
       : [],
-    allowApply: readBooleanEnv('STATESET_ALLOW_APPLY'),
-    redact: readBooleanEnv('STATESET_REDACT'),
+    allowApply,
+    redact: redactEmails,
     policy: extensions.getPolicyOverrides ? extensions.getPolicyOverrides() : {},
     log: (message: string) => console.log(message),
     success: (message: string) => console.log(formatSuccess(message)),
@@ -351,8 +352,8 @@ export async function startChatSession(
     auditEnabled,
     auditIncludeExcerpt,
     permissionStore,
-    allowApply: process.env.STATESET_ALLOW_APPLY === 'true',
-    redactEmails: process.env.STATESET_REDACT === 'true',
+    allowApply,
+    redactEmails,
     model: model as string,
     switchSession: async (nextId: string) => {
       switchSession(nextId);
@@ -415,19 +416,27 @@ export async function startChatSession(
       const inline = extractInlineFlags(input);
       finalInput = inline.text;
 
-      const currentApply = process.env.STATESET_ALLOW_APPLY === 'true';
-      const currentRedact = process.env.STATESET_REDACT === 'true';
+      const currentApply = allowApply;
+      const currentRedact = redactEmails;
       const nextApply = inline.flags.apply ? true : currentApply;
       const nextRedact = inline.flags.redact ? true : currentRedact;
 
       if (nextApply !== currentApply || nextRedact !== currentRedact) {
-        process.env.STATESET_ALLOW_APPLY = nextApply ? 'true' : 'false';
-        process.env.STATESET_REDACT = nextRedact ? 'true' : 'false';
+        allowApply = nextApply;
+        redactEmails = nextRedact;
+        agent.setMcpEnvOverrides({
+          STATESET_ALLOW_APPLY: allowApply ? 'true' : 'false',
+          STATESET_REDACT: redactEmails ? 'true' : 'false',
+        });
         try {
           await reconnectAgent();
         } catch (err) {
-          process.env.STATESET_ALLOW_APPLY = currentApply ? 'true' : 'false';
-          process.env.STATESET_REDACT = currentRedact ? 'true' : 'false';
+          allowApply = currentApply;
+          redactEmails = currentRedact;
+          agent.setMcpEnvOverrides({
+            STATESET_ALLOW_APPLY: allowApply ? 'true' : 'false',
+            STATESET_REDACT: redactEmails ? 'true' : 'false',
+          });
           console.error(formatError(err instanceof Error ? err.message : String(err)));
           console.log('');
           rl.prompt();
@@ -469,8 +478,8 @@ export async function startChatSession(
     ctx.auditEnabled = auditEnabled;
     ctx.auditIncludeExcerpt = auditIncludeExcerpt;
     ctx.permissionStore = permissionStore;
-    ctx.allowApply = process.env.STATESET_ALLOW_APPLY === 'true';
-    ctx.redactEmails = process.env.STATESET_REDACT === 'true';
+    ctx.allowApply = allowApply;
+    ctx.redactEmails = redactEmails;
 
     // Route slash commands to extracted handlers
     if (input.startsWith('/')) {
@@ -495,6 +504,8 @@ export async function startChatSession(
       showUsage = ctx.showUsage;
       auditEnabled = ctx.auditEnabled;
       auditIncludeExcerpt = ctx.auditIncludeExcerpt;
+      allowApply = ctx.allowApply;
+      redactEmails = ctx.redactEmails;
       permissionStore = ctx.permissionStore;
 
       const routeAction = resolveSlashInputAction(input, routeResult);

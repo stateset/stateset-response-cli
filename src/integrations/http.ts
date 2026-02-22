@@ -7,7 +7,9 @@ import {
   RateLimitError,
   ServiceUnavailableError,
   StateSetError,
+  TimeoutError,
 } from '../lib/errors.js';
+import { MAX_TEXT_FILE_SIZE_BYTES } from '../utils/file-read.js';
 
 export interface RequestOptions {
   method?: string;
@@ -34,6 +36,46 @@ const INITIAL_BACKOFF_MS = 800;
 const BACKOFF_JITTER_MS = 250;
 const BACKOFF_MULTIPLIER = 1.8;
 const MAX_BACKOFF_MS = 30_000;
+const MAX_TEXT_RESPONSE_BYTES = MAX_TEXT_FILE_SIZE_BYTES;
+
+async function readResponseText(response: Response, maxBytes: number): Promise<string> {
+  const contentLength = Number.parseInt(response.headers.get('content-length') || '', 10);
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw new NetworkError(`Response too large (${contentLength} bytes).`);
+  }
+
+  if (!response.body || typeof response.body.getReader !== 'function') {
+    if (typeof response.text !== 'function') return '';
+    const text = await response.text();
+    if (Buffer.byteLength(text, 'utf-8') > maxBytes) {
+      throw new NetworkError(`Response too large (over ${maxBytes} bytes).`);
+    }
+    return text;
+  }
+
+  const reader = response.body.getReader();
+  let total = 0;
+  const chunks: Uint8Array[] = [];
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel('Response too large');
+        throw new NetworkError(`Response too large (over ${maxBytes} bytes).`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  if (!chunks.length) return '';
+  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString('utf-8');
+}
 
 function getTimeoutMs(options?: RequestOptions): number {
   const timeout = options?.timeoutMs;
@@ -60,12 +102,17 @@ export async function requestText(
       signal: controller.signal,
     });
 
-    const text = await response.text();
+    const text = await readResponseText(response, MAX_TEXT_RESPONSE_BYTES);
     return {
       status: response.status,
       headers: response.headers,
       text,
     };
+  } catch (error: unknown) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new TimeoutError(`Request timed out after ${timeoutMs}ms`);
+    }
+    throw error;
   } finally {
     clearTimeout(timeout);
   }

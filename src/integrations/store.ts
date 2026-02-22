@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { getStateSetDir } from '../session.js';
 import { decryptConfigSecrets, encryptConfigSecrets } from '../lib/secrets.js';
+import { readJsonFile } from '../utils/file-read.js';
 import { type IntegrationId, getIntegrationSecretKeys } from './registry.js';
 
 export interface IntegrationEntry {
@@ -39,7 +40,10 @@ export function getIntegrationsPath(cwd: string, scope: IntegrationStoreScope): 
 function readStoreFile(filePath: string): IntegrationsStore | null {
   if (!fs.existsSync(filePath)) return null;
   try {
-    const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as IntegrationsStore;
+    const raw = readJsonFile(filePath, {
+      label: 'integrations store',
+      expectObject: true,
+    }) as IntegrationsStore;
     return normalizeStore(raw);
   } catch {
     return null;

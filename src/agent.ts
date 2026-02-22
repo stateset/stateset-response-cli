@@ -15,6 +15,7 @@ const MAX_HISTORY_MESSAGES = 40;
 const DEFAULT_MAX_TOKENS = 16384;
 const MAX_TOOL_RETRIES = 2;
 const RETRY_BASE_DELAY_MS = 500;
+const MAX_TOOL_CALL_ARG_BYTES = 1_048_576;
 
 const INTEGRATION_ENV_KEYS = new Set<string>([
   'STATESET_ALLOW_APPLY',
@@ -34,6 +35,46 @@ for (const def of INTEGRATION_DEFINITIONS) {
 }
 
 const MCP_EXTRA_ENV_KEYS = new Set<string>(['STATESET_KB_HOST', 'OPENAI_API_KEY', 'OPEN_AI']);
+
+interface ToolInputSchema {
+  type?: string | string[];
+  properties?: Record<string, unknown>;
+  required?: string[];
+  additionalProperties?: boolean;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function isExpectedType(value: unknown, expectedType: string): boolean {
+  if (expectedType === 'integer') {
+    return typeof value === 'number' && Number.isFinite(value) && Number.isInteger(value);
+  }
+  if (expectedType === 'number') {
+    return typeof value === 'number' && Number.isFinite(value);
+  }
+  if (expectedType === 'boolean') {
+    return typeof value === 'boolean';
+  }
+  if (expectedType === 'string') {
+    return typeof value === 'string';
+  }
+  if (expectedType === 'array') {
+    return Array.isArray(value);
+  }
+  if (expectedType === 'object') {
+    return isPlainObject(value);
+  }
+  if (expectedType === 'null') {
+    return value === null;
+  }
+  return typeof value === expectedType;
+}
 
 function buildMcpEnv(): Record<string, string> {
   const env: Record<string, string> = {};
@@ -150,11 +191,16 @@ export class StateSetAgent {
   private abortController: AbortController | null = null;
   private systemPrompt: string = BASE_SYSTEM_PROMPT;
   private sessionStore: SessionStore | null = null;
+  private mcpEnvOverrides: Record<string, string> = {};
 
   constructor(anthropicApiKey: string, model?: ModelId) {
     this.anthropic = new Anthropic({ apiKey: anthropicApiKey });
     this.mcpClient = new Client({ name: 'stateset-cli', version: '1.0.0' }, { capabilities: {} });
     this.model = model || DEFAULT_MODEL;
+  }
+
+  setMcpEnvOverrides(overrides: Record<string, string>): void {
+    this.mcpEnvOverrides = { ...overrides };
   }
 
   setModel(model: ModelId): void {
@@ -235,7 +281,10 @@ export class StateSetAgent {
       args,
       stderr: 'inherit',
       cwd: process.cwd(),
-      env: buildMcpEnv(),
+      env: {
+        ...buildMcpEnv(),
+        ...this.mcpEnvOverrides,
+      },
     });
     this.transport = transport;
 
@@ -324,12 +373,32 @@ export class StateSetAgent {
 
       for (const block of finalMessage.content) {
         if (block.type === 'tool_use') {
-          const originalArgs = block.input as Record<string, unknown>;
-          callbacks?.onToolCall?.(block.name, originalArgs);
+          let args: Record<string, unknown>;
+          try {
+            args = this.parseToolCallArguments(block.input);
+            this.validateToolCallArgs(block.name, args);
+          } catch (error) {
+            const reason = error instanceof Error ? error.message : String(error);
+            toolResults.push({
+              type: 'tool_result',
+              tool_use_id: block.id,
+              content: `Error: ${reason}`,
+              is_error: true,
+            });
+            callbacks?.onToolCallEnd?.({
+              name: block.name,
+              args: {},
+              resultText: `Error: ${reason}`,
+              isError: true,
+              durationMs: 0,
+            });
+            continue;
+          }
 
-          let args = originalArgs;
+          callbacks?.onToolCall?.(block.name, args);
+
           if (callbacks?.onToolCallStart) {
-            const decision = await callbacks.onToolCallStart(block.name, originalArgs);
+            const decision = await callbacks.onToolCallStart(block.name, args);
             if (decision?.action === 'deny') {
               const reason = decision.reason || 'Tool call denied by hook.';
               toolResults.push({
@@ -366,6 +435,26 @@ export class StateSetAgent {
             if (decision?.action === 'allow' && decision.args) {
               args = decision.args;
             }
+          }
+
+          try {
+            this.validateToolCallArgs(block.name, args);
+          } catch (error) {
+            const reason = error instanceof Error ? error.message : String(error);
+            toolResults.push({
+              type: 'tool_result',
+              tool_use_id: block.id,
+              content: `Error: ${reason}`,
+              is_error: true,
+            });
+            callbacks?.onToolCallEnd?.({
+              name: block.name,
+              args,
+              resultText: `Error: ${reason}`,
+              isError: true,
+              durationMs: 0,
+            });
+            continue;
           }
 
           const startTime = Date.now();
@@ -459,6 +548,76 @@ export class StateSetAgent {
     throw lastError;
   }
 
+  private parseToolCallArguments(rawArgs: unknown): Record<string, unknown> {
+    if (rawArgs == null) {
+      return {};
+    }
+    if (Array.isArray(rawArgs)) {
+      throw new Error('Tool call arguments must be a JSON object, not an array.');
+    }
+    if (!isPlainObject(rawArgs)) {
+      throw new Error('Tool call arguments must be a JSON object.');
+    }
+    return rawArgs;
+  }
+
+  private validateToolCallArgs(toolName: string, args: Record<string, unknown>): void {
+    const serialized = JSON.stringify(args);
+    if (serialized.length > MAX_TOOL_CALL_ARG_BYTES) {
+      throw new Error(`Tool call arguments for "${toolName}" are too large.`);
+    }
+
+    const tool = this.tools.find((candidate) => candidate.name === toolName);
+    if (!tool?.input_schema || typeof tool.input_schema !== 'object') return;
+
+    const schema = tool.input_schema as ToolInputSchema;
+    if (schema.type && schema.type !== 'object') {
+      return;
+    }
+
+    const properties = isPlainObject(schema.properties) ? schema.properties : null;
+    const additionalProperties = schema.additionalProperties ?? true;
+
+    if (Array.isArray(schema.required)) {
+      for (const key of schema.required) {
+        if (!Object.prototype.hasOwnProperty.call(args, key)) {
+          throw new Error(`Tool "${toolName}" argument "${key}" is required.`);
+        }
+      }
+    }
+
+    if (properties && additionalProperties === false) {
+      for (const key of Object.keys(args)) {
+        if (!Object.prototype.hasOwnProperty.call(properties, key)) {
+          throw new Error(`Tool "${toolName}" argument "${key}" is not allowed.`);
+        }
+      }
+    }
+
+    if (!properties) {
+      return;
+    }
+
+    for (const [key, value] of Object.entries(args)) {
+      const rawPropertySchema = properties[key];
+      if (!isPlainObject(rawPropertySchema)) {
+        continue;
+      }
+      const propertySchema = rawPropertySchema as ToolInputSchema;
+      const expected = propertySchema.type;
+      if (!expected) {
+        continue;
+      }
+      const expectedTypes = Array.isArray(expected) ? expected : [expected];
+      const matches = expectedTypes.some((entry) => isExpectedType(value, entry));
+      if (!matches) {
+        throw new Error(
+          `Tool "${toolName}" argument "${key}" has invalid type. Expected ${expectedTypes.join('|')}.`,
+        );
+      }
+    }
+  }
+
   /**
    * Calls an MCP tool directly with optional JSON arguments.
    * Useful for slash commands and non-interactive command modes.
@@ -471,7 +630,10 @@ export class StateSetAgent {
       await this.connect();
     }
 
-    const response = await this.callToolWithRetry(toolName, args);
+    const safeArgs = this.parseToolCallArguments(args);
+    this.validateToolCallArgs(toolName, safeArgs);
+
+    const response = await this.callToolWithRetry(toolName, safeArgs);
 
     const contentArray = Array.isArray(response.content)
       ? (response.content as Array<{ type: string; text?: string }>)
@@ -486,6 +648,15 @@ export class StateSetAgent {
       .join('\n');
 
     let payload: T;
+    if (rawText.length > MAX_TOOL_CALL_ARG_BYTES) {
+      payload = rawText as T;
+      return {
+        payload,
+        rawText,
+        isError: Boolean(response.isError),
+      };
+    }
+
     try {
       payload = JSON.parse(rawText) as T;
     } catch {

@@ -10,14 +10,31 @@ import {
 import { getSessionExportPath, resolveExportFilePath } from '../utils/session-exports.js';
 import { ensureDirExists } from './utils.js';
 import { readToolAudit } from './audit.js';
+import { readJsonFile, readTextFile, MAX_TEXT_FILE_SIZE_BYTES } from '../utils/file-read.js';
 import type { SessionMeta, SessionSummary, SessionExportEntry } from './types.js';
+
+const MAX_SESSION_CONTEXT_FILE_SIZE_BYTES = MAX_TEXT_FILE_SIZE_BYTES;
+
+function readSafeSessionLines(filePath: string): string[] {
+  try {
+    const content = readTextFile(filePath, {
+      label: `session context`,
+      maxBytes: MAX_SESSION_CONTEXT_FILE_SIZE_BYTES,
+    });
+    return content.split(/\n/).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
 
 export function readSessionMeta(sessionDir: string): SessionMeta {
   const metaPath = path.join(sessionDir, 'meta.json');
   if (!fs.existsSync(metaPath)) return {};
   try {
-    const content = fs.readFileSync(metaPath, 'utf-8');
-    const parsed = JSON.parse(content) as SessionMeta;
+    const parsed = readJsonFile(metaPath, {
+      label: 'session metadata',
+      expectObject: true,
+    }) as SessionMeta;
     return parsed || {};
   } catch {
     return {};
@@ -62,8 +79,7 @@ export function listSessionSummaries(options?: { includeArchived?: boolean }): S
 
     let messageCount = 0;
     try {
-      const content = fs.readFileSync(contextPath, 'utf-8');
-      messageCount = content.split(/\n/).filter(Boolean).length;
+      messageCount = readSafeSessionLines(contextPath).length;
     } catch {
       messageCount = 0;
     }
@@ -85,8 +101,7 @@ export function readSessionEntries(sessionId: string): SessionExportEntry[] {
   const sanitized = sanitizeSessionId(sessionId);
   const contextPath = path.join(getSessionsDir(), sanitized, 'context.jsonl');
   if (!fs.existsSync(contextPath)) return [];
-  const content = fs.readFileSync(contextPath, 'utf-8');
-  const lines = content.split(/\n/).filter(Boolean);
+  const lines = readSafeSessionLines(contextPath);
   const entries: SessionExportEntry[] = [];
   for (const line of lines) {
     try {

@@ -2,7 +2,7 @@ import chalk from 'chalk';
 import inquirer from 'inquirer';
 import fs from 'node:fs';
 import { formatError, formatSuccess, formatWarning, formatTable } from '../utils/display.js';
-import type { ChatContext, CommandResult } from './types.js';
+import type { ChatContext, CommandResult, PermissionDecision } from './types.js';
 import { getStateSetDir } from '../session.js';
 import { hasCommand, ensureDirExists, resolveSafeOutputPath } from './utils.js';
 import {
@@ -101,17 +101,18 @@ export async function handlePolicyCommand(input: string, ctx: ChatContext): Prom
     if (action === 'set') {
       const hook = tokens[1];
       const decision = tokens[2];
-      if (!hook || !decision || !['allow', 'deny'].includes(decision)) {
+      if (!hook || (decision !== 'allow' && decision !== 'deny')) {
         console.log(formatWarning('Usage: /policy set <hook> <allow|deny>'));
         console.log('');
         ctx.rl.prompt();
         return { handled: true };
       }
+      const parsedDecision: PermissionDecision = decision;
       const data = readPolicyOverridesDetailed(ctx.cwd).local;
-      data.toolHooks[hook] = decision;
+      data.toolHooks[hook] = parsedDecision;
       writePolicyOverrides(ctx.cwd, data);
       await ctx.extensions.load(ctx.cwd);
-      console.log(formatSuccess(`Policy set: ${hook} -> ${decision}`));
+      console.log(formatSuccess(`Policy set: ${hook} -> ${parsedDecision}`));
       console.log('');
       ctx.rl.prompt();
       return { handled: true };

@@ -4,6 +4,7 @@ import os from 'node:os';
 import { z } from 'zod';
 import { encryptSecret, decryptSecret, isEncrypted } from './lib/secrets.js';
 import { ConfigurationError } from './lib/errors.js';
+import { readJsonFile } from './utils/file-read.js';
 
 export interface OrgConfig {
   name: string;
@@ -126,21 +127,18 @@ export function loadConfig(): StateSetConfig {
   } catch {
     // Keep migration best-effort; config loading should continue even if migration fails.
   }
-  let raw: string;
-  try {
-    raw = fs.readFileSync(CONFIG_FILE, 'utf-8');
-  } catch (e) {
-    throw new ConfigurationError(
-      `Failed to read config file: ${e instanceof Error ? e.message : String(e)}`,
-    );
-  }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    parsed = readJsonFile(CONFIG_FILE, { label: 'config file', expectObject: true });
   } catch (e) {
-    throw new ConfigurationError(
-      `Invalid JSON in config file: ${e instanceof Error ? e.message : String(e)}`,
-    );
+    const message = e instanceof Error ? e.message : String(e);
+    if (message.includes('Invalid JSON in')) {
+      if (message.includes('Invalid JSON in config file')) {
+        throw new ConfigurationError(message);
+      }
+      throw new ConfigurationError(`Invalid JSON in config file: ${message}`);
+    }
+    throw new ConfigurationError(`Failed to read config file: ${message}`);
   }
 
   const result = StateSetConfigSchema.safeParse(parsed);
@@ -332,65 +330,56 @@ export function migrateConfigSecrets(): boolean {
     return false;
   }
 
-  let raw: string;
   try {
-    raw = fs.readFileSync(CONFIG_FILE, 'utf-8');
-  } catch {
-    return false;
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return false;
-  }
-
-  const parsedConfig = StateSetConfigSchema.safeParse(parsed);
-  if (!parsedConfig.success) {
-    return false;
-  }
-
-  const config = { ...parsedConfig.data } as StateSetConfig;
-  const normalizedConfig: StateSetConfig = {
-    currentOrg: config.currentOrg,
-    model: config.model,
-    anthropicApiKey: config.anthropicApiKey,
-    organizations: { ...config.organizations },
-  };
-
-  let migrated = false;
-  const next: StateSetConfig = {
-    ...normalizedConfig,
-    anthropicApiKey: normalizedConfig.anthropicApiKey,
-    organizations: { ...normalizedConfig.organizations },
-  };
-
-  if (next.anthropicApiKey && !isEncrypted(next.anthropicApiKey)) {
-    next.anthropicApiKey = encryptSecret(next.anthropicApiKey);
-    migrated = true;
-  }
-  for (const orgId of Object.keys(next.organizations)) {
-    const org = next.organizations[orgId];
-    const current = { ...org };
-    if (org.cliToken && !isEncrypted(org.cliToken)) {
-      current.cliToken = encryptSecret(org.cliToken);
-      migrated = true;
-    }
-    if (org.adminSecret && !isEncrypted(org.adminSecret)) {
-      current.adminSecret = encryptSecret(org.adminSecret);
-      migrated = true;
-    }
-    next.organizations[orgId] = current;
-  }
-
-  if (migrated) {
-    try {
-      saveConfig(next);
-    } catch {
+    const parsed = readJsonFile(CONFIG_FILE, { label: 'config file', expectObject: true });
+    const parsedConfig = StateSetConfigSchema.safeParse(parsed);
+    if (!parsedConfig.success) {
       return false;
     }
-  }
 
-  return migrated;
+    const config = { ...parsedConfig.data } as StateSetConfig;
+    const normalizedConfig: StateSetConfig = {
+      currentOrg: config.currentOrg,
+      model: config.model,
+      anthropicApiKey: config.anthropicApiKey,
+      organizations: { ...config.organizations },
+    };
+
+    let migrated = false;
+    const next: StateSetConfig = {
+      ...normalizedConfig,
+      anthropicApiKey: normalizedConfig.anthropicApiKey,
+      organizations: { ...normalizedConfig.organizations },
+    };
+
+    if (next.anthropicApiKey && !isEncrypted(next.anthropicApiKey)) {
+      next.anthropicApiKey = encryptSecret(next.anthropicApiKey);
+      migrated = true;
+    }
+    for (const orgId of Object.keys(next.organizations)) {
+      const org = next.organizations[orgId];
+      const current = { ...org };
+      if (org.cliToken && !isEncrypted(org.cliToken)) {
+        current.cliToken = encryptSecret(org.cliToken);
+        migrated = true;
+      }
+      if (org.adminSecret && !isEncrypted(org.adminSecret)) {
+        current.adminSecret = encryptSecret(org.adminSecret);
+        migrated = true;
+      }
+      next.organizations[orgId] = current;
+    }
+
+    if (migrated) {
+      try {
+        saveConfig(next);
+      } catch {
+        return false;
+      }
+    }
+
+    return migrated;
+  } catch {
+    return false;
+  }
 }

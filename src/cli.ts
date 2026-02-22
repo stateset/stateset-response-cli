@@ -270,11 +270,12 @@ program
         return;
       }
 
+      const mcpEnvOverrides: Record<string, string> = {};
       if (options.apply) {
-        process.env.STATESET_ALLOW_APPLY = 'true';
+        mcpEnvOverrides.STATESET_ALLOW_APPLY = 'true';
       }
       if (options.redact) {
-        process.env.STATESET_REDACT = 'true';
+        mcpEnvOverrides.STATESET_REDACT = 'true';
       }
 
       let model: ModelId = getConfiguredModel();
@@ -295,6 +296,7 @@ program
           defaultSession: sessionId,
           showUsage: Boolean(options.usage),
           stdout: Boolean(options.stdout),
+          mcpEnvOverrides,
           anthropicApiKey: runtime.anthropicApiKey,
         });
       } catch (e: unknown) {

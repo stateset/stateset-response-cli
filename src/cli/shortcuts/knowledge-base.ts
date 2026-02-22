@@ -1,5 +1,7 @@
 import fs from 'node:fs';
+import { requestText } from '../../integrations/http.js';
 import type { ShortcutLogger, ShortcutRunner, TopLevelOptions } from './types.js';
+import { readTextFile, MAX_TEXT_FILE_SIZE_BYTES } from '../../utils/file-read.js';
 import {
   toLines,
   parseCommandArgs,
@@ -44,8 +46,7 @@ export async function runKnowledgeBaseCommand(
     let knowledge = '';
     if (source.startsWith('http://') || source.startsWith('https://')) {
       try {
-        const response = await fetch(source);
-        knowledge = await response.text();
+        knowledge = await requestText(source).then((res) => res.text);
       } catch (error) {
         logger.error(
           `Unable to fetch URL: ${error instanceof Error ? error.message : String(error)}`,
@@ -53,7 +54,17 @@ export async function runKnowledgeBaseCommand(
         return;
       }
     } else if (fs.existsSync(source)) {
-      knowledge = fs.readFileSync(source, 'utf-8');
+      try {
+        knowledge = readTextFile(source, {
+          label: 'knowledge base source',
+          maxBytes: MAX_TEXT_FILE_SIZE_BYTES,
+        });
+      } catch (error) {
+        logger.error(
+          `Unable to read source file: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return;
+      }
     } else {
       knowledge = source;
     }

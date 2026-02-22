@@ -5,6 +5,7 @@ import path from 'node:path';
 import { sanitizeSessionId, getStateSetDir } from '../session.js';
 import { getSessionExportPath, resolveExportFilePath } from '../utils/session-exports.js';
 import { formatSuccess, formatWarning, formatError, formatTable } from '../utils/display.js';
+import { readTextFile, MAX_TEXT_FILE_SIZE_BYTES } from '../utils/file-read.js';
 import type { ChatContext } from './types.js';
 import { formatTimestamp, ensureDirExists, hasCommand, resolveSafeOutputPath } from './utils.js';
 import {
@@ -13,6 +14,16 @@ import {
   listExportFiles,
   deleteExportFile,
 } from './session-meta.js';
+
+const MAX_EXPORT_PREVIEW_BYTES = MAX_TEXT_FILE_SIZE_BYTES;
+
+function readExportPreview(filePath: string): string | null {
+  try {
+    return readTextFile(filePath, { label: 'export file', maxBytes: MAX_EXPORT_PREVIEW_BYTES });
+  } catch {
+    return null;
+  }
+}
 
 export async function handleExportCommand(input: string, ctx: ChatContext): Promise<boolean> {
   // /export-list — list export files for a session
@@ -73,7 +84,13 @@ export async function handleExportCommand(input: string, ctx: ChatContext): Prom
       return true;
     }
     try {
-      const content = fs.readFileSync(filePath, 'utf-8');
+      const content = readExportPreview(filePath);
+      if (!content) {
+        console.log(formatWarning(`Export "${filename}" is unavailable or exceeds safe size.`));
+        console.log('');
+        ctx.rl.prompt();
+        return true;
+      }
       const lines = content.split(/\n/).slice(0, head);
       console.log(formatSuccess(`Showing ${lines.length} lines from ${filename}:`));
       console.log(chalk.gray(lines.join('\n')));

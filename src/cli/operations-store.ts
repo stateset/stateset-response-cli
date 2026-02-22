@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { getStateSetDir } from '../session.js';
+import { readJsonFile } from '../utils/file-read.js';
 
 const STORE_VERSION = 1;
 const STORE_NAME = 'platform-operations.json';
@@ -221,7 +222,10 @@ function normalizeDate(value: unknown): string | null {
 function loadRawStore(pathName: string): RawOperationsStore | null {
   if (!fs.existsSync(pathName)) return null;
   try {
-    const raw = JSON.parse(fs.readFileSync(pathName, 'utf-8')) as RawOperationsStore;
+    const raw = readJsonFile(pathName, {
+      label: 'platform operations store',
+      expectObject: true,
+    }) as RawOperationsStore;
     return raw || null;
   } catch {
     return null;

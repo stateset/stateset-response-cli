@@ -400,6 +400,7 @@ On first WhatsApp run, scan the QR code (Settings > Linked Devices > Link a Devi
 | `STATESET_INSTANCE_URL`  | No       | StateSet ResponseCX instance URL               |
 | `STATESET_GRAPHQL_ENDPOINT` | No    | GraphQL API endpoint                           |
 | `STATESET_KB_HOST`       | No       | Knowledge base (Qdrant) host URL               |
+| `STATESET_SECRET_PASSPHRASE` | No   | Optional secret used to encrypt/decrypt stored credentials |
 | `SHOPIFY_SHOP_DOMAIN`    | Shopify  | Shopify shop domain (e.g., `myshop.myshopify.com`) |
 | `SHOPIFY_ACCESS_TOKEN`   | Shopify  | Shopify Admin API access token                 |
 | `SHOPIFY_API_VERSION`    | Shopify  | Shopify API version (default: `2025-04`)       |
@@ -564,7 +565,9 @@ The CLI can load local context files, skills, and prompt templates from `~/.stat
   - `STATESET_EXTENSIONS_DENY` denies listed extensions (deny-only mode).
   - `STATESET_EXTENSIONS_ALLOW` enables allowlist mode.
   - `STATESET_EXTENSIONS_ENFORCE_TRUST=true` with no allow/deny entries blocks all project extensions.
-  - Trust files (`~/.stateset/extension-trust.json` or `.stateset/extension-trust.json`) support `enforce`, `allow`, and `deny` entries.
+  - `STATESET_EXTENSIONS_HASHES` supports explicit integrity checks in `<name>:<sha256>` format (`alpha:deadbeef...`).
+  - `STATESET_EXTENSIONS_REQUIRE_HASHES=true` enforces hash verification for trusted extensions that define hashes.
+  - Trust files (`~/.stateset/extension-trust.json` or `.stateset/extension-trust.json`) support `enforce`, `allow`, `deny`, `requireHashes`, and `hashes` entries.
     - `{"enforce": true, "allow": ["name"], "deny": ["name"]}`
 - Use `/extensions` to list loaded extensions and `/reload` to reload them
 - Extensions can also hook tool calls with `api.registerToolHook(...)` and `api.registerToolResultHook(...)`

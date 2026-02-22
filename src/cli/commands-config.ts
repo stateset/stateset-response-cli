@@ -13,7 +13,7 @@ export async function handleConfigCommand(input: string, ctx: ChatContext): Prom
   if (applyMatch) {
     const arg = applyMatch[1] ? applyMatch[1].trim() : '';
     const parsed = parseToggleValue(arg);
-    const current = process.env.STATESET_ALLOW_APPLY === 'true';
+    const current = ctx.allowApply;
     if (!arg) {
       console.log(formatSuccess(`Writes enabled: ${current ? 'yes' : 'no'}`));
       console.log(chalk.gray('  Usage: /apply on|off'));
@@ -34,11 +34,19 @@ export async function handleConfigCommand(input: string, ctx: ChatContext): Prom
       return { handled: true };
     }
 
-    process.env.STATESET_ALLOW_APPLY = parsed ? 'true' : 'false';
+    ctx.allowApply = parsed;
+    ctx.agent.setMcpEnvOverrides({
+      STATESET_ALLOW_APPLY: ctx.allowApply ? 'true' : 'false',
+      STATESET_REDACT: ctx.redactEmails ? 'true' : 'false',
+    });
     try {
       await ctx.reconnectAgent();
     } catch (err) {
-      process.env.STATESET_ALLOW_APPLY = current ? 'true' : 'false';
+      ctx.allowApply = current;
+      ctx.agent.setMcpEnvOverrides({
+        STATESET_ALLOW_APPLY: ctx.allowApply ? 'true' : 'false',
+        STATESET_REDACT: ctx.redactEmails ? 'true' : 'false',
+      });
       console.error(
         formatError(
           `Unable to apply writes toggle: ${err instanceof Error ? err.message : String(err)}`,
@@ -71,7 +79,7 @@ export async function handleConfigCommand(input: string, ctx: ChatContext): Prom
   if (redactMatch) {
     const arg = redactMatch[1] ? redactMatch[1].trim() : '';
     const parsed = parseToggleValue(arg);
-    const current = process.env.STATESET_REDACT === 'true';
+    const current = ctx.redactEmails;
     if (!arg) {
       console.log(formatSuccess(`Redaction: ${current ? 'enabled' : 'disabled'}`));
       console.log(chalk.gray('  Usage: /redact on|off'));
@@ -92,11 +100,19 @@ export async function handleConfigCommand(input: string, ctx: ChatContext): Prom
       return { handled: true };
     }
 
-    process.env.STATESET_REDACT = parsed ? 'true' : 'false';
+    ctx.redactEmails = parsed;
+    ctx.agent.setMcpEnvOverrides({
+      STATESET_ALLOW_APPLY: ctx.allowApply ? 'true' : 'false',
+      STATESET_REDACT: ctx.redactEmails ? 'true' : 'false',
+    });
     try {
       await ctx.reconnectAgent();
     } catch (err) {
-      process.env.STATESET_REDACT = current ? 'true' : 'false';
+      ctx.redactEmails = current;
+      ctx.agent.setMcpEnvOverrides({
+        STATESET_ALLOW_APPLY: ctx.allowApply ? 'true' : 'false',
+        STATESET_REDACT: ctx.redactEmails ? 'true' : 'false',
+      });
       console.error(
         formatError(
           `Unable to apply redaction toggle: ${err instanceof Error ? err.message : String(err)}`,
@@ -143,7 +159,6 @@ export async function handleConfigCommand(input: string, ctx: ChatContext): Prom
       return { handled: true };
     }
     ctx.showUsage = parsed;
-    process.env.STATESET_SHOW_USAGE = parsed ? 'true' : 'false';
     console.log(formatSuccess(`Usage summaries ${parsed ? 'enabled' : 'disabled'}.`));
     console.log('');
     ctx.rl.prompt();

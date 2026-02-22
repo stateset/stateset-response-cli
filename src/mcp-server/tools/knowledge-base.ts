@@ -3,6 +3,7 @@ import { GraphQLClient } from 'graphql-request';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { executeQuery } from '../graphql-client.js';
+import { requestJson } from '../../integrations/http.js';
 
 const EMBEDDING_MODEL = 'text-embedding-ada-002';
 const SIMILARITY_THRESHOLD = 0.95;
@@ -61,6 +62,17 @@ function normalizeTextValue(value: string, field: string): string {
   return trimmed;
 }
 
+function safeStringifyResponse(value: unknown): string {
+  if (typeof value === 'string') {
+    return value;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return '[unserializable response]';
+  }
+}
+
 function normalizeScoreThreshold(value: number | undefined, field: string): number {
   if (value === undefined) return SIMILARITY_THRESHOLD;
   if (!Number.isFinite(value) || value < 0 || value > 1) {
@@ -109,7 +121,7 @@ function getCollectionPath(collection: string): string {
 }
 
 async function createEmbedding(text: string, config: KBConfig): Promise<number[]> {
-  const res = await fetch('https://api.openai.com/v1/embeddings', {
+  const res = await requestJson('https://api.openai.com/v1/embeddings', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -118,12 +130,11 @@ async function createEmbedding(text: string, config: KBConfig): Promise<number[]
     body: JSON.stringify({ input: text, model: EMBEDDING_MODEL }),
   });
 
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`OpenAI embedding failed (${res.status}): ${err}`);
+  if (res.status < 200 || res.status >= 300) {
+    throw new Error(`OpenAI embedding failed (${res.status}): ${safeStringifyResponse(res.data)}`);
   }
 
-  const json = (await res.json()) as { data: Array<{ embedding: number[] }> };
+  const json = res.data as { data?: Array<{ embedding: number[] }> };
   if (!json.data?.[0]?.embedding) {
     throw new Error('Invalid embedding response from OpenAI');
   }
@@ -144,7 +155,7 @@ async function qdrantRequest(
   }
   const collectionPath = getCollectionPath(config.collection);
   const url = `${host}/collections/${collectionPath}${path}`;
-  const res = await fetch(url, {
+  const res = await requestJson(url, {
     method,
     headers: {
       'Content-Type': 'application/json',
@@ -153,12 +164,11 @@ async function qdrantRequest(
     body: JSON.stringify(body),
   });
 
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Qdrant request failed (${res.status}): ${err}`);
+  if (res.status < 200 || res.status >= 300) {
+    throw new Error(`Qdrant request failed (${res.status}): ${safeStringifyResponse(res.data)}`);
   }
 
-  return res.json();
+  return res.data;
 }
 
 export function registerKnowledgeBaseTools(
@@ -433,7 +443,7 @@ export function registerKnowledgeBaseTools(
       }
 
       const url = `${host}/collections/${getCollectionPath(config.collection)}`;
-      const res = await fetch(url, {
+      const res = await requestJson(url, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -441,17 +451,16 @@ export function registerKnowledgeBaseTools(
         },
       });
 
-      if (!res.ok) {
-        const err = await res.text();
-        throw new Error(`Failed to get collection info (${res.status}): ${err}`);
+      if (res.status < 200 || res.status >= 300) {
+        throw new Error(
+          `Failed to get collection info (${res.status}): ${safeStringifyResponse(res.data)}`,
+        );
       }
-
-      const data = await res.json();
       return {
         content: [
           {
             type: 'text' as const,
-            text: JSON.stringify({ collection: config.collection, info: data }, null, 2),
+            text: JSON.stringify({ collection: config.collection, info: res.data }, null, 2),
           },
         ],
       };

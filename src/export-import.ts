@@ -13,6 +13,7 @@ import {
   type GraphQLAuth,
 } from './mcp-server/graphql-client.js';
 import { getCurrentOrg } from './config.js';
+import { readJsonFile } from './utils/file-read.js';
 
 // ─── Secret Redaction ────────────────────────────────────────────────────────
 
@@ -219,17 +220,18 @@ export async function importOrg(
   };
   const maxFailureReport = 25;
 
-  let raw: string;
-  try {
-    raw = fs.readFileSync(inputPath, 'utf-8');
-  } catch (e) {
-    throw new Error(`Failed to read import file: ${e instanceof Error ? e.message : String(e)}`);
-  }
   let data: OrgExport;
   try {
-    data = JSON.parse(raw) as OrgExport;
+    data = readJsonFile(inputPath, { label: 'import file', expectObject: true }) as OrgExport;
   } catch (e) {
-    throw new Error(`Invalid JSON in import file: ${e instanceof Error ? e.message : String(e)}`);
+    const message = e instanceof Error ? e.message : String(e);
+    if (message.includes('Invalid JSON in')) {
+      if (message.includes('Invalid JSON in import file')) {
+        throw new Error(message);
+      }
+      throw new Error(`Invalid JSON in import file: ${message}`);
+    }
+    throw new Error(`Failed to read import file: ${message}`);
   }
 
   if (!data.version || !data.orgId) {

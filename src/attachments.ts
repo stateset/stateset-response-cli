@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type Anthropic from '@anthropic-ai/sdk';
+import { readTextFile, MAX_TEXT_FILE_SIZE_BYTES } from './utils/file-read.js';
 
 const DEFAULT_MAX_TEXT_CHARS = 8000;
 const DEFAULT_MAX_FILE_BYTES = 5_000_000;
@@ -32,12 +33,13 @@ function getImageMimeType(filePath: string): ImageMimeType | undefined {
   return IMAGE_MIME_TYPES[ext];
 }
 
-function readTextFile(
+function readAttachmentText(
   filePath: string,
   maxChars: number,
+  maxBytes: number,
 ): { text: string; truncated: boolean } | null {
   try {
-    const raw = fs.readFileSync(filePath, 'utf-8');
+    const raw = readTextFile(filePath, { label: `attachment ${filePath}`, maxBytes });
     if (raw.length <= maxChars) return { text: raw, truncated: false };
     return { text: raw.slice(0, maxChars), truncated: true };
   } catch {
@@ -47,6 +49,10 @@ function readTextFile(
 
 function readBinaryFile(filePath: string): Buffer | null {
   try {
+    const stats = fs.lstatSync(filePath);
+    if (!stats.isFile() || stats.isSymbolicLink()) {
+      return null;
+    }
     return fs.readFileSync(filePath);
   } catch {
     return null;
@@ -166,7 +172,8 @@ export function buildUserContent(
       continue;
     }
 
-    const textResult = readTextFile(filePath, maxTextChars);
+    const maxTextReadBytes = Math.min(maxFileBytes, MAX_TEXT_FILE_SIZE_BYTES);
+    const textResult = readAttachmentText(filePath, maxTextChars, maxTextReadBytes);
     if (textResult) {
       const header = `File: ${filePath}` + (textResult.truncated ? ' (truncated)' : '');
       attachmentNotes.push(`${header}\n\n${textResult.text}`);

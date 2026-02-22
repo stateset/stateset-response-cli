@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { getStateSetDir } from './session.js';
+import { readTextFile, MAX_TEXT_FILE_SIZE_BYTES } from './utils/file-read.js';
 
 export interface ResourceFile {
   path: string;
@@ -28,8 +29,10 @@ const CONTEXT_FILENAMES = ['AGENTS.md', 'CLAUDE.md'];
 
 function readFileIfExists(filePath: string): string | null {
   try {
-    if (!fs.existsSync(filePath)) return null;
-    const content = fs.readFileSync(filePath, 'utf-8');
+    const content = readTextFile(filePath, {
+      label: 'resource file',
+      maxBytes: MAX_TEXT_FILE_SIZE_BYTES,
+    });
     return content.trim().length ? content.trim() : null;
   } catch {
     return null;

@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { parsePolicyFile, makeHookPermissionKey, readPolicyFile } from '../cli/permissions.js';
 
+const MAX_POLICY_FILE_SIZE_BYTES = 1_048_576;
 let tmpDir: string;
 
 beforeEach(() => {
@@ -52,14 +53,40 @@ describe('parsePolicyFile', () => {
     const result = parsePolicyFile(filePath);
     expect(result).toEqual({ toolHooks: {} });
   });
+
+  it('returns empty when policy file is too large', () => {
+    const filePath = path.join(tmpDir, 'huge-policy.json');
+    fs.writeFileSync(filePath, 'x'.repeat(MAX_POLICY_FILE_SIZE_BYTES + 1));
+    const result = parsePolicyFile(filePath);
+    expect(result).toEqual({ toolHooks: {} });
+  });
+
+  it.skipIf(process.platform === 'win32')('returns empty for symlinked policy file', () => {
+    const realFile = path.join(tmpDir, 'real-policy.json');
+    const symlinkFile = path.join(tmpDir, 'link-policy.json');
+    fs.writeFileSync(realFile, JSON.stringify({ toolHooks: { allow: 'allow' } }));
+    fs.symlinkSync(realFile, symlinkFile);
+    const result = parsePolicyFile(symlinkFile);
+    expect(result).toEqual({ toolHooks: {} });
+  });
 });
 
 describe('readPolicyFile', () => {
-  const MAX_POLICY_FILE_SIZE_BYTES = 1_048_576;
-
   it('rejects file paths that do not exist', () => {
     const filePath = path.join(tmpDir, 'does-not-exist.json');
     expect(() => readPolicyFile(filePath)).toThrow(/Policy file not found/);
+  });
+
+  it('rejects malformed policy files during import', () => {
+    const filePath = path.join(tmpDir, 'bad.json');
+    fs.writeFileSync(filePath, '{ bad json }');
+    expect(() => readPolicyFile(filePath)).toThrow(/Failed to parse policy file/);
+  });
+
+  it('rejects policies missing toolHooks during import', () => {
+    const filePath = path.join(tmpDir, 'missing-toolhooks.json');
+    fs.writeFileSync(filePath, JSON.stringify({ foo: 'bar' }));
+    expect(() => readPolicyFile(filePath)).toThrow(/Invalid policy format/);
   });
 
   it('rejects directories', () => {

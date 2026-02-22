@@ -4,12 +4,12 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
+  lstatSync,
   statSync,
   unlinkSync,
   watch,
   type FSWatcher,
 } from 'node:fs';
-import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { logger } from './lib/logger.js';
 import {
@@ -24,6 +24,7 @@ import { SessionStore, getStateSetDir, sanitizeSessionId } from './session.js';
 import { buildSystemPrompt } from './prompt.js';
 import { loadMemory } from './memory.js';
 import { formatUsage } from './utils/display.js';
+import { readTextFile, MAX_TEXT_FILE_SIZE_BYTES } from './utils/file-read.js';
 
 const DEBOUNCE_MS = 100;
 const RETRY_BASE_MS = 100;
@@ -32,6 +33,7 @@ const SESSION_RUNNER_MAX_COUNT = 200;
 const SESSION_RUNNER_MAX_PENDING = 32;
 const SESSION_RUNNER_CLEANUP_MS = 5 * 60_000;
 const ONE_SHOT_POLL_MS = 1000;
+const MAX_EVENT_FILE_SIZE_BYTES = 1_048_576;
 
 /** An event that triggers an agent run: immediately, at a specific time, or on a cron schedule. */
 export type ResponseEvent =
@@ -46,10 +48,15 @@ export interface EventsRunnerOptions {
   showUsage?: boolean;
   stdout?: boolean;
   anthropicApiKey?: string;
+  mcpEnvOverrides?: Record<string, string>;
 }
 
 /** Validates and parses a JSON string into a typed ResponseEvent, throwing on invalid input. */
 export function parseEvent(content: string, filename: string): ResponseEvent {
+  if (Buffer.byteLength(content, 'utf-8') > MAX_EVENT_FILE_SIZE_BYTES) {
+    throw new Error(`Event file too large in ${filename}`);
+  }
+
   let raw: unknown;
   try {
     raw = JSON.parse(content);
@@ -115,6 +122,7 @@ class SessionAgentRunner {
   private pending = 0;
   private showUsage: boolean;
   private stdout: boolean;
+  private mcpEnvOverrides: Record<string, string>;
 
   constructor(
     sessionId: string,
@@ -122,10 +130,13 @@ class SessionAgentRunner {
     showUsage: boolean,
     stdout: boolean,
     apiKey: string,
+    mcpEnvOverrides: Record<string, string>,
   ) {
     this.store = new SessionStore(sessionId);
     this.agent = new StateSetAgent(apiKey, model);
     this.agent.useSessionStore(this.store);
+    this.mcpEnvOverrides = mcpEnvOverrides;
+    this.agent.setMcpEnvOverrides(mcpEnvOverrides);
     this.showUsage = showUsage;
     this.stdout = stdout;
   }
@@ -243,12 +254,14 @@ export class EventsRunner {
   private options: EventsRunnerOptions;
   private anthropicApiKey: string;
   private sessionRunners = new Map<string, SessionAgentRunner>();
+  private mcpEnvOverrides: Record<string, string>;
 
   constructor(options: EventsRunnerOptions) {
     this.options = options;
     this.startTime = Date.now();
     this.eventsDir = path.join(getStateSetDir(), 'events');
     this.anthropicApiKey = options.anthropicApiKey ?? getAnthropicApiKey();
+    this.mcpEnvOverrides = options.mcpEnvOverrides ? { ...options.mcpEnvOverrides } : {};
   }
 
   start(): void {
@@ -414,12 +427,29 @@ export class EventsRunner {
 
   private async handleFile(filename: string): Promise<void> {
     const filePath = path.join(this.eventsDir, filename);
+    let stats: ReturnType<typeof lstatSync>;
+
+    try {
+      stats = lstatSync(filePath);
+    } catch (err) {
+      throw new Error(err instanceof Error ? err.message : String(err));
+    }
+    if (stats.isSymbolicLink() || !stats.isFile()) {
+      throw new Error(`Skipping unsafe event file: ${filename}`);
+    }
+    if (stats.size > MAX_EVENT_FILE_SIZE_BYTES) {
+      throw new Error(`Event file too large: ${filename} (${stats.size} bytes)`);
+    }
+
     let event: ResponseEvent | null = null;
     let lastError: Error | null = null;
 
     for (let i = 0; i < 3; i++) {
       try {
-        const content = await readFile(filePath, 'utf-8');
+        const content = readTextFile(filePath, {
+          label: `event file ${filename}`,
+          maxBytes: Math.min(MAX_EVENT_FILE_SIZE_BYTES, MAX_TEXT_FILE_SIZE_BYTES),
+        });
         event = this.parseEvent(content, filename);
         break;
       } catch (err) {
@@ -539,6 +569,7 @@ export class EventsRunner {
       Boolean(this.options.showUsage),
       Boolean(this.options.stdout),
       this.anthropicApiKey,
+      this.mcpEnvOverrides,
     );
     this.sessionRunners.set(sessionId, runner);
     void this.enforceSessionRunnerLimit();

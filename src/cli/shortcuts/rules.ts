@@ -1,6 +1,7 @@
-import fs from 'node:fs';
 import path from 'node:path';
+import fs from 'node:fs';
 import type { AnyPayload, ShortcutLogger, ShortcutRunner, TopLevelOptions } from './types.js';
+import { readJsonFile } from '../../utils/file-read.js';
 import {
   toLines,
   parseListArgs,
@@ -155,7 +156,7 @@ export async function runRulesCommand(
     }
     let parsed: unknown;
     try {
-      parsed = JSON.parse(fs.readFileSync(path.resolve(file), 'utf-8'));
+      parsed = readJsonFile(path.resolve(file), { label: 'rules import file' });
     } catch (error) {
       logger.error(
         `Unable to read rules import file: ${error instanceof Error ? error.message : String(error)}`,

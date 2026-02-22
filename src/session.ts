@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import type Anthropic from '@anthropic-ai/sdk';
+import { readJsonFile, readTextFile, MAX_TEXT_FILE_SIZE_BYTES } from './utils/file-read.js';
 
 export interface CleanupOptions {
   maxAgeDays?: number;
@@ -56,9 +57,36 @@ export function getSessionDir(sessionId: string): string {
   return path.join(getSessionsDir(), sanitizeSessionId(sessionId));
 }
 
+const MAX_SESSION_CONTEXT_FILE_SIZE_BYTES = MAX_TEXT_FILE_SIZE_BYTES;
+const MAX_SESSION_METADATA_FILE_SIZE_BYTES = MAX_TEXT_FILE_SIZE_BYTES;
+
 function ensureDir(dir: string): void {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  }
+}
+
+function readSafeSessionLines(filePath: string): string[] {
+  try {
+    const content = readTextFile(filePath, {
+      label: `session context`,
+      maxBytes: MAX_SESSION_CONTEXT_FILE_SIZE_BYTES,
+    });
+    return content.split(/\n/).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function readSafeMeta(filePath: string): unknown {
+  try {
+    return readJsonFile(filePath, {
+      label: 'session metadata',
+      expectObject: true,
+      maxBytes: MAX_SESSION_METADATA_FILE_SIZE_BYTES,
+    });
+  } catch {
+    return null;
   }
 }
 
@@ -98,13 +126,7 @@ export class SessionStore {
 
   loadMessages(): Anthropic.MessageParam[] {
     if (!fs.existsSync(this.contextPath)) return [];
-    let content: string;
-    try {
-      content = fs.readFileSync(this.contextPath, 'utf-8');
-    } catch {
-      return [];
-    }
-    const lines = content.split(/\n/).filter(Boolean);
+    const lines = readSafeSessionLines(this.contextPath);
     const messages: Anthropic.MessageParam[] = [];
 
     for (const line of lines) {
@@ -167,8 +189,7 @@ export class SessionStore {
   getMessageCount(): number {
     if (!fs.existsSync(this.contextPath)) return 0;
     try {
-      const content = fs.readFileSync(this.contextPath, 'utf-8');
-      return content.split(/\n/).filter(Boolean).length;
+      return readSafeSessionLines(this.contextPath).length;
     } catch {
       return 0;
     }
@@ -246,13 +267,12 @@ export function cleanupSessions(options: CleanupOptions = {}, sessionsDir?: stri
 
     // Check message count
     let messageCount = 0;
-    try {
-      if (fs.existsSync(contextPath)) {
-        const content = fs.readFileSync(contextPath, 'utf-8');
-        messageCount = content.split(/\n/).filter(Boolean).length;
+    if (fs.existsSync(contextPath)) {
+      try {
+        messageCount = readSafeSessionLines(contextPath).length;
+      } catch {
+        // treat as empty
       }
-    } catch {
-      // treat as empty
     }
     if (messageCount > 0) continue;
 
@@ -315,26 +335,19 @@ export function getSessionStorageStats(sessionsDir?: string): SessionStorageStat
     // Message count
     const contextPath = path.join(sessionDir, 'context.jsonl');
     let messageCount = 0;
-    try {
-      if (fs.existsSync(contextPath)) {
-        const content = fs.readFileSync(contextPath, 'utf-8');
-        messageCount = content.split(/\n/).filter(Boolean).length;
+    if (fs.existsSync(contextPath)) {
+      try {
+        messageCount = readSafeSessionLines(contextPath).length;
+      } catch {
+        // treat as empty
       }
-    } catch {
-      // treat as empty
     }
     if (messageCount === 0) stats.emptySessions++;
 
     // Archived
     const metaPath = path.join(sessionDir, 'meta.json');
-    try {
-      if (fs.existsSync(metaPath)) {
-        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
-        if (meta.archived) stats.archivedCount++;
-      }
-    } catch {
-      // skip
-    }
+    const meta = readSafeMeta(metaPath) as { archived?: unknown } | null;
+    if (meta?.archived) stats.archivedCount++;
 
     // Timestamps
     try {

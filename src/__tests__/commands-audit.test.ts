@@ -24,17 +24,11 @@ function createMockCtx(overrides: Partial<ChatContext> = {}): ChatContext {
 }
 
 describe('handleAuditCommand', () => {
-  const savedEnv: Record<string, string | undefined> = {};
-
   beforeEach(() => {
-    savedEnv.STATESET_TOOL_AUDIT = process.env.STATESET_TOOL_AUDIT;
-    savedEnv.STATESET_TOOL_AUDIT_DETAIL = process.env.STATESET_TOOL_AUDIT_DETAIL;
     mockAuditEntries.length = 0;
   });
 
   afterEach(() => {
-    process.env.STATESET_TOOL_AUDIT = savedEnv.STATESET_TOOL_AUDIT;
-    process.env.STATESET_TOOL_AUDIT_DETAIL = savedEnv.STATESET_TOOL_AUDIT_DETAIL;
     vi.restoreAllMocks();
   });
 
@@ -57,7 +51,6 @@ describe('handleAuditCommand', () => {
     const result = await handleAuditCommand('/audit on', ctx);
     expect(result).toEqual({ handled: true });
     expect(ctx.auditEnabled).toBe(true);
-    expect(process.env.STATESET_TOOL_AUDIT).toBe('true');
   });
 
   it('/audit off disables audit', async () => {
@@ -65,7 +58,6 @@ describe('handleAuditCommand', () => {
     const result = await handleAuditCommand('/audit off', ctx);
     expect(result).toEqual({ handled: true });
     expect(ctx.auditEnabled).toBe(false);
-    expect(process.env.STATESET_TOOL_AUDIT).toBe('false');
   });
 
   it('/audit on on enables audit with detail', async () => {

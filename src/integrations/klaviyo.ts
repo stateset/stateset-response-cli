@@ -1,10 +1,11 @@
-import { readFile } from 'node:fs/promises';
+import { lstat, readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { requestJsonWithRetry, normalizePath, applyQueryParams, throwOnHttpError } from './http.js';
 import type { KlaviyoConfig } from './config.js';
 import { ValidationError } from '../lib/errors.js';
 
 const BASE_URL = 'https://a.klaviyo.com/api';
+const MAX_KLAVIYO_FILE_BYTES = 5_000_000;
 
 export interface KlaviyoRequestOptions {
   klaviyo: KlaviyoConfig;
@@ -70,6 +71,14 @@ export async function klaviyoUploadImageFromFile(
   const revision = options.revision || options.klaviyo.revision;
   if (!revision) {
     throw new ValidationError('Klaviyo revision header is required. Set KLAVIYO_REVISION.');
+  }
+
+  const stat = await lstat(filePath);
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    throw new ValidationError('filePath must be a regular file.');
+  }
+  if (stat.size > MAX_KLAVIYO_FILE_BYTES) {
+    throw new ValidationError(`File is too large (${stat.size} bytes).`);
   }
 
   const buffer = await readFile(filePath);

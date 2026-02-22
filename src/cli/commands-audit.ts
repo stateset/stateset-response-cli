@@ -31,12 +31,10 @@ export async function handleAuditCommand(input: string, ctx: ChatContext): Promi
     }
 
     ctx.auditEnabled = toggle;
-    process.env.STATESET_TOOL_AUDIT = toggle ? 'true' : 'false';
     if (args[1]) {
       const detailToggle = parseToggleValue(args[1]);
       if (detailToggle !== undefined) {
         ctx.auditIncludeExcerpt = detailToggle;
-        process.env.STATESET_TOOL_AUDIT_DETAIL = detailToggle ? 'true' : 'false';
       }
     }
     console.log(formatSuccess(`Tool audit ${ctx.auditEnabled ? 'enabled' : 'disabled'}.`));

@@ -1,4 +1,4 @@
-import { normalizePath, applyQueryParams } from './http.js';
+import { normalizePath, applyQueryParams, requestJson } from './http.js';
 import type { GorgiasConfig } from './config.js';
 import { NotFoundError, ServiceUnavailableError, StateSetError } from '../lib/errors.js';
 
@@ -52,7 +52,7 @@ export function createGorgiasApi({ domain, apiKey, email }: GorgiasConfig): Gorg
     const url = new URL(`${baseUrl}${normalizedEndpoint}`);
     applyQueryParams(url, query);
 
-    const response = await fetch(url, {
+    const response = await requestJson(url.toString(), {
       method,
       headers: {
         Authorization: `Basic ${auth}`,
@@ -62,8 +62,12 @@ export function createGorgiasApi({ domain, apiKey, email }: GorgiasConfig): Gorg
       body: body ? JSON.stringify(body) : undefined,
     });
 
-    if (!response.ok) {
-      const error = await response.text();
+    if (response.status >= 400) {
+      const rawError = response.data;
+      const error =
+        typeof rawError === 'string'
+          ? rawError
+          : JSON.stringify(rawError) || JSON.stringify({ error: rawError });
       if (response.status === 404)
         throw new NotFoundError(`Gorgias API error (${response.status}): ${error}`);
       if (response.status >= 500)
@@ -75,7 +79,7 @@ export function createGorgiasApi({ domain, apiKey, email }: GorgiasConfig): Gorg
       );
     }
 
-    return response.json() as Promise<Record<string, unknown>>;
+    return response.data as Record<string, unknown>;
   }
 
   return {

@@ -4,6 +4,7 @@ import chalk from 'chalk';
 import { configExists, getRuntimeContext } from '../../config.js';
 import { StateSetAgent } from '../../agent.js';
 import { exportOrg, importOrg, type ImportResult, type OrgExport } from '../../export-import.js';
+import { readJsonFile } from '../../utils/file-read.js';
 import {
   formatError,
   formatBytes,
@@ -503,8 +504,10 @@ export function readSnapshot(pathOrRef: string): OrgExport {
   if (!snapshotPath) {
     throw new Error(`Snapshot not found: ${pathOrRef}`);
   }
-  const raw = fs.readFileSync(snapshotPath, 'utf-8');
-  const parsed = JSON.parse(raw) as OrgExport;
+  const parsed = readJsonFile(snapshotPath, {
+    label: 'snapshot file',
+    expectObject: true,
+  }) as OrgExport;
   if (!parsed || typeof parsed !== 'object' || !parsed.version || !parsed.orgId) {
     throw new Error(`Invalid snapshot format: ${pathOrRef}`);
   }
@@ -660,9 +663,11 @@ export function readStateSetBundle(source: string): OrgExport {
   const stats = fs.lstatSync(sourcePath);
 
   if (stats.isFile()) {
-    const raw = fs.readFileSync(sourcePath, 'utf-8');
     try {
-      const parsed = JSON.parse(raw) as unknown;
+      const parsed = readJsonFile(sourcePath, {
+        label: 'state set file',
+        expectObject: true,
+      }) as unknown;
       return coerceOrgExportPayload(parsed);
     } catch (error) {
       throw new Error(
@@ -677,9 +682,11 @@ export function readStateSetBundle(source: string): OrgExport {
 
   const manifestPath = path.join(sourcePath, DEFAULT_STATESET_BUNDLE_FILE);
   if (fs.existsSync(manifestPath)) {
-    const manifestRaw = fs.readFileSync(manifestPath, 'utf-8');
     try {
-      const manifestParsed = JSON.parse(manifestRaw) as unknown;
+      const manifestParsed = readJsonFile(manifestPath, {
+        label: 'state set manifest',
+        expectObject: true,
+      }) as unknown;
       if (manifestParsed && typeof manifestParsed === 'object') {
         const candidate = manifestParsed as Record<string, unknown>;
         if (candidate.version && candidate.orgId && Array.isArray(candidate.agents)) {
@@ -708,9 +715,11 @@ export function readStateSetBundle(source: string): OrgExport {
 
   const configPath = path.join(sourcePath, DEFAULT_STATESET_CONFIG_FILE);
   if (fs.existsSync(configPath)) {
-    const configRaw = fs.readFileSync(configPath, 'utf-8');
     try {
-      const config = JSON.parse(configRaw) as StateSetBundleManifest;
+      const config = readJsonFile(configPath, {
+        label: 'state set config',
+        expectObject: true,
+      }) as StateSetBundleManifest;
       if (config.version) {
         output.version = config.version;
       }
@@ -730,11 +739,10 @@ export function readStateSetBundle(source: string): OrgExport {
     if (!fs.existsSync(resourcePath)) {
       continue;
     }
-    const resourceRaw = fs.readFileSync(resourcePath, 'utf-8');
-    const parsed = JSON.parse(resourceRaw) as unknown;
-    if (!Array.isArray(parsed)) {
-      throw new Error(`Invalid state file ${filename}: expected an array.`);
-    }
+    const parsed = readJsonFile(resourcePath, {
+      label: `state set resource ${filename}`,
+      expectArray: true,
+    }) as unknown[];
     (output as Record<StateSetResourceField, unknown[]>)[field] = parsed;
   }
 

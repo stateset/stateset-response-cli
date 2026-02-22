@@ -2,22 +2,27 @@
  * Secret encryption module for StateSet Response CLI
  *
  * Provides AES-256-GCM encryption for sensitive credentials stored in config.
- * Key is derived from machine-specific data to prevent config portability
- * (which could lead to credential theft).
+ * Key is usually derived from machine-specific data and an optional
+ * user-provided passphrase to avoid plain-text exposure on disk.
  *
  * Encrypted values are prefixed with "enc:" for backward compatibility
  * with existing plaintext configs.
  */
 
 import crypto from 'node:crypto';
-import fs from 'node:fs';
 import os from 'node:os';
+import { readTextFile as readSafeTextFile } from '../utils/file-read.js';
 
 const ENCRYPTION_PREFIX = 'enc:';
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 16;
 const AUTH_TAG_LENGTH = 16;
 const SALT = 'stateset-response-cli-v1';
+
+function getSecretPassphrase(): string | null {
+  const configured = process.env.STATESET_SECRET_PASSPHRASE?.trim();
+  return configured && configured.length > 0 ? configured : null;
+}
 
 /**
  * Get a machine-specific identifier for key derivation
@@ -57,7 +62,7 @@ function getMachineId(): string {
 
 function readTextFile(filePath: string): string | null {
   try {
-    const raw = fs.readFileSync(filePath, 'utf8');
+    const raw = readSafeTextFile(filePath, { label: 'machine identifier', maxBytes: 1_024 });
     const value = raw.split(/\r?\n/)[0]?.trim();
     if (value) return value;
   } catch {
@@ -90,8 +95,10 @@ function getPrimaryMacAddress(): string | null {
  */
 function deriveKey(): Buffer {
   const machineId = getMachineId();
+  const passphrase = getSecretPassphrase();
   const userSalt = `${SALT}-${os.userInfo().username}`;
-  return crypto.scryptSync(machineId, userSalt, 32);
+  const keyMaterial = passphrase ? `${SALT}:pass:${passphrase}` : machineId;
+  return crypto.scryptSync(keyMaterial, userSalt, 32);
 }
 
 /**

@@ -12,34 +12,37 @@ import {
 } from '../config.js';
 import { formatError, printAuthHelp } from '../utils/display.js';
 import { sleep, normalizeInstanceUrl } from './utils.js';
+import { requestJson } from '../integrations/http.js';
 
 async function postJson<T = Record<string, unknown>>(
   url: string,
   body: Record<string, unknown>,
-): Promise<T> {
-  const response = await fetch(url, {
+): Promise<{ status: number; data: T }> {
+  const response = await requestJson(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const message =
-      (data as { error?: string; message?: string }).error ||
-      (data as { message?: string }).message;
-    throw new Error(message || `Request failed: ${response.status}`);
-  }
-  return data as T;
+  const data = (response.data as T) ?? ({} as T);
+  return { status: response.status, data };
 }
 
 async function startDeviceFlow(instanceUrl: string) {
-  return await postJson<{
+  const result = await postJson<{
     device_code: string;
     user_code: string;
     verification_url: string;
     expires_in: number;
     interval: number;
   }>(`${instanceUrl}/api/cli/device/start`, {});
+  if (result.status < 200 || result.status >= 300) {
+    const message =
+      (result.data as { error?: string; message?: string }).error ??
+      (result.data as { message?: string }).message ??
+      `Request failed: ${result.status}`;
+    throw new Error(message);
+  }
+  return result.data;
 }
 
 async function pollDeviceFlow(
@@ -59,12 +62,27 @@ async function pollDeviceFlow(
     };
 
     try {
-      const response = await fetch(`${instanceUrl}/api/cli/device/poll`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ device_code: deviceCode }),
-      });
-      data = await response.json().catch(() => ({}));
+      const response = await postJson<{
+        status?: string;
+        error?: string;
+        token?: string;
+        org?: { id: string; name: string };
+        graphqlEndpoint?: string;
+      }>(`${instanceUrl}/api/cli/device/poll`, { device_code: deviceCode });
+      const parsed = response.data;
+      if (response.status < 200 || response.status >= 300) {
+        if (typeof parsed === 'string') {
+          data = { error: parsed };
+        } else if (typeof parsed === 'object' && parsed !== null) {
+          data = parsed as typeof data;
+        } else {
+          data = {};
+        }
+      } else if (typeof parsed === 'object' && parsed !== null) {
+        data = parsed as typeof data;
+      } else {
+        data = {};
+      }
     } catch {
       await sleep(interval * 1000);
       continue;

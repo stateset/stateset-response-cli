@@ -3,6 +3,8 @@ import * as config from '../config.js';
 import type { RuntimeContext } from '../config.js';
 import { parseEvent, validateEventsPrereqs } from '../events.js';
 
+const MAX_EVENT_FILE_SIZE_BYTES = 1_048_576;
+
 const mockRuntimeContext: RuntimeContext = {
   orgId: 'org-1',
   orgConfig: {
@@ -156,5 +158,13 @@ describe('parseEvent', () => {
     expect(() => parseEvent(content, 'unknown.json')).toThrow(
       /Unknown event type "webhook" in unknown\.json/,
     );
+  });
+
+  it('throws on oversized event payloads', () => {
+    const content = JSON.stringify({
+      type: 'immediate',
+      text: 'x'.repeat(MAX_EVENT_FILE_SIZE_BYTES),
+    });
+    expect(() => parseEvent(content, 'oversized.json')).toThrow(/Event file too large/);
   });
 });
