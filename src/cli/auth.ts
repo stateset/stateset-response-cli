@@ -239,7 +239,8 @@ export function registerAuthCommands(program: Command): void {
         console.error(
           formatError(`Organization "${orgId}" not found. Run "response auth login" first.`),
         );
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
       config.currentOrg = orgId;
       saveConfig(config);

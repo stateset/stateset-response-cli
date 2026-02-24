@@ -1,15 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockExistsSync, mockReadFileSync } = vi.hoisted(() => ({
-  mockExistsSync: vi.fn(),
-  mockReadFileSync: vi.fn(),
-}));
-
-vi.mock('node:fs', () => ({
-  default: {
-    existsSync: (...args: unknown[]) => mockExistsSync(...args),
-    readFileSync: (...args: unknown[]) => mockReadFileSync(...args),
-  },
+const { mockReadTextFile } = vi.hoisted(() => ({
+  mockReadTextFile: vi.fn(),
 }));
 
 vi.mock('../session.js', () => ({
@@ -17,23 +9,30 @@ vi.mock('../session.js', () => ({
   getSessionDir: (id: string) => `/tmp/test-stateset/sessions/${id}`,
 }));
 
+vi.mock('../utils/file-read.js', () => ({
+  readTextFile: (...args: unknown[]) => mockReadTextFile(...args),
+  MAX_TEXT_FILE_SIZE_BYTES: 1_048_576,
+}));
+
 import { loadMemory } from '../memory.js';
 
 describe('loadMemory', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockReadTextFile.mockImplementation(() => {
+      throw new Error('missing');
+    });
   });
 
   it('returns empty string when no memory files exist', () => {
-    mockExistsSync.mockReturnValue(false);
     expect(loadMemory('sess-1')).toBe('');
   });
 
   it('returns global memory only when only global file exists', () => {
-    mockExistsSync.mockImplementation(
-      (p: string) => p.includes('MEMORY.md') && !p.includes('sessions'),
-    );
-    mockReadFileSync.mockReturnValue('Global notes here');
+    mockReadTextFile.mockImplementation((filePath: string) => {
+      if (filePath === '/tmp/test-stateset/MEMORY.md') return 'Global notes here';
+      throw new Error('missing');
+    });
 
     const result = loadMemory('sess-1');
     expect(result).toContain('### Global Memory');
@@ -42,8 +41,10 @@ describe('loadMemory', () => {
   });
 
   it('returns session memory only when only session file exists', () => {
-    mockExistsSync.mockImplementation((p: string) => p.includes('sessions/sess-1'));
-    mockReadFileSync.mockReturnValue('Session notes here');
+    mockReadTextFile.mockImplementation((filePath: string) => {
+      if (filePath === '/tmp/test-stateset/sessions/sess-1/MEMORY.md') return 'Session notes here';
+      throw new Error('missing');
+    });
 
     const result = loadMemory('sess-1');
     expect(result).toContain('### Session Memory');
@@ -52,10 +53,10 @@ describe('loadMemory', () => {
   });
 
   it('returns both when both memory files exist', () => {
-    mockExistsSync.mockReturnValue(true);
-    mockReadFileSync.mockImplementation((p: string) => {
-      if (String(p).includes('sessions')) return 'Session data';
-      return 'Global data';
+    mockReadTextFile.mockImplementation((filePath: string) => {
+      if (filePath === '/tmp/test-stateset/MEMORY.md') return 'Global data';
+      if (filePath === '/tmp/test-stateset/sessions/sess-1/MEMORY.md') return 'Session data';
+      throw new Error('missing');
     });
 
     const result = loadMemory('sess-1');
@@ -66,18 +67,14 @@ describe('loadMemory', () => {
   });
 
   it('returns empty string when files exist but are empty', () => {
-    mockExistsSync.mockReturnValue(true);
-    mockReadFileSync.mockReturnValue('   ');
-
+    mockReadTextFile.mockReturnValue('   ');
     expect(loadMemory('sess-1')).toBe('');
   });
 
-  it('returns empty string when readFileSync throws', () => {
-    mockExistsSync.mockReturnValue(true);
-    mockReadFileSync.mockImplementation(() => {
+  it('returns empty string when read errors occur', () => {
+    mockReadTextFile.mockImplementation(() => {
       throw new Error('read error');
     });
-
     expect(loadMemory('sess-1')).toBe('');
   });
 });

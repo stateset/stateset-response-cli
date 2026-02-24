@@ -1,5 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { runDoctorChecks, type DoctorCheck } from '../cli/commands-doctor.js';
+
+const originalNodeVersion = process.versions.node;
 
 vi.mock('../config.js', () => ({
   configExists: vi.fn(() => true),
@@ -17,7 +19,7 @@ vi.mock('../config.js', () => ({
   ],
 }));
 vi.mock('../integrations/http.js', () => ({
-  requestText: vi.fn(async () => ({ status: 200, body: 'ok' })),
+  requestText: vi.fn(async () => ({ status: 200, text: 'ok' })),
 }));
 vi.mock('../integrations/registry.js', () => ({
   listIntegrations: vi.fn(() => [{ label: 'Shopify', id: 'shopify' }]),
@@ -73,6 +75,17 @@ const find = (checks: DoctorCheck[], name: string) => checks.find((c) => c.name 
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  Object.defineProperty(process.versions, 'node', {
+    configurable: true,
+    value: '18.18.0',
+  });
+});
+
+afterEach(() => {
+  Object.defineProperty(process.versions, 'node', {
+    configurable: true,
+    value: originalNodeVersion,
+  });
 });
 
 describe('runDoctorChecks', () => {
@@ -127,7 +140,7 @@ describe('runDoctorChecks', () => {
   });
 
   it('warns on non-200 GraphQL response', async () => {
-    vi.mocked(requestText).mockResolvedValue({ status: 500, body: 'err' } as any);
+    vi.mocked(requestText).mockResolvedValue({ status: 500, text: 'err' } as any);
     const checks = await runDoctorChecks();
     expect(find(checks, 'GraphQL')?.status).toBe('warn');
   });

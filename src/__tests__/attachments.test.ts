@@ -3,12 +3,23 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+const { mockReadTextFile } = vi.hoisted(() => ({
+  mockReadTextFile: vi.fn(),
+}));
+
 vi.mock('node:fs', () => ({
   default: {
     existsSync: vi.fn(),
     readFileSync: vi.fn(),
     statSync: vi.fn(),
+    lstatSync: vi.fn(),
+    realpathSync: vi.fn((p: string) => p),
   },
+}));
+
+vi.mock('../utils/file-read.js', () => ({
+  readTextFile: (...args: unknown[]) => mockReadTextFile(...args),
+  MAX_TEXT_FILE_SIZE_BYTES: 1_048_576,
 }));
 
 import fs from 'node:fs';
@@ -17,9 +28,21 @@ import { buildUserContent } from '../attachments.js';
 
 const mockedFs = vi.mocked(fs);
 
+function makeFileStats(size: number) {
+  return {
+    size,
+    isFile: () => true,
+    isSymbolicLink: () => false,
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
-  delete (mockedFs as unknown as { realpathSync?: typeof fs.realpathSync }).realpathSync;
+  mockReadTextFile.mockImplementation((filePath: string) =>
+    String(mockedFs.readFileSync(filePath, 'utf-8')),
+  );
+  mockedFs.lstatSync.mockImplementation((p: any) => mockedFs.statSync(p as any) as any);
+  mockedFs.realpathSync.mockImplementation((p: any) => String(p));
 });
 
 describe('buildUserContent', () => {
@@ -39,7 +62,7 @@ describe('buildUserContent', () => {
     const fakeData = Buffer.from('pngdata');
 
     mockedFs.existsSync.mockReturnValue(true);
-    mockedFs.statSync.mockReturnValue({ size: 100 } as any);
+    mockedFs.statSync.mockReturnValue(makeFileStats(100) as any);
     mockedFs.readFileSync.mockReturnValue(fakeData as any);
 
     const result = buildUserContent('Look at this', [filePath]);
@@ -65,7 +88,7 @@ describe('buildUserContent', () => {
     const fakeData = Buffer.from('jpgdata');
 
     mockedFs.existsSync.mockReturnValue(true);
-    mockedFs.statSync.mockReturnValue({ size: 100 } as any);
+    mockedFs.statSync.mockReturnValue(makeFileStats(100) as any);
     mockedFs.readFileSync.mockReturnValue(fakeData as any);
 
     const result = buildUserContent('check', [filePath]);
@@ -80,7 +103,7 @@ describe('buildUserContent', () => {
     const fakeData = Buffer.from('jpegdata');
 
     mockedFs.existsSync.mockReturnValue(true);
-    mockedFs.statSync.mockReturnValue({ size: 100 } as any);
+    mockedFs.statSync.mockReturnValue(makeFileStats(100) as any);
     mockedFs.readFileSync.mockReturnValue(fakeData as any);
 
     const result = buildUserContent('check', [filePath]);
@@ -95,7 +118,7 @@ describe('buildUserContent', () => {
     const fakeData = Buffer.from('gifdata');
 
     mockedFs.existsSync.mockReturnValue(true);
-    mockedFs.statSync.mockReturnValue({ size: 100 } as any);
+    mockedFs.statSync.mockReturnValue(makeFileStats(100) as any);
     mockedFs.readFileSync.mockReturnValue(fakeData as any);
 
     const result = buildUserContent('check', [filePath]);
@@ -110,7 +133,7 @@ describe('buildUserContent', () => {
     const fakeData = Buffer.from('webpdata');
 
     mockedFs.existsSync.mockReturnValue(true);
-    mockedFs.statSync.mockReturnValue({ size: 100 } as any);
+    mockedFs.statSync.mockReturnValue(makeFileStats(100) as any);
     mockedFs.readFileSync.mockReturnValue(fakeData as any);
 
     const result = buildUserContent('check', [filePath]);
@@ -126,7 +149,7 @@ describe('buildUserContent', () => {
     const fileContent = 'These are my notes.';
 
     mockedFs.existsSync.mockReturnValue(true);
-    mockedFs.statSync.mockReturnValue({ size: 50 } as any);
+    mockedFs.statSync.mockReturnValue(makeFileStats(50) as any);
     mockedFs.readFileSync.mockReturnValue(fileContent as any);
 
     const result = buildUserContent('Read this', [filePath]);
@@ -172,7 +195,7 @@ describe('buildUserContent', () => {
     const maxBytes = 5_000_000;
 
     mockedFs.existsSync.mockReturnValue(true);
-    mockedFs.statSync.mockReturnValue({ size: maxBytes + 1 } as any);
+    mockedFs.statSync.mockReturnValue(makeFileStats(maxBytes + 1) as any);
 
     const result = buildUserContent('Hello', [filePath]);
 
@@ -187,7 +210,7 @@ describe('buildUserContent', () => {
     const filePath = '/tmp/unreadable-image.png';
 
     mockedFs.existsSync.mockReturnValue(true);
-    mockedFs.statSync.mockReturnValue({ size: 200 } as any);
+    mockedFs.statSync.mockReturnValue(makeFileStats(200) as any);
     mockedFs.readFileSync.mockImplementation(() => {
       throw new Error('permission denied');
     });
@@ -205,7 +228,7 @@ describe('buildUserContent', () => {
     const filePath = '/tmp/medium.txt';
 
     mockedFs.existsSync.mockReturnValue(true);
-    mockedFs.statSync.mockReturnValue({ size: 500 } as any);
+    mockedFs.statSync.mockReturnValue(makeFileStats(500) as any);
 
     const result = buildUserContent('Hello', [filePath], { maxFileBytes: 100 });
 
@@ -229,7 +252,7 @@ describe('buildUserContent', () => {
       return true;
     });
 
-    mockedFs.statSync.mockReturnValue({ size: 200 } as any);
+    mockedFs.statSync.mockReturnValue(makeFileStats(200) as any);
 
     mockedFs.readFileSync.mockImplementation((p: any, encoding?: any) => {
       const s = String(p);
@@ -264,7 +287,7 @@ describe('buildUserContent', () => {
     const longText = 'A'.repeat(200);
 
     mockedFs.existsSync.mockReturnValue(true);
-    mockedFs.statSync.mockReturnValue({ size: 200 } as any);
+    mockedFs.statSync.mockReturnValue(makeFileStats(200) as any);
     mockedFs.readFileSync.mockReturnValue(longText as any);
 
     const result = buildUserContent('Check', [filePath], { maxTextChars: 50 });
@@ -284,7 +307,7 @@ describe('buildUserContent - cwd path restriction', () => {
     const fileContent = 'safe content';
 
     mockedFs.existsSync.mockReturnValue(true);
-    mockedFs.statSync.mockReturnValue({ size: 50 } as any);
+    mockedFs.statSync.mockReturnValue(makeFileStats(50) as any);
     mockedFs.readFileSync.mockReturnValue(fileContent as any);
 
     const result = buildUserContent('Read this', [filePath], { cwd });
@@ -303,7 +326,7 @@ describe('buildUserContent - cwd path restriction', () => {
     const fileContent = 'relative content';
 
     mockedFs.existsSync.mockReturnValue(true);
-    mockedFs.statSync.mockReturnValue({ size: 50 } as any);
+    mockedFs.statSync.mockReturnValue(makeFileStats(50) as any);
     mockedFs.readFileSync.mockReturnValue(fileContent as any);
 
     const result = buildUserContent('Read this', [filePath], { cwd });
@@ -388,7 +411,7 @@ describe('buildUserContent - cwd path restriction', () => {
     const fileContent = 'some content';
 
     mockedFs.existsSync.mockReturnValue(true);
-    mockedFs.statSync.mockReturnValue({ size: 50 } as any);
+    mockedFs.statSync.mockReturnValue(makeFileStats(50) as any);
     mockedFs.readFileSync.mockReturnValue(fileContent as any);
 
     const result = buildUserContent('Read this', [filePath]);

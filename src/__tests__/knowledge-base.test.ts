@@ -34,8 +34,9 @@ describe('knowledge base tools', () => {
 
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
+      headers: new Headers(),
       json: async () => ({ data: [{ embedding: [0.1, 0.2] }] }),
-      text: async () => 'ok',
+      text: async () => JSON.stringify({ data: [{ embedding: [0.1, 0.2] }] }),
     }) as unknown as typeof fetch;
     (globalThis as { fetch: typeof fetch }).fetch = fetchMock;
   });
@@ -60,12 +61,14 @@ describe('knowledge base tools', () => {
       .fn()
       .mockResolvedValueOnce({
         ok: true,
-        text: async () => 'ok',
+        headers: new Headers(),
+        text: async () => JSON.stringify({ data: [{ embedding: [0.1, 0.2] }] }),
         json: async () => ({ data: [{ embedding: [0.1, 0.2] }] }),
       })
       .mockResolvedValueOnce({
         ok: true,
-        text: async () => 'ok',
+        headers: new Headers(),
+        text: async () => JSON.stringify({ result: [] }),
         json: async () => ({ result: [] }),
       }) as unknown as typeof fetch;
 

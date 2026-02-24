@@ -35,6 +35,8 @@ const SESSION_RUNNER_MAX_PENDING = 32;
 const SESSION_RUNNER_CLEANUP_MS = 5 * 60_000;
 const ONE_SHOT_POLL_MS = 1000;
 const MAX_EVENT_FILE_SIZE_BYTES = 1_048_576;
+const EVENT_RETRY_DELAY_MS = 1000;
+const WATCHER_RESTART_DELAY_MS = 2000;
 
 /** An event that triggers an agent run: immediately, at a specific time, or on a cron schedule. */
 export type ResponseEvent =
@@ -164,12 +166,12 @@ class SessionAgentRunner {
     return this.pending === 0;
   }
 
-  enqueue(event: QueuedEvent): void {
+  enqueue(event: QueuedEvent): boolean {
     if (this.pending >= SESSION_RUNNER_MAX_PENDING) {
       logger.warn(
-        `Dropping event for session ${this.store.getSessionId()}: queue saturated (${SESSION_RUNNER_MAX_PENDING} events).`,
+        `Queue saturated for session ${this.store.getSessionId()} (${SESSION_RUNNER_MAX_PENDING} events).`,
       );
-      return;
+      return false;
     }
 
     this.queue = this.queue
@@ -184,6 +186,7 @@ class SessionAgentRunner {
       });
     this.pending += 1;
     this.touch();
+    return true;
   }
 
   private async run({ filename, event }: QueuedEvent): Promise<void> {
@@ -243,10 +246,12 @@ class SessionAgentRunner {
 export class EventsRunner {
   private eventsDir: string;
   private watcher: FSWatcher | null = null;
+  private watcherRestartTimer: ReturnType<typeof setTimeout> | null = null;
   private knownFiles = new Set<string>();
   private oneShots = new Map<string, ScheduledOneShot>();
   private crons = new Map<string, Cron>();
   private debounceTimers = new Map<string, NodeJS.Timeout>();
+  private executionRetryTimers = new Map<string, NodeJS.Timeout>();
   private sessionCleanupTimer: ReturnType<typeof setInterval> | null = null;
   private oneShotTimer: ReturnType<typeof setInterval> | null = null;
   private startTime: number;
@@ -254,6 +259,7 @@ export class EventsRunner {
   private anthropicApiKey: string;
   private sessionRunners = new Map<string, SessionAgentRunner>();
   private mcpEnvOverrides: Record<string, string>;
+  private running = false;
 
   constructor(options: EventsRunnerOptions) {
     this.options = options;
@@ -264,23 +270,26 @@ export class EventsRunner {
   }
 
   start(): void {
+    if (this.running) {
+      return;
+    }
+
     if (!existsSync(this.eventsDir)) {
       mkdirSync(this.eventsDir, { recursive: true, mode: 0o700 });
     }
 
+    this.running = true;
     void this.scanExisting();
     this.startSessionCleanup();
-
-    this.watcher = watch(this.eventsDir, (_eventType, filename) => {
-      if (!filename || !filename.endsWith('.json')) return;
-      this.debounce(filename, () => this.handleFileChange(filename));
-    });
+    this.startWatcher();
 
     logger.info(`Events watcher started: ${this.eventsDir}`);
   }
 
   async stop(): Promise<void> {
+    this.running = false;
     this.stopSessionCleanup();
+    this.stopWatcherRestartTimer();
 
     if (this.watcher) {
       this.watcher.close();
@@ -291,6 +300,11 @@ export class EventsRunner {
       clearTimeout(timer);
     }
     this.debounceTimers.clear();
+
+    for (const timer of this.executionRetryTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.executionRetryTimers.clear();
 
     this.oneShots.clear();
     this.stopOneShotPoller();
@@ -310,6 +324,62 @@ export class EventsRunner {
         logger.error(`Failed to cleanup session runners: ${getErrorMessage(error)}`);
       });
     }, SESSION_RUNNER_CLEANUP_MS);
+  }
+
+  private startWatcher(): void {
+    try {
+      this.watcher = watch(this.eventsDir, (_eventType, filename) => {
+        const nextFilename = typeof filename === 'string' ? filename : String(filename ?? '');
+        if (!nextFilename || !nextFilename.endsWith('.json')) return;
+        this.debounce(nextFilename, () => this.handleFileChange(nextFilename));
+      });
+    } catch (error) {
+      this.handleWatcherError(error);
+      return;
+    }
+
+    this.watcher.on('error', (error) => {
+      this.handleWatcherError(error);
+    });
+  }
+
+  private handleWatcherError(error: unknown): void {
+    logger.error(`Events watcher error: ${getErrorMessage(error)}`);
+
+    if (!this.running) {
+      return;
+    }
+
+    if (this.watcher) {
+      this.watcher.close();
+      this.watcher = null;
+    }
+
+    this.scheduleWatcherRestart();
+  }
+
+  private scheduleWatcherRestart(): void {
+    if (this.watcherRestartTimer) {
+      return;
+    }
+
+    this.watcherRestartTimer = setTimeout(() => {
+      this.watcherRestartTimer = null;
+      if (!this.running) {
+        return;
+      }
+
+      logger.info(`Restarting events watcher: ${this.eventsDir}`);
+      this.startWatcher();
+    }, WATCHER_RESTART_DELAY_MS);
+  }
+
+  private stopWatcherRestartTimer(): void {
+    if (!this.watcherRestartTimer) {
+      return;
+    }
+    clearTimeout(this.watcherRestartTimer);
+    this.watcherRestartTimer = null;
   }
 
   private startOneShotPoller(): void {
@@ -411,6 +481,7 @@ export class EventsRunner {
       clearTimeout(timer);
       this.debounceTimers.delete(filename);
     }
+    this.clearExecutionRetry(filename);
     this.cancelScheduled(filename);
     this.knownFiles.delete(filename);
   }
@@ -547,19 +618,75 @@ export class EventsRunner {
     });
     const sessionId = sanitizeSessionId(event.session || this.options.defaultSession);
     const runner = this.getSessionRunner(sessionId);
+    if (!runner) {
+      this.scheduleExecutionRetry(
+        filename,
+        event,
+        deleteAfter,
+        `Event session runner limit reached (${SESSION_RUNNER_MAX_COUNT}) for session ${sessionId}`,
+      );
+      return;
+    }
+
     runner.touch();
-    runner.enqueue({ filename, event });
+    const accepted = runner.enqueue({ filename, event });
+    if (!accepted) {
+      this.scheduleExecutionRetry(
+        filename,
+        event,
+        deleteAfter,
+        `Queue saturated for session ${sessionId} while executing ${filename}`,
+      );
+      return;
+    }
 
     if (deleteAfter) {
       this.deleteFile(filename);
     }
   }
 
-  private getSessionRunner(sessionId: string): SessionAgentRunner {
+  private scheduleExecutionRetry(
+    filename: string,
+    event: ResponseEvent,
+    deleteAfter: boolean,
+    reason: string,
+  ): void {
+    if (!this.running || this.executionRetryTimers.has(filename)) {
+      return;
+    }
+
+    logger.warn(`${reason}; retrying in ${EVENT_RETRY_DELAY_MS}ms.`);
+    const timer = setTimeout(() => {
+      this.executionRetryTimers.delete(filename);
+      if (!this.running) {
+        return;
+      }
+      this.execute(filename, event, deleteAfter);
+    }, EVENT_RETRY_DELAY_MS);
+    this.executionRetryTimers.set(filename, timer);
+  }
+
+  private clearExecutionRetry(filename: string): void {
+    const timer = this.executionRetryTimers.get(filename);
+    if (!timer) {
+      return;
+    }
+    clearTimeout(timer);
+    this.executionRetryTimers.delete(filename);
+  }
+
+  private getSessionRunner(sessionId: string): SessionAgentRunner | null {
     const existing = this.sessionRunners.get(sessionId);
     if (existing) {
       existing.touch();
       return existing;
+    }
+
+    if (this.sessionRunners.size >= SESSION_RUNNER_MAX_COUNT) {
+      const evicted = this.evictOldestIdleRunner();
+      if (!evicted) {
+        return null;
+      }
     }
 
     const model = this.options.model ?? getConfiguredModel();
@@ -572,8 +699,26 @@ export class EventsRunner {
       this.mcpEnvOverrides,
     );
     this.sessionRunners.set(sessionId, runner);
-    void this.enforceSessionRunnerLimit();
     return runner;
+  }
+
+  private evictOldestIdleRunner(): boolean {
+    const candidates = [...this.sessionRunners.entries()]
+      .filter(([, runner]) => runner.isIdle())
+      .sort((a, b) => a[1].getLastUsedAt() - b[1].getLastUsedAt());
+
+    const candidate = candidates[0];
+    if (!candidate) {
+      return false;
+    }
+
+    const [sessionId, runner] = candidate;
+    this.sessionRunners.delete(sessionId);
+    void runner.disconnect().catch((error) => {
+      const msg = getErrorMessage(error);
+      logger.error(`Failed to disconnect idle runner ${sessionId}: ${msg}`);
+    });
+    return true;
   }
 
   private async cleanupSessionRunners(force = false): Promise<void> {
@@ -640,6 +785,7 @@ export class EventsRunner {
   }
 
   private deleteFile(filename: string): void {
+    this.clearExecutionRetry(filename);
     const filePath = path.join(this.eventsDir, filename);
     try {
       unlinkSync(filePath);

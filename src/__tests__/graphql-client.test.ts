@@ -100,9 +100,13 @@ describe('executeQuery', () => {
       { id: '123' },
     );
 
-    expect(mockClient.request).toHaveBeenCalledWith('query ($id: ID!) { user(id: $id) { id } }', {
-      id: '123',
-    });
+    expect(mockClient.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        document: 'query ($id: ID!) { user(id: $id) { id } }',
+        variables: { id: '123' },
+        signal: expect.any(AbortSignal),
+      }),
+    );
   });
 
   it('retries on 502 status', async () => {

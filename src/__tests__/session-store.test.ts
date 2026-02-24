@@ -9,6 +9,11 @@ const { mockExistsSync, mockReadFileSync, mockWriteFileSync, mockAppendFileSync,
     mockMkdirSync: vi.fn((_path?: any, _opts?: any) => undefined as any),
   }));
 
+const { mockReadTextFile, mockReadJsonFile } = vi.hoisted(() => ({
+  mockReadTextFile: vi.fn((_path?: any, _opts?: any) => '' as any),
+  mockReadJsonFile: vi.fn((_path?: any, _opts?: any) => null as any),
+}));
+
 vi.mock('node:fs', () => ({
   default: {
     existsSync: mockExistsSync,
@@ -23,12 +28,20 @@ vi.mock('node:os', () => ({
   default: { homedir: () => '/tmp/test-home' },
 }));
 
+vi.mock('../utils/file-read.js', () => ({
+  readTextFile: (...args: unknown[]) => mockReadTextFile(...args),
+  readJsonFile: (...args: unknown[]) => mockReadJsonFile(...args),
+  MAX_TEXT_FILE_SIZE_BYTES: 1_048_576,
+}));
+
 import { SessionStore } from '../session.js';
 
 describe('SessionStore', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockExistsSync.mockReturnValue(false);
+    mockReadTextFile.mockReturnValue('');
+    mockReadJsonFile.mockReturnValue(null);
   });
 
   it('creates session directory on construction', () => {
@@ -56,7 +69,7 @@ describe('SessionStore', () => {
     it('parses valid JSONL lines into MessageParam array', () => {
       const store = new SessionStore('sess-1');
       mockExistsSync.mockReturnValue(true);
-      mockReadFileSync.mockReturnValue(
+      mockReadTextFile.mockReturnValue(
         '{"role":"user","content":"hello"}\n{"role":"assistant","content":"hi"}\n',
       );
 
@@ -69,7 +82,7 @@ describe('SessionStore', () => {
     it('skips malformed JSON lines gracefully', () => {
       const store = new SessionStore('sess-1');
       mockExistsSync.mockReturnValue(true);
-      mockReadFileSync.mockReturnValue(
+      mockReadTextFile.mockReturnValue(
         '{"role":"user","content":"ok"}\n{bad json}\n{"role":"assistant","content":"yes"}\n',
       );
 
@@ -80,7 +93,7 @@ describe('SessionStore', () => {
     it('skips entries with invalid role', () => {
       const store = new SessionStore('sess-1');
       mockExistsSync.mockReturnValue(true);
-      mockReadFileSync.mockReturnValue(
+      mockReadTextFile.mockReturnValue(
         '{"role":"system","content":"sys"}\n{"role":"user","content":"ok"}\n',
       );
 
@@ -92,7 +105,7 @@ describe('SessionStore', () => {
     it('skips entries with missing content', () => {
       const store = new SessionStore('sess-1');
       mockExistsSync.mockReturnValue(true);
-      mockReadFileSync.mockReturnValue('{"role":"user"}\n');
+      mockReadTextFile.mockReturnValue('{"role":"user"}\n');
 
       expect(store.loadMessages()).toHaveLength(0);
     });

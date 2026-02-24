@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as config from '../config.js';
 import type { RuntimeContext } from '../config.js';
-import { parseEvent, validateEventsPrereqs } from '../events.js';
+import { EventsRunner, parseEvent, validateEventsPrereqs } from '../events.js';
+import { logger } from '../lib/logger.js';
 
 const MAX_EVENT_FILE_SIZE_BYTES = 1_048_576;
 
@@ -166,5 +167,76 @@ describe('parseEvent', () => {
       text: 'x'.repeat(MAX_EVENT_FILE_SIZE_BYTES),
     });
     expect(() => parseEvent(content, 'oversized.json')).toThrow(/Event file too large/);
+  });
+});
+
+describe('EventsRunner reliability guards', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('defers deletion when a session queue is saturated', () => {
+    const runner = new EventsRunner({
+      defaultSession: 'default',
+      anthropicApiKey: 'sk-ant-test',
+    }) as any;
+
+    runner.running = true;
+    runner.getSessionRunner = vi.fn(() => ({
+      touch: vi.fn(),
+      enqueue: vi.fn(() => false),
+    }));
+    const retrySpy = vi.spyOn(runner, 'scheduleExecutionRetry').mockImplementation(() => {});
+    const deleteSpy = vi.spyOn(runner, 'deleteFile').mockImplementation(() => {});
+
+    runner.execute('event.json', { type: 'immediate', text: 'hello' }, true);
+
+    expect(retrySpy).toHaveBeenCalledTimes(1);
+    expect(deleteSpy).not.toHaveBeenCalled();
+  });
+
+  it('returns null for new sessions when at capacity with no idle runners', () => {
+    const runner = new EventsRunner({
+      defaultSession: 'default',
+      anthropicApiKey: 'sk-ant-test',
+    }) as any;
+
+    const busyRunner = {
+      isIdle: () => false,
+      getLastUsedAt: () => Date.now(),
+      disconnect: vi.fn(async () => {}),
+    };
+    const sessions = new Map<string, unknown>();
+    for (let i = 0; i < 200; i++) {
+      sessions.set(`s-${i}`, busyRunner);
+    }
+    runner.sessionRunners = sessions;
+
+    expect(runner.getSessionRunner('new-session')).toBeNull();
+  });
+
+  it('schedules watcher restart after watcher errors', () => {
+    vi.useFakeTimers();
+    const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+    const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
+
+    const runner = new EventsRunner({
+      defaultSession: 'default',
+      anthropicApiKey: 'sk-ant-test',
+    }) as any;
+    runner.running = true;
+    const watcher = { close: vi.fn() };
+    runner.watcher = watcher;
+    runner.startWatcher = vi.fn();
+
+    runner.handleWatcherError(new Error('watch failed'));
+
+    expect(watcher.close).toHaveBeenCalledTimes(1);
+    expect(runner.startWatcher).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(2000);
+    expect(runner.startWatcher).toHaveBeenCalledTimes(1);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(infoSpy).toHaveBeenCalledTimes(1);
   });
 });

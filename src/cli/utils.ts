@@ -50,8 +50,10 @@ export function assertNodeVersion(): void {
   const raw = process.versions.node || '0.0.0';
   const major = Number.parseInt(raw.split('.')[0] || '0', 10);
   if (!Number.isFinite(major) || major < 18) {
-    console.error(formatError(`Node.js 18+ is required. Detected ${raw}.`));
-    process.exit(1);
+    const message = `Node.js 18+ is required. Detected ${raw}.`;
+    console.error(formatError(message));
+    process.exitCode = 1;
+    throw new Error(message);
   }
 }
 

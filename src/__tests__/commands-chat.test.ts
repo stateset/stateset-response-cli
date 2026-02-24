@@ -38,6 +38,7 @@ function createMockCtx(overrides: Partial<ChatContext> = {}): ChatContext {
     agent: {
       clearHistory: vi.fn(),
       getHistoryLength: vi.fn(() => 0),
+      setSystemPrompt: vi.fn(),
     } as any,
     cwd: '/tmp/test',
     extensions: {
@@ -87,10 +88,12 @@ describe('handleChatCommand', () => {
 
     expect(await handleChatCommand('/apply on', ctx)).toEqual({ handled: false });
     expect(await handleChatCommand('/redact off', ctx)).toEqual({ handled: false });
+    expect(await handleChatCommand('/agentic off', ctx)).toEqual({ handled: false });
     expect(await handleChatCommand('/usage on', ctx)).toEqual({ handled: false });
     expect(await handleChatCommand('/model sonnet', ctx)).toEqual({ handled: false });
 
-    expect(mockConfig).toHaveBeenCalledTimes(4);
+    expect(mockConfig).toHaveBeenCalledTimes(5);
+    expect(mockConfig).toHaveBeenCalledWith('/agentic off', ctx);
     expect(mockConfig).toHaveBeenCalledWith('/apply on', ctx);
     expect(mockConfig).toHaveBeenCalledWith('/redact off', ctx);
   });
@@ -100,6 +103,7 @@ describe('handleChatCommand', () => {
 
     expect(await handleChatCommand('/applyx', ctx)).toEqual({ handled: false });
     expect(await handleChatCommand('/redactx', ctx)).toEqual({ handled: false });
+    expect(await handleChatCommand('/agenticx', ctx)).toEqual({ handled: false });
     expect(await handleChatCommand('/usagex', ctx)).toEqual({ handled: false });
     expect(await handleChatCommand('/modelx', ctx)).toEqual({ handled: false });
 
@@ -152,6 +156,9 @@ describe('handleChatCommand', () => {
     expect(ctx.printIntegrationStatus).toHaveBeenCalled();
     expect(await handleChatCommand('/integrationsx', ctx)).toEqual({ handled: false });
     expect(await handleChatCommand('/integrations\tsetup', ctx)).toEqual({ handled: true });
+    expect(ctx.runIntegrationsSetup).toHaveBeenCalledTimes(1);
+    expect(ctx.reconnectAgent).toHaveBeenCalledTimes(1);
+    expect(ctx.agent.setSystemPrompt).toHaveBeenCalledTimes(1);
   });
 
   it('handles /attach and ignores attachment command collisions', async () => {

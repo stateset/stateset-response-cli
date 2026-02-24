@@ -45,9 +45,6 @@ function shutdownWithError(message: string): void {
   }
   isExiting = true;
   process.exitCode = 1;
-  setImmediate(() => {
-    process.exit(1);
-  });
 }
 
 /**

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { handleConfigCommand } from '../cli/commands-config.js';
 import type { ChatContext } from '../cli/types.js';
 
@@ -49,8 +49,19 @@ function createMockCtx(overrides: Partial<ChatContext> = {}): ChatContext {
 }
 
 describe('handleConfigCommand', () => {
+  let originalStructuredMetadata: string | undefined;
+
   beforeEach(() => {
     vi.restoreAllMocks();
+    originalStructuredMetadata = process.env.STATESET_MCP_STRUCTURED_TOOL_RESULTS;
+  });
+
+  afterEach(() => {
+    if (originalStructuredMetadata === undefined) {
+      delete process.env.STATESET_MCP_STRUCTURED_TOOL_RESULTS;
+    } else {
+      process.env.STATESET_MCP_STRUCTURED_TOOL_RESULTS = originalStructuredMetadata;
+    }
   });
 
   it('returns unhandled for non-config commands', async () => {
@@ -76,6 +87,7 @@ describe('handleConfigCommand', () => {
     expect(ctx.agent.setMcpEnvOverrides).toHaveBeenCalledWith({
       STATESET_ALLOW_APPLY: 'true',
       STATESET_REDACT: 'false',
+      STATESET_MCP_STRUCTURED_TOOL_RESULTS: 'false',
     });
   });
 
@@ -87,6 +99,7 @@ describe('handleConfigCommand', () => {
     expect(ctx.agent.setMcpEnvOverrides).toHaveBeenCalledWith({
       STATESET_ALLOW_APPLY: 'false',
       STATESET_REDACT: 'false',
+      STATESET_MCP_STRUCTURED_TOOL_RESULTS: 'false',
     });
   });
 
@@ -129,6 +142,7 @@ describe('handleConfigCommand', () => {
     expect(setMcpEnvOverrides).toHaveBeenLastCalledWith({
       STATESET_ALLOW_APPLY: 'false',
       STATESET_REDACT: 'false',
+      STATESET_MCP_STRUCTURED_TOOL_RESULTS: 'false',
     });
     expect(setSystemPrompt).not.toHaveBeenCalled();
   });
@@ -142,6 +156,7 @@ describe('handleConfigCommand', () => {
     expect(ctx.agent.setMcpEnvOverrides).toHaveBeenCalledWith({
       STATESET_ALLOW_APPLY: 'false',
       STATESET_REDACT: 'true',
+      STATESET_MCP_STRUCTURED_TOOL_RESULTS: 'false',
     });
   });
 
@@ -170,6 +185,7 @@ describe('handleConfigCommand', () => {
     expect(setMcpEnvOverrides).toHaveBeenLastCalledWith({
       STATESET_ALLOW_APPLY: 'false',
       STATESET_REDACT: 'false',
+      STATESET_MCP_STRUCTURED_TOOL_RESULTS: 'false',
     });
     expect(setSystemPrompt).not.toHaveBeenCalled();
   });
@@ -182,7 +198,88 @@ describe('handleConfigCommand', () => {
     expect(ctx.agent.setMcpEnvOverrides).toHaveBeenCalledWith({
       STATESET_ALLOW_APPLY: 'false',
       STATESET_REDACT: 'false',
+      STATESET_MCP_STRUCTURED_TOOL_RESULTS: 'false',
     });
+  });
+
+  // /agentic tests
+  it('/agentic shows current state when no arg given', async () => {
+    process.env.STATESET_MCP_STRUCTURED_TOOL_RESULTS = 'true';
+    const ctx = createMockCtx();
+    const result = await handleConfigCommand('/agentic', ctx);
+    expect(result).toEqual({ handled: true });
+    expect(ctx.rl.prompt).toHaveBeenCalled();
+  });
+
+  it('/agentic on enables structured tool results', async () => {
+    process.env.STATESET_MCP_STRUCTURED_TOOL_RESULTS = 'false';
+    const ctx = createMockCtx();
+    const result = await handleConfigCommand('/agentic on', ctx);
+    expect(result).toEqual({ handled: true });
+    expect(process.env.STATESET_MCP_STRUCTURED_TOOL_RESULTS).toBe('true');
+    expect(ctx.agent.setMcpEnvOverrides).toHaveBeenCalledWith({
+      STATESET_ALLOW_APPLY: 'false',
+      STATESET_REDACT: 'false',
+      STATESET_MCP_STRUCTURED_TOOL_RESULTS: 'true',
+    });
+  });
+
+  it('/agentic off disables structured tool results', async () => {
+    process.env.STATESET_MCP_STRUCTURED_TOOL_RESULTS = 'true';
+    const ctx = createMockCtx();
+    const result = await handleConfigCommand('/agentic off', ctx);
+    expect(result).toEqual({ handled: true });
+    expect(process.env.STATESET_MCP_STRUCTURED_TOOL_RESULTS).toBe('false');
+    expect(ctx.agent.setMcpEnvOverrides).toHaveBeenCalledWith({
+      STATESET_ALLOW_APPLY: 'false',
+      STATESET_REDACT: 'false',
+      STATESET_MCP_STRUCTURED_TOOL_RESULTS: 'false',
+    });
+  });
+
+  it('/agentic with invalid arg shows warning', async () => {
+    process.env.STATESET_MCP_STRUCTURED_TOOL_RESULTS = 'false';
+    const ctx = createMockCtx();
+    const result = await handleConfigCommand('/agentic maybe', ctx);
+    expect(result).toEqual({ handled: true });
+    expect(process.env.STATESET_MCP_STRUCTURED_TOOL_RESULTS).toBe('false');
+  });
+
+  it('/agentic on when already enabled shows already-enabled message', async () => {
+    process.env.STATESET_MCP_STRUCTURED_TOOL_RESULTS = 'true';
+    const ctx = createMockCtx();
+    const result = await handleConfigCommand('/agentic on', ctx);
+    expect(result).toEqual({ handled: true });
+    expect(ctx.reconnectAgent).not.toHaveBeenCalled();
+  });
+
+  it('/agentic failure restores previous value and returns handled', async () => {
+    const reconnectAgent = vi.fn(async () => {
+      throw new Error('network down');
+    });
+    const setSystemPrompt = vi.fn();
+    const setMcpEnvOverrides = vi.fn();
+    const ctx = createMockCtx({
+      reconnectAgent,
+      agent: {
+        getModel: vi.fn(() => 'claude-sonnet-4-6-20250514'),
+        setModel: vi.fn(),
+        setSystemPrompt,
+        setMcpEnvOverrides,
+      } as any,
+    });
+
+    process.env.STATESET_MCP_STRUCTURED_TOOL_RESULTS = 'false';
+    const result = await handleConfigCommand('/agentic on', ctx);
+    expect(result).toEqual({ handled: true });
+    expect(ctx.reconnectAgent).toHaveBeenCalled();
+    expect(process.env.STATESET_MCP_STRUCTURED_TOOL_RESULTS).toBe('false');
+    expect(setMcpEnvOverrides).toHaveBeenLastCalledWith({
+      STATESET_ALLOW_APPLY: 'false',
+      STATESET_REDACT: 'false',
+      STATESET_MCP_STRUCTURED_TOOL_RESULTS: 'false',
+    });
+    expect(setSystemPrompt).not.toHaveBeenCalled();
   });
 
   // /usage tests

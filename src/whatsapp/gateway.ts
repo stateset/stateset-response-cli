@@ -801,15 +801,22 @@ if (isDirectRun) {
 
   const shutdown = async () => {
     logger.info('Shutting down...');
-    await gateway.stop();
-    process.exit(0);
+    try {
+      await gateway.stop();
+    } finally {
+      process.exitCode = 0;
+    }
   };
 
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', () => {
+    void shutdown();
+  });
+  process.on('SIGTERM', () => {
+    void shutdown();
+  });
 
   gateway.start().catch((err) => {
     logger.error('Gateway failed to start:', err instanceof Error ? err.message : err);
-    process.exit(1);
+    process.exitCode = 1;
   });
 }

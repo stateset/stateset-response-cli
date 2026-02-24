@@ -363,7 +363,8 @@ export function registerDoctorCommand(program: Command): void {
       console.log('');
 
       if (failed > 0) {
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
     });
 }

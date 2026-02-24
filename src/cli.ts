@@ -62,7 +62,8 @@ configCmd
   .action(() => {
     if (!configExists()) {
       printAuthHelp();
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
     try {
       const cfg = loadConfig();
@@ -85,7 +86,8 @@ configCmd
       console.log(JSON.stringify(display, null, 2));
     } catch (e: unknown) {
       console.error(formatError(getErrorMessage(e)));
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
   });
 
@@ -97,7 +99,8 @@ program
   .action(async (file: string) => {
     if (!configExists()) {
       printAuthHelp();
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
     const { orgId } = getCurrentOrg();
     const spinner = ora(`Exporting organization ${orgId}...`).start();
@@ -119,7 +122,8 @@ program
     } catch (e: unknown) {
       spinner.fail('Export failed');
       console.error(formatError(getErrorMessage(e)));
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
   });
 
@@ -140,11 +144,13 @@ program
     ) => {
       if (!configExists()) {
         printAuthHelp();
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
       if (!fs.existsSync(file)) {
         console.error(formatError(`File not found: ${file}`));
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
 
       const formatCounts = (result: ImportResult, label = 'Imported'): string => {
@@ -174,7 +180,7 @@ program
         preview = await importOrg(file, { dryRun: true });
       } catch (e: unknown) {
         console.error(formatError(getErrorMessage(e)));
-        process.exit(1);
+        process.exitCode = 1;
         return;
       }
       const { orgId } = getCurrentOrg();
@@ -207,7 +213,7 @@ program
       ]);
       if (!confirm) {
         console.log(chalk.gray('  Import cancelled.'));
-        process.exit(0);
+        return;
       }
 
       const spinner = ora('Importing...').start();
@@ -230,7 +236,8 @@ program
       } catch (e: unknown) {
         spinner.fail('Import failed');
         console.error(formatError(getErrorMessage(e)));
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
     },
   );
@@ -256,7 +263,8 @@ program
     }) => {
       if (!configExists()) {
         printAuthHelp();
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
 
       let runtime: ReturnType<typeof validateEventsPrereqs> | null = null;
@@ -264,7 +272,8 @@ program
         runtime = validateEventsPrereqs();
       } catch (e: unknown) {
         console.error(formatError(getErrorMessage(e)));
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
       if (!runtime) {
         return;
@@ -284,7 +293,8 @@ program
           model = resolveModelOrThrow(options.model);
         } catch (e: unknown) {
           console.error(formatError(getErrorMessage(e)));
-          process.exit(1);
+          process.exitCode = 1;
+          return;
         }
       }
 
@@ -301,7 +311,7 @@ program
         });
       } catch (e: unknown) {
         console.error(formatError(getErrorMessage(e)));
-        process.exit(1);
+        process.exitCode = 1;
         return;
       }
 
@@ -309,14 +319,14 @@ program
         runner.start();
       } catch (e: unknown) {
         console.error(formatError(getErrorMessage(e)));
-        process.exit(1);
+        process.exitCode = 1;
         return;
       }
 
       const shutdown = async () => {
         console.log('\nStopping events watcher...');
         await runner.stop();
-        process.exit(0);
+        process.exitCode = 0;
       };
 
       process.on('SIGINT', shutdown);

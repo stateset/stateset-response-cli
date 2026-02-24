@@ -161,7 +161,8 @@ export async function startChatSession(
   // Check config
   if (!configExists()) {
     printAuthHelp();
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   let orgId: string;
@@ -174,7 +175,8 @@ export async function startChatSession(
     apiKey = runtime.anthropicApiKey;
   } catch (e: unknown) {
     console.error(formatError(getErrorMessage(e)));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   allowApply = options.apply ? true : readBooleanEnv('STATESET_ALLOW_APPLY');
@@ -187,7 +189,8 @@ export async function startChatSession(
       model = resolveModelOrThrow(options.model);
     } catch (e: unknown) {
       console.error(formatError(getErrorMessage(e)));
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
   }
 
@@ -213,7 +216,8 @@ export async function startChatSession(
   } catch (e: unknown) {
     spinner.fail('Failed to connect');
     console.error(formatError(getErrorMessage(e)));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   try {
@@ -248,15 +252,23 @@ export async function startChatSession(
 
     const forceExitTimer = setTimeout(() => {
       console.error('\nForce exit after timeout.');
-      process.exit(1);
+      process.exitCode = 1;
     }, SHUTDOWN_FORCE_EXIT_MS);
     forceExitTimer.unref();
 
     const exitSpinner = ora('Disconnecting...').start();
-    await agent.disconnect();
-    exitSpinner.succeed('Disconnected');
-    clearTimeout(forceExitTimer);
-    process.exit(0);
+    try {
+      await agent.disconnect();
+      exitSpinner.succeed('Disconnected');
+      process.exitCode = 0;
+    } catch (error) {
+      process.exitCode = 1;
+      exitSpinner.fail(formatError(getErrorMessage(error)));
+    } finally {
+      clearTimeout(forceExitTimer);
+      process.off('SIGTERM', shutdown);
+      rl.close();
+    }
   };
 
   process.on('SIGTERM', shutdown);

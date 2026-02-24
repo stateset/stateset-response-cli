@@ -26,7 +26,7 @@ export async function handleChatCommand(input: string, ctx: ChatContext): Promis
   const prefix = input.split(/\s/)[0];
 
   // Delegate to extracted command modules
-  if (['/apply', '/redact', '/usage', '/model'].includes(prefix)) {
+  if (['/apply', '/redact', '/agentic', '/usage', '/model'].includes(prefix)) {
     return await handleConfigCommand(input, ctx);
   }
   if (

@@ -2,10 +2,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createGorgiasApi } from '../integrations/gorgias.js';
 import type { GorgiasApi } from '../integrations/gorgias.js';
 
-vi.mock('../integrations/http.js', () => ({
-  normalizePath: vi.fn((p: string) => (p.startsWith('/') ? p : `/${p}`)),
-  applyQueryParams: vi.fn(),
-}));
+vi.mock('../integrations/http.js', async () => {
+  const actual =
+    await vi.importActual<typeof import('../integrations/http.js')>('../integrations/http.js');
+  return {
+    ...actual,
+    normalizePath: vi.fn((p: string) => (p.startsWith('/') ? p : `/${p}`)),
+    applyQueryParams: vi.fn(),
+  };
+});
 
 const config = { domain: 'test-shop', apiKey: 'gorg-key', email: 'admin@test.com' };
 const expectedAuth = Buffer.from('admin@test.com:gorg-key').toString('base64');
@@ -19,6 +24,7 @@ describe('createGorgiasApi', () => {
     mockFetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
+      headers: new Headers(),
       text: () => Promise.resolve('{}'),
       json: () => Promise.resolve({}),
     });
@@ -145,6 +151,7 @@ describe('createGorgiasApi', () => {
     mockFetch.mockResolvedValue({
       ok: false,
       status: 404,
+      headers: new Headers(),
       text: () => Promise.resolve('not found'),
       json: () => Promise.resolve({}),
     });

@@ -351,7 +351,7 @@ export function registerShortcutTopLevelCommands(program: Command): void {
       } catch (error) {
         if (error instanceof Error) {
           console.error(formatError(error.message));
-          process.exit(1);
+          process.exitCode = 1;
         }
         throw error;
       }
@@ -368,7 +368,7 @@ export function registerShortcutTopLevelCommands(program: Command): void {
       } catch (error) {
         if (error instanceof Error) {
           console.error(formatError(error.message));
-          process.exit(1);
+          process.exitCode = 1;
         }
         throw error;
       }
@@ -385,7 +385,7 @@ export function registerShortcutTopLevelCommands(program: Command): void {
       } catch (error) {
         if (error instanceof Error) {
           console.error(formatError(error.message));
-          process.exit(1);
+          process.exitCode = 1;
         }
         throw error;
       }
@@ -402,7 +402,7 @@ export function registerShortcutTopLevelCommands(program: Command): void {
       } catch (error) {
         if (error instanceof Error) {
           console.error(formatError(error.message));
-          process.exit(1);
+          process.exitCode = 1;
         }
         throw error;
       }
@@ -419,7 +419,7 @@ export function registerShortcutTopLevelCommands(program: Command): void {
       } catch (error) {
         if (error instanceof Error) {
           console.error(formatError(error.message));
-          process.exit(1);
+          process.exitCode = 1;
         }
         throw error;
       }
@@ -437,7 +437,7 @@ export function registerShortcutTopLevelCommands(program: Command): void {
       } catch (error) {
         if (error instanceof Error) {
           console.error(formatError(error.message));
-          process.exit(1);
+          process.exitCode = 1;
         }
         throw error;
       }
@@ -453,7 +453,7 @@ export function registerShortcutTopLevelCommands(program: Command): void {
       } catch (error) {
         if (error instanceof Error) {
           console.error(formatError(error.message));
-          process.exit(1);
+          process.exitCode = 1;
         }
         throw error;
       }
@@ -482,12 +482,14 @@ export function registerShortcutTopLevelCommands(program: Command): void {
         const fromFromPeriod = parsePeriodRangeAsIso(opts.period);
         if (opts.period && !fromFromPeriod) {
           console.error(formatError(`Invalid --period value: ${opts.period}`));
-          process.exit(1);
+          process.exitCode = 1;
+          return;
         }
 
         if (opts.from && opts.period) {
           console.error(formatError('Use either --from or --period, not both.'));
-          process.exit(1);
+          process.exitCode = 1;
+          return;
         }
 
         try {
@@ -500,7 +502,7 @@ export function registerShortcutTopLevelCommands(program: Command): void {
         } catch (error) {
           if (error instanceof Error) {
             console.error(formatError(error.message));
-            process.exit(1);
+            process.exitCode = 1;
           }
           throw error;
         }
@@ -518,7 +520,7 @@ export function registerShortcutTopLevelCommands(program: Command): void {
       } catch (error) {
         if (error instanceof Error) {
           console.error(formatError(error.message));
-          process.exit(1);
+          process.exitCode = 1;
         }
         throw error;
       }
@@ -535,7 +537,7 @@ export function registerShortcutTopLevelCommands(program: Command): void {
       } catch (error) {
         if (error instanceof Error) {
           console.error(formatError(error.message));
-          process.exit(1);
+          process.exitCode = 1;
         }
         throw error;
       }
@@ -553,7 +555,7 @@ export function registerShortcutTopLevelCommands(program: Command): void {
       } catch (error) {
         if (error instanceof Error) {
           console.error(formatError(error.message));
-          process.exit(1);
+          process.exitCode = 1;
         }
         throw error;
       }
@@ -584,11 +586,13 @@ export function registerShortcutTopLevelCommands(program: Command): void {
           const fromFromPeriod = parsePeriodRangeAsIso(opts.period);
           if (opts.period && !fromFromPeriod) {
             console.error(formatError(`Invalid --period value: ${opts.period}`));
-            process.exit(1);
+            process.exitCode = 1;
+            return;
           }
           if (opts.from && opts.period) {
             console.error(formatError('Use either --from or --period, not both.'));
-            process.exit(1);
+            process.exitCode = 1;
+            return;
           }
           const from = opts.from || fromFromPeriod || opts.since;
           if (from) {
@@ -605,7 +609,7 @@ export function registerShortcutTopLevelCommands(program: Command): void {
         } catch (error) {
           if (error instanceof Error) {
             console.error(formatError(error.message));
-            process.exit(1);
+            process.exitCode = 1;
           }
           throw error;
         }
@@ -635,7 +639,7 @@ export function registerShortcutTopLevelCommands(program: Command): void {
         } catch (error) {
           if (error instanceof Error) {
             console.error(formatError(error.message));
-            process.exit(1);
+            process.exitCode = 1;
           }
           throw error;
         }
@@ -653,7 +657,7 @@ export function registerShortcutTopLevelCommands(program: Command): void {
       } catch (error) {
         if (error instanceof Error) {
           console.error(formatError(error.message));
-          process.exit(1);
+          process.exitCode = 1;
         }
         throw error;
       }
@@ -670,7 +674,7 @@ export function registerShortcutTopLevelCommands(program: Command): void {
       } catch (error) {
         if (error instanceof Error) {
           console.error(formatError(error.message));
-          process.exit(1);
+          process.exitCode = 1;
         }
         throw error;
       }
@@ -709,7 +713,7 @@ export function registerShortcutTopLevelCommands(program: Command): void {
         } catch (error) {
           if (error instanceof Error) {
             console.error(formatError(error.message));
-            process.exit(1);
+            process.exitCode = 1;
           }
           throw error;
         }
@@ -754,7 +758,7 @@ export function registerShortcutTopLevelCommands(program: Command): void {
         } catch (error) {
           if (error instanceof Error) {
             console.error(formatError(error.message));
-            process.exit(1);
+            process.exitCode = 1;
           }
           throw error;
         }
@@ -799,7 +803,7 @@ export function registerShortcutTopLevelCommands(program: Command): void {
         } catch (error) {
           if (error instanceof Error) {
             console.error(formatError(error.message));
-            process.exit(1);
+            process.exitCode = 1;
           }
           throw error;
         }
@@ -828,7 +832,8 @@ export function registerShortcutTopLevelCommands(program: Command): void {
           const parsedLimit = opts.limit ? parsePositiveIntegerOption(opts.limit) : undefined;
           if (opts.limit && parsedLimit === undefined) {
             console.error(formatError('Invalid --limit value. Expected a positive integer.'));
-            process.exit(1);
+            process.exitCode = 1;
+            return;
           }
           await runTopLevelDeployments(args, {
             json: opts.json,
@@ -839,7 +844,7 @@ export function registerShortcutTopLevelCommands(program: Command): void {
         } catch (error) {
           if (error instanceof Error) {
             console.error(formatError(error.message));
-            process.exit(1);
+            process.exitCode = 1;
           }
           throw error;
         }
@@ -864,7 +869,7 @@ export function registerShortcutTopLevelCommands(program: Command): void {
         } catch (error) {
           if (error instanceof Error) {
             console.error(formatError(error.message));
-            process.exit(1);
+            process.exitCode = 1;
           }
           throw error;
         }
@@ -888,7 +893,7 @@ export function registerShortcutTopLevelCommands(program: Command): void {
         } catch (error) {
           if (error instanceof Error) {
             console.error(formatError(error.message));
-            process.exit(1);
+            process.exitCode = 1;
           }
           throw error;
         }
@@ -924,7 +929,7 @@ export function registerShortcutTopLevelCommands(program: Command): void {
         } catch (error) {
           if (error instanceof Error) {
             console.error(formatError(error.message));
-            process.exit(1);
+            process.exitCode = 1;
           }
           throw error;
         }
@@ -953,7 +958,7 @@ export function registerShortcutTopLevelCommands(program: Command): void {
         } catch (error) {
           if (error instanceof Error) {
             console.error(formatError(error.message));
-            process.exit(1);
+            process.exitCode = 1;
           }
           throw error;
         }
@@ -998,7 +1003,7 @@ export function registerShortcutTopLevelCommands(program: Command): void {
         } catch (error) {
           if (error instanceof Error) {
             console.error(formatError(error.message));
-            process.exit(1);
+            process.exitCode = 1;
           }
           throw error;
         }
@@ -1039,7 +1044,7 @@ export function registerShortcutTopLevelCommands(program: Command): void {
         } catch (error) {
           if (error instanceof Error) {
             console.error(formatError(error.message));
-            process.exit(1);
+            process.exitCode = 1;
           }
           throw error;
         }
@@ -1066,7 +1071,7 @@ export function registerShortcutTopLevelCommands(program: Command): void {
         } catch (error) {
           if (error instanceof Error) {
             console.error(formatError(error.message));
-            process.exit(1);
+            process.exitCode = 1;
           }
           throw error;
         }
@@ -1104,7 +1109,7 @@ export function registerShortcutTopLevelCommands(program: Command): void {
         } catch (error) {
           if (error instanceof Error) {
             console.error(formatError(error.message));
-            process.exit(1);
+            process.exitCode = 1;
           }
           throw error;
         }

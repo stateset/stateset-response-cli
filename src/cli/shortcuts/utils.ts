@@ -1031,7 +1031,10 @@ export async function runImportCommandWithPreview(
 export async function withAgentRunner<T>(fn: (runner: ShortcutRunner) => Promise<T>): Promise<T> {
   if (!configExists()) {
     printAuthHelp();
-    process.exit(1);
+    const error = new Error('Authentication required');
+    console.error(formatError(error.message));
+    process.exitCode = 1;
+    throw error;
   }
 
   const { anthropicApiKey } = getRuntimeContext();

@@ -15,6 +15,8 @@ export async function handleConfigCommand(input: string, ctx: ChatContext): Prom
     const arg = applyMatch[1] ? applyMatch[1].trim() : '';
     const parsed = parseToggleValue(arg);
     const current = ctx.allowApply;
+    const currentStructuredToolResults =
+      process.env.STATESET_MCP_STRUCTURED_TOOL_RESULTS === 'true';
     if (!arg) {
       console.log(formatSuccess(`Writes enabled: ${current ? 'yes' : 'no'}`));
       console.log(chalk.gray('  Usage: /apply on|off'));
@@ -39,6 +41,7 @@ export async function handleConfigCommand(input: string, ctx: ChatContext): Prom
     ctx.agent.setMcpEnvOverrides({
       STATESET_ALLOW_APPLY: ctx.allowApply ? 'true' : 'false',
       STATESET_REDACT: ctx.redactEmails ? 'true' : 'false',
+      STATESET_MCP_STRUCTURED_TOOL_RESULTS: currentStructuredToolResults ? 'true' : 'false',
     });
     try {
       await ctx.reconnectAgent();
@@ -47,6 +50,7 @@ export async function handleConfigCommand(input: string, ctx: ChatContext): Prom
       ctx.agent.setMcpEnvOverrides({
         STATESET_ALLOW_APPLY: ctx.allowApply ? 'true' : 'false',
         STATESET_REDACT: ctx.redactEmails ? 'true' : 'false',
+        STATESET_MCP_STRUCTURED_TOOL_RESULTS: currentStructuredToolResults ? 'true' : 'false',
       });
       console.error(formatError(`Unable to apply writes toggle: ${getErrorMessage(err)}`));
       console.log(chalk.gray('  Writes setting unchanged.'));
@@ -77,6 +81,8 @@ export async function handleConfigCommand(input: string, ctx: ChatContext): Prom
     const arg = redactMatch[1] ? redactMatch[1].trim() : '';
     const parsed = parseToggleValue(arg);
     const current = ctx.redactEmails;
+    const currentStructuredToolResults =
+      process.env.STATESET_MCP_STRUCTURED_TOOL_RESULTS === 'true';
     if (!arg) {
       console.log(formatSuccess(`Redaction: ${current ? 'enabled' : 'disabled'}`));
       console.log(chalk.gray('  Usage: /redact on|off'));
@@ -101,6 +107,7 @@ export async function handleConfigCommand(input: string, ctx: ChatContext): Prom
     ctx.agent.setMcpEnvOverrides({
       STATESET_ALLOW_APPLY: ctx.allowApply ? 'true' : 'false',
       STATESET_REDACT: ctx.redactEmails ? 'true' : 'false',
+      STATESET_MCP_STRUCTURED_TOOL_RESULTS: currentStructuredToolResults ? 'true' : 'false',
     });
     try {
       await ctx.reconnectAgent();
@@ -109,6 +116,7 @@ export async function handleConfigCommand(input: string, ctx: ChatContext): Prom
       ctx.agent.setMcpEnvOverrides({
         STATESET_ALLOW_APPLY: ctx.allowApply ? 'true' : 'false',
         STATESET_REDACT: ctx.redactEmails ? 'true' : 'false',
+        STATESET_MCP_STRUCTURED_TOOL_RESULTS: currentStructuredToolResults ? 'true' : 'false',
       });
       console.error(formatError(`Unable to apply redaction toggle: ${getErrorMessage(err)}`));
       console.log(chalk.gray('  Redaction setting unchanged.'));
@@ -127,6 +135,65 @@ export async function handleConfigCommand(input: string, ctx: ChatContext): Prom
       }),
     );
     console.log(formatSuccess(`Redaction ${parsed ? 'enabled' : 'disabled'}.`));
+    console.log('');
+    ctx.rl.prompt();
+    return { handled: true };
+  }
+
+  const agenticMatch = /^\/agentic(?:\s+(.*))?$/.exec(input);
+
+  // /agentic — toggle structured tool result metadata
+  if (agenticMatch) {
+    const arg = agenticMatch[1] ? agenticMatch[1].trim() : '';
+    const parsed = parseToggleValue(arg);
+    const current = process.env.STATESET_MCP_STRUCTURED_TOOL_RESULTS === 'true';
+    if (!arg) {
+      console.log(formatSuccess(`Structured tool results: ${current ? 'enabled' : 'disabled'}`));
+      console.log(chalk.gray('  Usage: /agentic on|off'));
+      console.log('');
+      ctx.rl.prompt();
+      return { handled: true };
+    }
+    if (parsed === undefined) {
+      console.log(formatWarning('Usage: /agentic on|off'));
+      console.log('');
+      ctx.rl.prompt();
+      return { handled: true };
+    }
+    if (parsed === current) {
+      console.log(
+        formatSuccess(`Structured tool results already ${current ? 'enabled' : 'disabled'}.`),
+      );
+      console.log('');
+      ctx.rl.prompt();
+      return { handled: true };
+    }
+
+    process.env.STATESET_MCP_STRUCTURED_TOOL_RESULTS = parsed ? 'true' : 'false';
+    ctx.agent.setMcpEnvOverrides({
+      STATESET_ALLOW_APPLY: ctx.allowApply ? 'true' : 'false',
+      STATESET_REDACT: ctx.redactEmails ? 'true' : 'false',
+      STATESET_MCP_STRUCTURED_TOOL_RESULTS: parsed ? 'true' : 'false',
+    });
+    try {
+      await ctx.reconnectAgent();
+    } catch (err) {
+      process.env.STATESET_MCP_STRUCTURED_TOOL_RESULTS = current ? 'true' : 'false';
+      ctx.agent.setMcpEnvOverrides({
+        STATESET_ALLOW_APPLY: ctx.allowApply ? 'true' : 'false',
+        STATESET_REDACT: ctx.redactEmails ? 'true' : 'false',
+        STATESET_MCP_STRUCTURED_TOOL_RESULTS: current ? 'true' : 'false',
+      });
+      console.error(
+        formatError(`Unable to toggle structured tool results: ${getErrorMessage(err)}`),
+      );
+      console.log(chalk.gray('  Structured tool results setting unchanged.'));
+      console.log('');
+      ctx.rl.prompt();
+      return { handled: true };
+    }
+
+    console.log(formatSuccess(`Structured tool results ${parsed ? 'enabled' : 'disabled'}.`));
     console.log('');
     ctx.rl.prompt();
     return { handled: true };
