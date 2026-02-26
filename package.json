@@ -1,6 +1,6 @@
 {
   "name": "stateset-response-cli",
-  "version": "1.3.7",
+  "version": "1.3.8",
   "description": "CLI tool for managing the StateSet Response platform via AI agent",
   "license": "MIT",
   "type": "module",
@@ -14,6 +14,15 @@
     "response-gateway": "./bin/stateset-gateway"
   },
   "main": "dist/cli.js",
+  "files": [
+    "bin/",
+    "dist/**/*.js",
+    "!dist/__tests__/**",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "RELEASE_NOTES.md"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/cli.ts",
@@ -21,13 +30,14 @@
     "test": "node --require ./scripts/node-compat.cjs ./node_modules/vitest/vitest.mjs run",
     "test:watch": "node --require ./scripts/node-compat.cjs ./node_modules/vitest/vitest.mjs",
     "test:coverage": "node --require ./scripts/node-compat.cjs ./node_modules/vitest/vitest.mjs run --coverage",
+    "test:coverage:core": "node --require ./scripts/node-compat.cjs ./node_modules/vitest/vitest.mjs run --coverage --config vitest.coverage-core.config.ts",
     "test:ci": "node --require ./scripts/node-compat.cjs ./node_modules/vitest/vitest.mjs run --coverage --reporter=junit --outputFile=test-results.xml",
     "lint": "node --require ./scripts/node-compat.cjs ./node_modules/eslint/bin/eslint.js src/",
     "lint:fix": "node --require ./scripts/node-compat.cjs ./node_modules/eslint/bin/eslint.js src/ --fix",
     "format": "prettier --write 'src/**/*.ts'",
     "format:check": "prettier --check 'src/**/*.ts'",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm run lint && prettier --check 'src/**/*.ts' && npm run test",
+    "check": "npm run typecheck && npm run lint && prettier --check 'src/**/*.ts' && npm run test:coverage:core",
     "prepare": "husky"
   },
   "lint-staged": {

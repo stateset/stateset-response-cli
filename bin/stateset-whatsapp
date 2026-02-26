@@ -62,7 +62,6 @@ Examples:
   response-whatsapp --self-chat               Only respond to your self-chat
   response-whatsapp --reset                   Re-authenticate with QR scan
 `);
-`);
     process.exit(0);
   }
   options = {

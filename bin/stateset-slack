@@ -73,7 +73,6 @@ Examples:
   response-slack --allow U12345678,U87654321  Only allow specific users
   response-slack --verbose                    Debug logging
 `);
-`);
     process.exit(0);
   }
   options = {

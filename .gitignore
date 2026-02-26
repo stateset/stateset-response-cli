@@ -4,6 +4,7 @@ dist/
 .env
 hi
 stateset
+vitest.config.ts.timestamp-*.mjs
 
 # Test coverage
 coverage/
