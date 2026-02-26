@@ -3,7 +3,7 @@
 AI-powered CLI for managing the [StateSet ResponseCX](https://response.cx) platform. Chat with an AI agent that can manage your agents, rules, skills, knowledge base, channels, messages, and more — all from the terminal.
 
 Includes optional WhatsApp and Slack gateways for connecting your agent to messaging platforms.
-Current version: `1.3.9`.
+Current version: `1.3.10`.
 
 ## Install
 
@@ -410,6 +410,34 @@ On first WhatsApp run, scan the QR code (Settings > Linked Devices > Link a Devi
 | `GORGIAS_EMAIL`          | Gorgias  | Gorgias user email                             |
 | `RECHARGE_ACCESS_TOKEN`  | Recharge | Recharge API access token                      |
 | `RECHARGE_API_VERSION`   | Recharge | Recharge API version (default: `2021-01`)      |
+| `SKIO_API_KEY`           | Skio     | Skio API key                                  |
+| `SKIO_BASE_URL`          | Skio     | Skio API base URL (default: `https://api.skio.com/v1`) |
+| `SKIO_API_VERSION`       | Skio     | Skio API version (default: `2024-01`)         |
+| `STAYAI_API_KEY`         | Stay.ai  | Stay.ai API key                               |
+| `STAYAI_BASE_URL`        | Stay.ai  | Stay.ai API base URL (default: `https://api.stay.ai/v1`) |
+| `STAYAI_API_VERSION`     | Stay.ai  | Stay.ai API version (default: `2024-01`)      |
+| `AMAZON_LWA_CLIENT_ID`   | Amazon SP-API | Amazon Login with Amazon (LWA) client ID |
+| `AMAZON_LWA_CLIENT_SECRET` | Amazon SP-API | Amazon LWA client secret               |
+| `AMAZON_LWA_REFRESH_TOKEN` | Amazon SP-API | Amazon LWA refresh token               |
+| `AMAZON_AWS_ACCESS_KEY_ID` | Amazon SP-API | AWS access key ID for SP-API signing   |
+| `AMAZON_AWS_SECRET_ACCESS_KEY` | Amazon SP-API | AWS secret access key for SP-API signing |
+| `AMAZON_AWS_SESSION_TOKEN` | Amazon SP-API | Optional AWS session token             |
+| `AMAZON_SP_API_REGION`   | Amazon SP-API | SP-API signing region (default: `us-east-1`) |
+| `AMAZON_SP_API_ENDPOINT` | Amazon SP-API | SP-API endpoint (default: `https://sellingpartnerapi-na.amazon.com`) |
+| `AMAZON_SP_MARKETPLACE_ID` | Amazon SP-API | Default marketplace ID                 |
+| `DHL_API_KEY`            | DHL      | DHL API key                                    |
+| `DHL_ACCESS_TOKEN`       | DHL      | Optional DHL bearer access token               |
+| `DHL_ACCOUNT_NUMBER`     | DHL      | Optional DHL account number                    |
+| `DHL_BASE_URL`           | DHL      | DHL API base URL (default: `https://api-m.dhl.com`) |
+| `GLOBALE_MERCHANT_ID`    | Global-e | Global-e merchant ID                           |
+| `GLOBALE_API_KEY`        | Global-e | Global-e API key                               |
+| `GLOBALE_CHANNEL`        | Global-e | Optional Global-e channel                      |
+| `GLOBALE_BASE_URL`       | Global-e | Global-e API base URL (default: `https://api.global-e.com`) |
+| `FEDEX_CLIENT_ID`        | FedEx    | FedEx OAuth client ID                          |
+| `FEDEX_CLIENT_SECRET`    | FedEx    | FedEx OAuth client secret                      |
+| `FEDEX_ACCOUNT_NUMBER`   | FedEx    | Optional FedEx account number                  |
+| `FEDEX_LOCALE`           | FedEx    | FedEx locale header (default: `en_US`)         |
+| `FEDEX_BASE_URL`         | FedEx    | FedEx API base URL (default: `https://apis.fedex.com`) |
 | `KLAVIYO_API_KEY`        | Klaviyo  | Klaviyo private API key                        |
 | `KLAVIYO_REVISION`       | Klaviyo  | Klaviyo API revision header (default: `2026-01-15`) |
 | `LOOP_API_KEY`           | Loop     | Loop Returns API key                           |
@@ -483,6 +511,24 @@ The AI agent has access to 100+ tools organized by resource type:
 
 ### Recharge
 `recharge_list_customers` `recharge_get_customer` `recharge_list_subscriptions` `recharge_get_subscription` `recharge_list_charges` `recharge_get_charge` `recharge_list_orders` `recharge_get_order` `recharge_preview_subscription_change` `recharge_confirm_subscription_change` `recharge_skip_charge` `recharge_reschedule_charge` `recharge_issue_refund` `recharge_update_customer_shipping` `recharge_update_customer_payment` `recharge_job_status` `recharge_job_retry` `recharge_job_rollback` `recharge_request`
+
+### Skio
+`skio_list_customers` `skio_get_customer` `skio_list_subscriptions` `skio_get_subscription` `skio_list_charges` `skio_get_charge` `skio_list_orders` `skio_get_order` `skio_preview_subscription_change` `skio_confirm_subscription_change` `skio_skip_charge` `skio_reschedule_charge` `skio_issue_refund` `skio_update_customer_shipping` `skio_update_customer_payment` `skio_job_status` `skio_job_retry` `skio_job_rollback` `skio_request`
+
+### Stay.ai
+`stayai_list_customers` `stayai_get_customer` `stayai_list_subscriptions` `stayai_get_subscription` `stayai_list_charges` `stayai_get_charge` `stayai_list_orders` `stayai_get_order` `stayai_preview_subscription_change` `stayai_confirm_subscription_change` `stayai_skip_charge` `stayai_reschedule_charge` `stayai_issue_refund` `stayai_update_customer_shipping` `stayai_update_customer_payment` `stayai_job_status` `stayai_job_retry` `stayai_job_rollback` `stayai_request`
+
+### Amazon SP-API
+`amazon_list_orders` `amazon_get_order` `amazon_list_order_items` `amazon_list_fulfillment_orders` `amazon_get_fulfillment_order` `amazon_get_fulfillment_preview` `amazon_preview_create_fulfillment_order` `amazon_confirm_create_fulfillment_order` `amazon_preview_update_fulfillment_order` `amazon_confirm_update_fulfillment_order` `amazon_cancel_fulfillment_order` `amazon_get_package_tracking` `amazon_request`
+
+### DHL
+`dhl_track_shipment` `dhl_get_rates` `dhl_create_shipment` `dhl_cancel_shipment` `dhl_schedule_pickup` `dhl_cancel_pickup` `dhl_request`
+
+### Global-e
+`globale_track_shipment` `globale_get_rates` `globale_create_shipment` `globale_cancel_shipment` `globale_schedule_pickup` `globale_cancel_pickup` `globale_request`
+
+### FedEx
+`fedex_track_shipment` `fedex_get_rates` `fedex_create_shipment` `fedex_cancel_shipment` `fedex_schedule_pickup` `fedex_cancel_pickup` `fedex_request`
 
 ### Klaviyo
 `klaviyo_list_profiles` `klaviyo_get_profile` `klaviyo_create_profile` `klaviyo_create_or_update_profile` `klaviyo_update_profile` `klaviyo_merge_profiles`

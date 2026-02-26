@@ -84,6 +84,130 @@ describe('getKlaviyoConfigFromEnv', () => {
   });
 });
 
+describe('getSkioConfigFromEnv', () => {
+  const env = mockEnv();
+
+  it('returns null when no env vars set', async () => {
+    const { getSkioConfigFromEnv } = await import('../integrations/config.js');
+    const result = getSkioConfigFromEnv();
+    expect(result).toBeNull();
+  });
+
+  it('returns config when API key set', async () => {
+    env.set('SKIO_API_KEY', 'skio-key-123456');
+    const { getSkioConfigFromEnv } = await import('../integrations/config.js');
+    const result = getSkioConfigFromEnv();
+    expect(result).not.toBeNull();
+    expect(result?.apiKey).toBe('skio-key-123456');
+    expect(result?.baseUrl).toBe('https://api.skio.com/v1');
+  });
+});
+
+describe('getStayAiConfigFromEnv', () => {
+  const env = mockEnv();
+
+  it('returns null when no env vars set', async () => {
+    const { getStayAiConfigFromEnv } = await import('../integrations/config.js');
+    const result = getStayAiConfigFromEnv();
+    expect(result).toBeNull();
+  });
+
+  it('returns config when API key set', async () => {
+    env.set('STAYAI_API_KEY', 'stayai-key-123456');
+    const { getStayAiConfigFromEnv } = await import('../integrations/config.js');
+    const result = getStayAiConfigFromEnv();
+    expect(result).not.toBeNull();
+    expect(result?.apiKey).toBe('stayai-key-123456');
+    expect(result?.baseUrl).toBe('https://api.stay.ai/v1');
+  });
+});
+
+describe('getAmazonConfigFromEnv', () => {
+  const env = mockEnv();
+
+  it('returns null when no env vars set', async () => {
+    const { getAmazonConfigFromEnv } = await import('../integrations/config.js');
+    const result = getAmazonConfigFromEnv();
+    expect(result).toBeNull();
+  });
+
+  it('returns config when required env vars are set', async () => {
+    env.set('AMAZON_LWA_CLIENT_ID', 'amzn-client-id-123456');
+    env.set('AMAZON_LWA_CLIENT_SECRET', 'amzn-client-secret-123456');
+    env.set('AMAZON_LWA_REFRESH_TOKEN', 'amzn-refresh-token-123456');
+    env.set('AMAZON_AWS_ACCESS_KEY_ID', 'AKIAIOSFODNN7EXAMPLE');
+    env.set('AMAZON_AWS_SECRET_ACCESS_KEY', 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY');
+    env.set('AMAZON_SP_MARKETPLACE_ID', 'ATVPDKIKX0DER');
+    const { getAmazonConfigFromEnv } = await import('../integrations/config.js');
+    const result = getAmazonConfigFromEnv();
+    expect(result).not.toBeNull();
+    expect(result?.awsRegion).toBe('us-east-1');
+    expect(result?.endpoint).toBe('https://sellingpartnerapi-na.amazon.com');
+    expect(result?.marketplaceId).toBe('ATVPDKIKX0DER');
+  });
+});
+
+describe('getDhlConfigFromEnv', () => {
+  const env = mockEnv();
+
+  it('returns null when no env vars set', async () => {
+    const { getDhlConfigFromEnv } = await import('../integrations/config.js');
+    const result = getDhlConfigFromEnv();
+    expect(result).toBeNull();
+  });
+
+  it('returns config when API key set', async () => {
+    env.set('DHL_API_KEY', 'dhl-key-123456');
+    const { getDhlConfigFromEnv } = await import('../integrations/config.js');
+    const result = getDhlConfigFromEnv();
+    expect(result).not.toBeNull();
+    expect(result?.apiKey).toBe('dhl-key-123456');
+    expect(result?.baseUrl).toBe('https://api-m.dhl.com');
+  });
+});
+
+describe('getGlobalEConfigFromEnv', () => {
+  const env = mockEnv();
+
+  it('returns null when no env vars set', async () => {
+    const { getGlobalEConfigFromEnv } = await import('../integrations/config.js');
+    const result = getGlobalEConfigFromEnv();
+    expect(result).toBeNull();
+  });
+
+  it('returns config when merchant id and api key set', async () => {
+    env.set('GLOBALE_MERCHANT_ID', 'merchant-123');
+    env.set('GLOBALE_API_KEY', 'globale-key-123456');
+    const { getGlobalEConfigFromEnv } = await import('../integrations/config.js');
+    const result = getGlobalEConfigFromEnv();
+    expect(result).not.toBeNull();
+    expect(result?.merchantId).toBe('merchant-123');
+    expect(result?.apiKey).toBe('globale-key-123456');
+    expect(result?.baseUrl).toBe('https://api.global-e.com');
+  });
+});
+
+describe('getFedExConfigFromEnv', () => {
+  const env = mockEnv();
+
+  it('returns null when no env vars set', async () => {
+    const { getFedExConfigFromEnv } = await import('../integrations/config.js');
+    const result = getFedExConfigFromEnv();
+    expect(result).toBeNull();
+  });
+
+  it('returns config when client credentials set', async () => {
+    env.set('FEDEX_CLIENT_ID', 'fedex-client-123456');
+    env.set('FEDEX_CLIENT_SECRET', 'fedex-secret-123456');
+    const { getFedExConfigFromEnv } = await import('../integrations/config.js');
+    const result = getFedExConfigFromEnv();
+    expect(result).not.toBeNull();
+    expect(result?.clientId).toBe('fedex-client-123456');
+    expect(result?.locale).toBe('en_US');
+    expect(result?.baseUrl).toBe('https://apis.fedex.com');
+  });
+});
+
 describe('getZendeskConfigFromEnv', () => {
   const env = mockEnv();
 

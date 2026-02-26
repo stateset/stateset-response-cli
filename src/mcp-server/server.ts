@@ -4,12 +4,18 @@ import { getErrorMessage } from '../lib/errors.js';
 import { createGraphQLClient, type GraphQLAuth } from './graphql-client.js';
 import { getCurrentOrg } from '../config.js';
 import {
+  getAmazonConfigFromEnv,
+  getDhlConfigFromEnv,
+  getFedExConfigFromEnv,
+  getGlobalEConfigFromEnv,
   type IntegrationFlags,
   getGorgiasConfigFromEnv,
   getIntegrationFlagsFromEnv,
   getKlaviyoConfigFromEnv,
   getLoopConfigFromEnv,
   getRechargeConfigFromEnv,
+  getSkioConfigFromEnv,
+  getStayAiConfigFromEnv,
   getShipFusionConfigFromEnv,
   getShipHawkConfigFromEnv,
   getShipHeroConfigFromEnv,
@@ -35,8 +41,14 @@ import { registerShopifyHoldsTools } from './tools/shopify-holds.js';
 import { registerShopifyOrderTools } from './tools/shopify-orders.js';
 import { registerShopifyRefundTools } from './tools/shopify-refunds.js';
 import { registerShopifyAdvancedTools } from './tools/shopify-advanced.js';
+import { registerAmazonTools } from './tools/amazon.js';
+import { registerDhlTools } from './tools/dhl.js';
+import { registerGlobalETools } from './tools/globale.js';
+import { registerFedExTools } from './tools/fedex.js';
 import { registerGorgiasTools } from './tools/gorgias.js';
 import { registerRechargeTools } from './tools/recharge.js';
+import { registerSkioTools } from './tools/skio.js';
+import { registerStayAiTools } from './tools/stayai.js';
 import { registerKlaviyoTools } from './tools/klaviyo.js';
 import { registerLoopTools } from './tools/loop.js';
 import { registerShipStationTools } from './tools/shipstation.js';
@@ -80,6 +92,36 @@ const INTEGRATIONS: IntegrationEntry[] = [
     name: 'Recharge',
     getConfig: getRechargeConfigFromEnv,
     register: [registerRechargeTools],
+  },
+  {
+    name: 'Amazon SP-API',
+    getConfig: getAmazonConfigFromEnv,
+    register: [registerAmazonTools],
+  },
+  {
+    name: 'DHL',
+    getConfig: getDhlConfigFromEnv,
+    register: [registerDhlTools],
+  },
+  {
+    name: 'Global-e',
+    getConfig: getGlobalEConfigFromEnv,
+    register: [registerGlobalETools],
+  },
+  {
+    name: 'FedEx',
+    getConfig: getFedExConfigFromEnv,
+    register: [registerFedExTools],
+  },
+  {
+    name: 'Skio',
+    getConfig: getSkioConfigFromEnv,
+    register: [registerSkioTools],
+  },
+  {
+    name: 'Stay.ai',
+    getConfig: getStayAiConfigFromEnv,
+    register: [registerStayAiTools],
   },
   {
     name: 'Klaviyo',

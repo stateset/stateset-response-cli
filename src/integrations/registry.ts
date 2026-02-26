@@ -4,6 +4,12 @@ export type IntegrationId =
   | 'shopify'
   | 'gorgias'
   | 'recharge'
+  | 'skio'
+  | 'stayai'
+  | 'amazon'
+  | 'dhl'
+  | 'globale'
+  | 'fedex'
   | 'klaviyo'
   | 'loop'
   | 'shipstation'
@@ -117,6 +123,228 @@ export const INTEGRATION_DEFINITIONS: IntegrationDefinition[] = [
         label: 'API version',
         envVars: ['RECHARGE_API_VERSION', 'RECHARGE_API_VER', 'STATESET_RECHARGE_API_VERSION'],
         defaultValue: '2021-01',
+      },
+    ],
+  },
+  {
+    id: 'skio',
+    label: 'Skio',
+    description: 'Subscriptions, charges, and customer lifecycle',
+    fields: [
+      {
+        key: 'apiKey',
+        label: 'API key',
+        envVars: ['SKIO_API_KEY', 'STATESET_SKIO_API_KEY'],
+        required: true,
+        secret: true,
+      },
+      {
+        key: 'baseUrl',
+        label: 'API base URL',
+        envVars: ['SKIO_BASE_URL', 'STATESET_SKIO_BASE_URL'],
+        defaultValue: 'https://api.skio.com/v1',
+        placeholder: 'https://api.skio.com/v1',
+      },
+      {
+        key: 'apiVersion',
+        label: 'API version',
+        envVars: ['SKIO_API_VERSION', 'STATESET_SKIO_API_VERSION'],
+        defaultValue: '2024-01',
+      },
+    ],
+  },
+  {
+    id: 'stayai',
+    label: 'Stay.ai',
+    description: 'Subscriptions, charges, and customer lifecycle',
+    fields: [
+      {
+        key: 'apiKey',
+        label: 'API key',
+        envVars: ['STAYAI_API_KEY', 'STAY_AI_API_KEY', 'STATESET_STAYAI_API_KEY'],
+        required: true,
+        secret: true,
+      },
+      {
+        key: 'baseUrl',
+        label: 'API base URL',
+        envVars: ['STAYAI_BASE_URL', 'STAY_AI_BASE_URL', 'STATESET_STAYAI_BASE_URL'],
+        defaultValue: 'https://api.stay.ai/v1',
+        placeholder: 'https://api.stay.ai/v1',
+      },
+      {
+        key: 'apiVersion',
+        label: 'API version',
+        envVars: ['STAYAI_API_VERSION', 'STAY_AI_API_VERSION', 'STATESET_STAYAI_API_VERSION'],
+        defaultValue: '2024-01',
+      },
+    ],
+  },
+  {
+    id: 'amazon',
+    label: 'Amazon SP-API',
+    description: 'Orders and fulfillment operations',
+    fields: [
+      {
+        key: 'lwaClientId',
+        label: 'LWA client ID',
+        envVars: ['AMAZON_LWA_CLIENT_ID', 'STATESET_AMAZON_LWA_CLIENT_ID'],
+        required: true,
+      },
+      {
+        key: 'lwaClientSecret',
+        label: 'LWA client secret',
+        envVars: ['AMAZON_LWA_CLIENT_SECRET', 'STATESET_AMAZON_LWA_CLIENT_SECRET'],
+        required: true,
+        secret: true,
+      },
+      {
+        key: 'lwaRefreshToken',
+        label: 'LWA refresh token',
+        envVars: ['AMAZON_LWA_REFRESH_TOKEN', 'STATESET_AMAZON_LWA_REFRESH_TOKEN'],
+        required: true,
+        secret: true,
+      },
+      {
+        key: 'awsAccessKeyId',
+        label: 'AWS access key ID',
+        envVars: ['AMAZON_AWS_ACCESS_KEY_ID', 'STATESET_AMAZON_AWS_ACCESS_KEY_ID'],
+        required: true,
+      },
+      {
+        key: 'awsSecretAccessKey',
+        label: 'AWS secret access key',
+        envVars: ['AMAZON_AWS_SECRET_ACCESS_KEY', 'STATESET_AMAZON_AWS_SECRET_ACCESS_KEY'],
+        required: true,
+        secret: true,
+      },
+      {
+        key: 'awsSessionToken',
+        label: 'AWS session token',
+        envVars: ['AMAZON_AWS_SESSION_TOKEN', 'STATESET_AMAZON_AWS_SESSION_TOKEN'],
+        required: false,
+        secret: true,
+      },
+      {
+        key: 'awsRegion',
+        label: 'AWS region',
+        envVars: ['AMAZON_SP_API_REGION', 'STATESET_AMAZON_SP_API_REGION'],
+        defaultValue: 'us-east-1',
+      },
+      {
+        key: 'endpoint',
+        label: 'SP-API endpoint',
+        envVars: ['AMAZON_SP_API_ENDPOINT', 'STATESET_AMAZON_SP_API_ENDPOINT'],
+        defaultValue: 'https://sellingpartnerapi-na.amazon.com',
+      },
+      {
+        key: 'marketplaceId',
+        label: 'Default marketplace ID',
+        envVars: ['AMAZON_SP_MARKETPLACE_ID', 'STATESET_AMAZON_SP_MARKETPLACE_ID'],
+        required: false,
+      },
+    ],
+  },
+  {
+    id: 'dhl',
+    label: 'DHL',
+    description: 'Shipping, rates, tracking, and pickups',
+    fields: [
+      {
+        key: 'apiKey',
+        label: 'API key',
+        envVars: ['DHL_API_KEY', 'STATESET_DHL_API_KEY'],
+        required: true,
+        secret: true,
+      },
+      {
+        key: 'accessToken',
+        label: 'Access token',
+        envVars: ['DHL_ACCESS_TOKEN', 'STATESET_DHL_ACCESS_TOKEN'],
+        required: false,
+        secret: true,
+      },
+      {
+        key: 'accountNumber',
+        label: 'Account number',
+        envVars: ['DHL_ACCOUNT_NUMBER', 'STATESET_DHL_ACCOUNT_NUMBER'],
+        required: false,
+      },
+      {
+        key: 'baseUrl',
+        label: 'API base URL',
+        envVars: ['DHL_BASE_URL', 'STATESET_DHL_BASE_URL'],
+        defaultValue: 'https://api-m.dhl.com',
+      },
+    ],
+  },
+  {
+    id: 'globale',
+    label: 'Global-e',
+    description: 'Cross-border orders, shipments, and returns',
+    fields: [
+      {
+        key: 'merchantId',
+        label: 'Merchant ID',
+        envVars: ['GLOBALE_MERCHANT_ID', 'GLOBAL_E_MERCHANT_ID', 'STATESET_GLOBALE_MERCHANT_ID'],
+        required: true,
+      },
+      {
+        key: 'apiKey',
+        label: 'API key',
+        envVars: ['GLOBALE_API_KEY', 'GLOBAL_E_API_KEY', 'STATESET_GLOBALE_API_KEY'],
+        required: true,
+        secret: true,
+      },
+      {
+        key: 'channel',
+        label: 'Channel',
+        envVars: ['GLOBALE_CHANNEL', 'GLOBAL_E_CHANNEL', 'STATESET_GLOBALE_CHANNEL'],
+        required: false,
+      },
+      {
+        key: 'baseUrl',
+        label: 'API base URL',
+        envVars: ['GLOBALE_BASE_URL', 'GLOBAL_E_BASE_URL', 'STATESET_GLOBALE_BASE_URL'],
+        defaultValue: 'https://api.global-e.com',
+      },
+    ],
+  },
+  {
+    id: 'fedex',
+    label: 'FedEx',
+    description: 'Rates, labels, tracking, and pickups',
+    fields: [
+      {
+        key: 'clientId',
+        label: 'Client ID',
+        envVars: ['FEDEX_CLIENT_ID', 'STATESET_FEDEX_CLIENT_ID'],
+        required: true,
+      },
+      {
+        key: 'clientSecret',
+        label: 'Client secret',
+        envVars: ['FEDEX_CLIENT_SECRET', 'STATESET_FEDEX_CLIENT_SECRET'],
+        required: true,
+        secret: true,
+      },
+      {
+        key: 'accountNumber',
+        label: 'Account number',
+        envVars: ['FEDEX_ACCOUNT_NUMBER', 'STATESET_FEDEX_ACCOUNT_NUMBER'],
+        required: false,
+      },
+      {
+        key: 'locale',
+        label: 'Locale',
+        envVars: ['FEDEX_LOCALE', 'STATESET_FEDEX_LOCALE'],
+        defaultValue: 'en_US',
+      },
+      {
+        key: 'baseUrl',
+        label: 'API base URL',
+        envVars: ['FEDEX_BASE_URL', 'STATESET_FEDEX_BASE_URL'],
+        defaultValue: 'https://apis.fedex.com',
       },
     ],
   },

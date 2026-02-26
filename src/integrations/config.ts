@@ -18,6 +18,52 @@ export interface RechargeConfig {
   apiVersion: string;
 }
 
+export interface SkioConfig {
+  apiKey: string;
+  baseUrl: string;
+  apiVersion: string;
+}
+
+export interface StayAiConfig {
+  apiKey: string;
+  baseUrl: string;
+  apiVersion: string;
+}
+
+export interface AmazonConfig {
+  lwaClientId: string;
+  lwaClientSecret: string;
+  lwaRefreshToken: string;
+  awsAccessKeyId: string;
+  awsSecretAccessKey: string;
+  awsSessionToken?: string;
+  awsRegion: string;
+  endpoint: string;
+  marketplaceId?: string;
+}
+
+export interface DhlConfig {
+  apiKey: string;
+  accessToken?: string;
+  accountNumber?: string;
+  baseUrl: string;
+}
+
+export interface GlobalEConfig {
+  merchantId: string;
+  apiKey: string;
+  channel?: string;
+  baseUrl: string;
+}
+
+export interface FedExConfig {
+  clientId: string;
+  clientSecret: string;
+  accountNumber?: string;
+  locale: string;
+  baseUrl: string;
+}
+
 export interface KlaviyoConfig {
   apiKey: string;
   revision: string;
@@ -68,6 +114,31 @@ function parseBooleanEnv(value: string | null | undefined): boolean {
   if (!value) return false;
   const v = value.trim().toLowerCase();
   return v === '1' || v === 'true' || v === 'yes' || v === 'y' || v === 'on';
+}
+
+function normalizeApiBaseUrl(value: string, envName: string): string {
+  const normalized = String(value || '')
+    .trim()
+    .replace(/\/$/, '');
+  if (!normalized) {
+    throw new Error(`API base URL is required. Check ${envName}.`);
+  }
+  if (!/^https?:\/\//i.test(normalized)) {
+    throw new Error(`API base URL must include http(s) protocol. Check ${envName}.`);
+  }
+  return normalized;
+}
+
+function defaultAmazonEndpointForRegion(region: string): string {
+  switch (region.trim().toLowerCase()) {
+    case 'eu-west-1':
+      return 'https://sellingpartnerapi-eu.amazon.com';
+    case 'us-west-2':
+      return 'https://sellingpartnerapi-fe.amazon.com';
+    case 'us-east-1':
+    default:
+      return 'https://sellingpartnerapi-na.amazon.com';
+  }
 }
 
 function normalizeShopDomain(shop: string): string {
@@ -231,6 +302,376 @@ export function getRechargeConfigFromEnv(): RechargeConfig | null {
   }
   const storedVersion = stored.apiVersion || apiVersion;
   return { accessToken: validateRechargeToken(storedToken), apiVersion: storedVersion };
+}
+
+export function getSkioConfigFromEnv(): SkioConfig | null {
+  const defaultBaseUrl = 'https://api.skio.com/v1';
+  const apiVersion =
+    readFirstEnvVar(['SKIO_API_VERSION', 'STATESET_SKIO_API_VERSION']) || '2024-01';
+  const apiKey = readFirstEnvVar(['SKIO_API_KEY', 'STATESET_SKIO_API_KEY']);
+  const baseUrl = readFirstEnvVar(['SKIO_BASE_URL', 'STATESET_SKIO_BASE_URL']) || defaultBaseUrl;
+
+  if (apiKey || process.env.SKIO_BASE_URL || process.env.STATESET_SKIO_BASE_URL) {
+    if (!apiKey) throw new Error('Missing Skio API key. Set SKIO_API_KEY.');
+    return {
+      apiKey: validateGenericKey(apiKey, 'Skio API key', 'SKIO_API_KEY'),
+      baseUrl: normalizeApiBaseUrl(baseUrl, 'SKIO_BASE_URL'),
+      apiVersion,
+    };
+  }
+
+  const stored = getIntegrationConfigFromStore('skio');
+  if (!stored) return null;
+  const storedKey = stored.apiKey;
+  if (!storedKey) {
+    throw new Error(
+      'Missing Skio API key in integrations config. Run "response integrations setup".',
+    );
+  }
+  return {
+    apiKey: validateGenericKey(storedKey, 'Skio API key', 'SKIO_API_KEY'),
+    baseUrl: normalizeApiBaseUrl(stored.baseUrl || defaultBaseUrl, 'SKIO_BASE_URL'),
+    apiVersion: stored.apiVersion || apiVersion,
+  };
+}
+
+export function getStayAiConfigFromEnv(): StayAiConfig | null {
+  const defaultBaseUrl = 'https://api.stay.ai/v1';
+  const apiVersion =
+    readFirstEnvVar(['STAYAI_API_VERSION', 'STAY_AI_API_VERSION', 'STATESET_STAYAI_API_VERSION']) ||
+    '2024-01';
+  const apiKey = readFirstEnvVar(['STAYAI_API_KEY', 'STAY_AI_API_KEY', 'STATESET_STAYAI_API_KEY']);
+  const baseUrl =
+    readFirstEnvVar(['STAYAI_BASE_URL', 'STAY_AI_BASE_URL', 'STATESET_STAYAI_BASE_URL']) ||
+    defaultBaseUrl;
+
+  if (
+    apiKey ||
+    process.env.STAYAI_BASE_URL ||
+    process.env.STAY_AI_BASE_URL ||
+    process.env.STATESET_STAYAI_BASE_URL
+  ) {
+    if (!apiKey) throw new Error('Missing Stay.ai API key. Set STAYAI_API_KEY.');
+    return {
+      apiKey: validateGenericKey(apiKey, 'Stay.ai API key', 'STAYAI_API_KEY'),
+      baseUrl: normalizeApiBaseUrl(baseUrl, 'STAYAI_BASE_URL'),
+      apiVersion,
+    };
+  }
+
+  const stored = getIntegrationConfigFromStore('stayai');
+  if (!stored) return null;
+  const storedKey = stored.apiKey;
+  if (!storedKey) {
+    throw new Error(
+      'Missing Stay.ai API key in integrations config. Run "response integrations setup".',
+    );
+  }
+  return {
+    apiKey: validateGenericKey(storedKey, 'Stay.ai API key', 'STAYAI_API_KEY'),
+    baseUrl: normalizeApiBaseUrl(stored.baseUrl || defaultBaseUrl, 'STAYAI_BASE_URL'),
+    apiVersion: stored.apiVersion || apiVersion,
+  };
+}
+
+export function getAmazonConfigFromEnv(): AmazonConfig | null {
+  const awsRegion =
+    readFirstEnvVar(['AMAZON_SP_API_REGION', 'STATESET_AMAZON_SP_API_REGION']) || 'us-east-1';
+  const defaultEndpoint = defaultAmazonEndpointForRegion(awsRegion);
+
+  const endpoint =
+    readFirstEnvVar(['AMAZON_SP_API_ENDPOINT', 'STATESET_AMAZON_SP_API_ENDPOINT']) ||
+    defaultEndpoint;
+  const lwaClientId = readFirstEnvVar(['AMAZON_LWA_CLIENT_ID', 'STATESET_AMAZON_LWA_CLIENT_ID']);
+  const lwaClientSecret = readFirstEnvVar([
+    'AMAZON_LWA_CLIENT_SECRET',
+    'STATESET_AMAZON_LWA_CLIENT_SECRET',
+  ]);
+  const lwaRefreshToken = readFirstEnvVar([
+    'AMAZON_LWA_REFRESH_TOKEN',
+    'STATESET_AMAZON_LWA_REFRESH_TOKEN',
+  ]);
+  const awsAccessKeyId = readFirstEnvVar([
+    'AMAZON_AWS_ACCESS_KEY_ID',
+    'STATESET_AMAZON_AWS_ACCESS_KEY_ID',
+  ]);
+  const awsSecretAccessKey = readFirstEnvVar([
+    'AMAZON_AWS_SECRET_ACCESS_KEY',
+    'STATESET_AMAZON_AWS_SECRET_ACCESS_KEY',
+  ]);
+  const awsSessionToken = readFirstEnvVar([
+    'AMAZON_AWS_SESSION_TOKEN',
+    'STATESET_AMAZON_AWS_SESSION_TOKEN',
+  ]);
+  const marketplaceId = readFirstEnvVar([
+    'AMAZON_SP_MARKETPLACE_ID',
+    'STATESET_AMAZON_SP_MARKETPLACE_ID',
+  ]);
+
+  if (
+    lwaClientId ||
+    lwaClientSecret ||
+    lwaRefreshToken ||
+    awsAccessKeyId ||
+    awsSecretAccessKey ||
+    awsSessionToken ||
+    process.env.AMAZON_SP_API_ENDPOINT ||
+    process.env.STATESET_AMAZON_SP_API_ENDPOINT ||
+    process.env.AMAZON_SP_API_REGION ||
+    process.env.STATESET_AMAZON_SP_API_REGION
+  ) {
+    if (!lwaClientId) throw new Error('Missing Amazon LWA client ID. Set AMAZON_LWA_CLIENT_ID.');
+    if (!lwaClientSecret)
+      throw new Error('Missing Amazon LWA client secret. Set AMAZON_LWA_CLIENT_SECRET.');
+    if (!lwaRefreshToken)
+      throw new Error('Missing Amazon LWA refresh token. Set AMAZON_LWA_REFRESH_TOKEN.');
+    if (!awsAccessKeyId)
+      throw new Error('Missing Amazon AWS access key ID. Set AMAZON_AWS_ACCESS_KEY_ID.');
+    if (!awsSecretAccessKey)
+      throw new Error('Missing Amazon AWS secret access key. Set AMAZON_AWS_SECRET_ACCESS_KEY.');
+
+    return {
+      lwaClientId: validateGenericKey(lwaClientId, 'Amazon LWA client ID', 'AMAZON_LWA_CLIENT_ID'),
+      lwaClientSecret: validateGenericKey(
+        lwaClientSecret,
+        'Amazon LWA client secret',
+        'AMAZON_LWA_CLIENT_SECRET',
+      ),
+      lwaRefreshToken: validateGenericKey(
+        lwaRefreshToken,
+        'Amazon LWA refresh token',
+        'AMAZON_LWA_REFRESH_TOKEN',
+      ),
+      awsAccessKeyId: validateGenericKey(
+        awsAccessKeyId,
+        'Amazon AWS access key ID',
+        'AMAZON_AWS_ACCESS_KEY_ID',
+      ),
+      awsSecretAccessKey: validateGenericKey(
+        awsSecretAccessKey,
+        'Amazon AWS secret access key',
+        'AMAZON_AWS_SECRET_ACCESS_KEY',
+      ),
+      awsSessionToken: awsSessionToken ? awsSessionToken.trim() : undefined,
+      awsRegion: awsRegion.trim(),
+      endpoint: normalizeApiBaseUrl(endpoint, 'AMAZON_SP_API_ENDPOINT'),
+      marketplaceId: marketplaceId ? marketplaceId.trim() : undefined,
+    };
+  }
+
+  const stored = getIntegrationConfigFromStore('amazon');
+  if (!stored) return null;
+  if (!stored.lwaClientId) {
+    throw new Error(
+      'Missing Amazon LWA client ID in integrations config. Run "response integrations setup".',
+    );
+  }
+  if (!stored.lwaClientSecret) {
+    throw new Error(
+      'Missing Amazon LWA client secret in integrations config. Run "response integrations setup".',
+    );
+  }
+  if (!stored.lwaRefreshToken) {
+    throw new Error(
+      'Missing Amazon LWA refresh token in integrations config. Run "response integrations setup".',
+    );
+  }
+  if (!stored.awsAccessKeyId) {
+    throw new Error(
+      'Missing Amazon AWS access key ID in integrations config. Run "response integrations setup".',
+    );
+  }
+  if (!stored.awsSecretAccessKey) {
+    throw new Error(
+      'Missing Amazon AWS secret access key in integrations config. Run "response integrations setup".',
+    );
+  }
+
+  const storedRegion = stored.awsRegion || awsRegion;
+  const storedEndpoint = stored.endpoint || defaultAmazonEndpointForRegion(storedRegion);
+  return {
+    lwaClientId: validateGenericKey(
+      stored.lwaClientId,
+      'Amazon LWA client ID',
+      'AMAZON_LWA_CLIENT_ID',
+    ),
+    lwaClientSecret: validateGenericKey(
+      stored.lwaClientSecret,
+      'Amazon LWA client secret',
+      'AMAZON_LWA_CLIENT_SECRET',
+    ),
+    lwaRefreshToken: validateGenericKey(
+      stored.lwaRefreshToken,
+      'Amazon LWA refresh token',
+      'AMAZON_LWA_REFRESH_TOKEN',
+    ),
+    awsAccessKeyId: validateGenericKey(
+      stored.awsAccessKeyId,
+      'Amazon AWS access key ID',
+      'AMAZON_AWS_ACCESS_KEY_ID',
+    ),
+    awsSecretAccessKey: validateGenericKey(
+      stored.awsSecretAccessKey,
+      'Amazon AWS secret access key',
+      'AMAZON_AWS_SECRET_ACCESS_KEY',
+    ),
+    awsSessionToken: stored.awsSessionToken || undefined,
+    awsRegion: storedRegion,
+    endpoint: normalizeApiBaseUrl(storedEndpoint, 'AMAZON_SP_API_ENDPOINT'),
+    marketplaceId: stored.marketplaceId || undefined,
+  };
+}
+
+export function getDhlConfigFromEnv(): DhlConfig | null {
+  const defaultBaseUrl = 'https://api-m.dhl.com';
+  const apiKey = readFirstEnvVar(['DHL_API_KEY', 'STATESET_DHL_API_KEY']);
+  const accessToken = readFirstEnvVar(['DHL_ACCESS_TOKEN', 'STATESET_DHL_ACCESS_TOKEN']);
+  const accountNumber = readFirstEnvVar(['DHL_ACCOUNT_NUMBER', 'STATESET_DHL_ACCOUNT_NUMBER']);
+  const baseUrl = readFirstEnvVar(['DHL_BASE_URL', 'STATESET_DHL_BASE_URL']) || defaultBaseUrl;
+
+  if (
+    apiKey ||
+    accessToken ||
+    accountNumber ||
+    process.env.DHL_BASE_URL ||
+    process.env.STATESET_DHL_BASE_URL
+  ) {
+    if (!apiKey) throw new Error('Missing DHL API key. Set DHL_API_KEY.');
+    return {
+      apiKey: validateGenericKey(apiKey, 'DHL API key', 'DHL_API_KEY'),
+      accessToken: accessToken || undefined,
+      accountNumber: accountNumber || undefined,
+      baseUrl: normalizeApiBaseUrl(baseUrl, 'DHL_BASE_URL'),
+    };
+  }
+
+  const stored = getIntegrationConfigFromStore('dhl');
+  if (!stored) return null;
+  if (!stored.apiKey) {
+    throw new Error(
+      'Missing DHL API key in integrations config. Run "response integrations setup".',
+    );
+  }
+  return {
+    apiKey: validateGenericKey(stored.apiKey, 'DHL API key', 'DHL_API_KEY'),
+    accessToken: stored.accessToken || undefined,
+    accountNumber: stored.accountNumber || undefined,
+    baseUrl: normalizeApiBaseUrl(stored.baseUrl || defaultBaseUrl, 'DHL_BASE_URL'),
+  };
+}
+
+export function getGlobalEConfigFromEnv(): GlobalEConfig | null {
+  const defaultBaseUrl = 'https://api.global-e.com';
+  const merchantId = readFirstEnvVar([
+    'GLOBALE_MERCHANT_ID',
+    'GLOBAL_E_MERCHANT_ID',
+    'STATESET_GLOBALE_MERCHANT_ID',
+  ]);
+  const apiKey = readFirstEnvVar([
+    'GLOBALE_API_KEY',
+    'GLOBAL_E_API_KEY',
+    'STATESET_GLOBALE_API_KEY',
+  ]);
+  const channel = readFirstEnvVar([
+    'GLOBALE_CHANNEL',
+    'GLOBAL_E_CHANNEL',
+    'STATESET_GLOBALE_CHANNEL',
+  ]);
+  const baseUrl =
+    readFirstEnvVar(['GLOBALE_BASE_URL', 'GLOBAL_E_BASE_URL', 'STATESET_GLOBALE_BASE_URL']) ||
+    defaultBaseUrl;
+
+  if (
+    merchantId ||
+    apiKey ||
+    channel ||
+    process.env.GLOBALE_BASE_URL ||
+    process.env.GLOBAL_E_BASE_URL ||
+    process.env.STATESET_GLOBALE_BASE_URL
+  ) {
+    if (!merchantId) throw new Error('Missing Global-e merchant ID. Set GLOBALE_MERCHANT_ID.');
+    if (!apiKey) throw new Error('Missing Global-e API key. Set GLOBALE_API_KEY.');
+    return {
+      merchantId: validateGenericKey(merchantId, 'Global-e merchant ID', 'GLOBALE_MERCHANT_ID'),
+      apiKey: validateGenericKey(apiKey, 'Global-e API key', 'GLOBALE_API_KEY'),
+      channel: channel || undefined,
+      baseUrl: normalizeApiBaseUrl(baseUrl, 'GLOBALE_BASE_URL'),
+    };
+  }
+
+  const stored = getIntegrationConfigFromStore('globale');
+  if (!stored) return null;
+  if (!stored.merchantId) {
+    throw new Error(
+      'Missing Global-e merchant ID in integrations config. Run "response integrations setup".',
+    );
+  }
+  if (!stored.apiKey) {
+    throw new Error(
+      'Missing Global-e API key in integrations config. Run "response integrations setup".',
+    );
+  }
+  return {
+    merchantId: validateGenericKey(
+      stored.merchantId,
+      'Global-e merchant ID',
+      'GLOBALE_MERCHANT_ID',
+    ),
+    apiKey: validateGenericKey(stored.apiKey, 'Global-e API key', 'GLOBALE_API_KEY'),
+    channel: stored.channel || undefined,
+    baseUrl: normalizeApiBaseUrl(stored.baseUrl || defaultBaseUrl, 'GLOBALE_BASE_URL'),
+  };
+}
+
+export function getFedExConfigFromEnv(): FedExConfig | null {
+  const defaultBaseUrl = 'https://apis.fedex.com';
+  const clientId = readFirstEnvVar(['FEDEX_CLIENT_ID', 'STATESET_FEDEX_CLIENT_ID']);
+  const clientSecret = readFirstEnvVar(['FEDEX_CLIENT_SECRET', 'STATESET_FEDEX_CLIENT_SECRET']);
+  const accountNumber = readFirstEnvVar(['FEDEX_ACCOUNT_NUMBER', 'STATESET_FEDEX_ACCOUNT_NUMBER']);
+  const locale = readFirstEnvVar(['FEDEX_LOCALE', 'STATESET_FEDEX_LOCALE']) || 'en_US';
+  const baseUrl = readFirstEnvVar(['FEDEX_BASE_URL', 'STATESET_FEDEX_BASE_URL']) || defaultBaseUrl;
+
+  if (
+    clientId ||
+    clientSecret ||
+    accountNumber ||
+    process.env.FEDEX_BASE_URL ||
+    process.env.STATESET_FEDEX_BASE_URL
+  ) {
+    if (!clientId) throw new Error('Missing FedEx client ID. Set FEDEX_CLIENT_ID.');
+    if (!clientSecret) throw new Error('Missing FedEx client secret. Set FEDEX_CLIENT_SECRET.');
+    return {
+      clientId: validateGenericKey(clientId, 'FedEx client ID', 'FEDEX_CLIENT_ID'),
+      clientSecret: validateGenericKey(clientSecret, 'FedEx client secret', 'FEDEX_CLIENT_SECRET'),
+      accountNumber: accountNumber || undefined,
+      locale: locale.trim() || 'en_US',
+      baseUrl: normalizeApiBaseUrl(baseUrl, 'FEDEX_BASE_URL'),
+    };
+  }
+
+  const stored = getIntegrationConfigFromStore('fedex');
+  if (!stored) return null;
+  if (!stored.clientId) {
+    throw new Error(
+      'Missing FedEx client ID in integrations config. Run "response integrations setup".',
+    );
+  }
+  if (!stored.clientSecret) {
+    throw new Error(
+      'Missing FedEx client secret in integrations config. Run "response integrations setup".',
+    );
+  }
+  return {
+    clientId: validateGenericKey(stored.clientId, 'FedEx client ID', 'FEDEX_CLIENT_ID'),
+    clientSecret: validateGenericKey(
+      stored.clientSecret,
+      'FedEx client secret',
+      'FEDEX_CLIENT_SECRET',
+    ),
+    accountNumber: stored.accountNumber || undefined,
+    locale: (stored.locale || 'en_US').trim() || 'en_US',
+    baseUrl: normalizeApiBaseUrl(stored.baseUrl || defaultBaseUrl, 'FEDEX_BASE_URL'),
+  };
 }
 
 function validateKlaviyoKey(key: string): string {
@@ -466,6 +907,12 @@ const CONFIG_CHECKERS: Record<IntegrationId, () => unknown> = {
   shopify: getShopifyConfigFromEnv,
   gorgias: getGorgiasConfigFromEnv,
   recharge: getRechargeConfigFromEnv,
+  skio: getSkioConfigFromEnv,
+  stayai: getStayAiConfigFromEnv,
+  amazon: getAmazonConfigFromEnv,
+  dhl: getDhlConfigFromEnv,
+  globale: getGlobalEConfigFromEnv,
+  fedex: getFedExConfigFromEnv,
   klaviyo: getKlaviyoConfigFromEnv,
   loop: getLoopConfigFromEnv,
   shipstation: getShipStationConfigFromEnv,

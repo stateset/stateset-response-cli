@@ -6,21 +6,27 @@ import {
 } from '../integrations/registry.js';
 
 describe('listIntegrations', () => {
-  it('returns all 10 integration definitions', () => {
+  it('returns all 16 integration definitions', () => {
     const integrations = listIntegrations();
-    expect(integrations).toHaveLength(10);
+    expect(integrations).toHaveLength(16);
     const ids = integrations.map((i) => i.id);
     expect(ids).toContain('shopify');
     expect(ids).toContain('gorgias');
     expect(ids).toContain('zendesk');
     expect(ids).toContain('klaviyo');
+    expect(ids).toContain('skio');
+    expect(ids).toContain('stayai');
+    expect(ids).toContain('amazon');
+    expect(ids).toContain('dhl');
+    expect(ids).toContain('globale');
+    expect(ids).toContain('fedex');
   });
 
   it('returns a copy (mutations do not affect future calls)', () => {
     const first = listIntegrations();
     first.pop();
     const second = listIntegrations();
-    expect(second).toHaveLength(10);
+    expect(second).toHaveLength(16);
   });
 });
 
