@@ -3,7 +3,7 @@
 AI-powered CLI for managing the [StateSet ResponseCX](https://response.cx) platform. Chat with an AI agent that can manage your agents, rules, skills, knowledge base, channels, messages, and more — all from the terminal.
 
 Includes optional WhatsApp and Slack gateways for connecting your agent to messaging platforms.
-Current version: `1.3.7`.
+Current version: `1.3.9`.
 
 ## Install
 
@@ -476,13 +476,13 @@ The AI agent has access to 100+ tools organized by resource type:
 `list_agent_settings` `get_agent_settings` `update_agent_settings` `get_channel_settings`
 
 ### Shopify
-`shopify_list_orders` `shopify_preview_orders` `shopify_release_holds` `shopify_add_tags` `shopify_lookup_order` `shopify_preview_refund` `shopify_process_refund` `shopify_batch_preview_refunds` `shopify_batch_process_refunds` `shopify_graphql` `shopify_rest`
+`shopify_list_orders` `shopify_preview_orders` `shopify_release_holds` `shopify_add_tags` `shopify_remove_tags` `shopify_lookup_order` `shopify_preview_refund` `shopify_process_refund` `shopify_batch_preview_refunds` `shopify_batch_process_refunds` `shopify_graphql` `shopify_rest` `shopify_preview_fulfillment_operation` `shopify_confirm_fulfillment_operation` `shopify_cancel_order` `shopify_create_fulfillment` `shopify_update_fulfillment` `shopify_cancel_fulfillment` `shopify_update_tracking` `shopify_job_status` `shopify_job_retry` `shopify_job_rollback`
 
 ### Gorgias
-`gorgias_list_tickets` `gorgias_get_ticket` `gorgias_close_ticket` `gorgias_escalate_ticket` `gorgias_respond_with_macro` `gorgias_add_tags` `gorgias_merge_tickets` `gorgias_batch_close_tickets` `gorgias_batch_tag_tickets` `gorgias_list_macros` `gorgias_get_macro` `gorgias_list_users` `gorgias_list_teams` `gorgias_request`
+`gorgias_list_tickets` `gorgias_get_ticket` `gorgias_close_ticket` `gorgias_escalate_ticket` `gorgias_respond_with_macro` `gorgias_add_tags` `gorgias_merge_tickets` `gorgias_batch_close_tickets` `gorgias_batch_tag_tickets` `gorgias_reply_ticket` `gorgias_assign_ticket` `gorgias_set_ticket_state` `gorgias_list_macros` `gorgias_get_macro` `gorgias_list_users` `gorgias_list_teams` `gorgias_request`
 
 ### Recharge
-`recharge_list_customers` `recharge_get_customer` `recharge_list_subscriptions` `recharge_get_subscription` `recharge_list_charges` `recharge_get_charge` `recharge_list_orders` `recharge_get_order` `recharge_request`
+`recharge_list_customers` `recharge_get_customer` `recharge_list_subscriptions` `recharge_get_subscription` `recharge_list_charges` `recharge_get_charge` `recharge_list_orders` `recharge_get_order` `recharge_preview_subscription_change` `recharge_confirm_subscription_change` `recharge_skip_charge` `recharge_reschedule_charge` `recharge_issue_refund` `recharge_update_customer_shipping` `recharge_update_customer_payment` `recharge_job_status` `recharge_job_retry` `recharge_job_rollback` `recharge_request`
 
 ### Klaviyo
 `klaviyo_list_profiles` `klaviyo_get_profile` `klaviyo_create_profile` `klaviyo_create_or_update_profile` `klaviyo_update_profile` `klaviyo_merge_profiles`
@@ -492,8 +492,8 @@ The AI agent has access to 100+ tools organized by resource type:
 `klaviyo_list_tags` `klaviyo_get_tag` `klaviyo_create_tag` `klaviyo_update_tag` `klaviyo_delete_tag` `klaviyo_get_tag_flows` `klaviyo_add_tag_flows` `klaviyo_remove_tag_flows` `klaviyo_get_tag_campaigns` `klaviyo_add_tag_campaigns` `klaviyo_remove_tag_campaigns` `klaviyo_get_tag_lists` `klaviyo_add_tag_lists` `klaviyo_remove_tag_lists` `klaviyo_get_tag_segments` `klaviyo_add_tag_segments` `klaviyo_remove_tag_segments`
 `klaviyo_list_tag_groups` `klaviyo_get_tag_group` `klaviyo_create_tag_group` `klaviyo_update_tag_group` `klaviyo_delete_tag_group`
 `klaviyo_subscribe_profiles_job` `klaviyo_unsubscribe_profiles_job` `klaviyo_suppress_profiles_job` `klaviyo_unsuppress_profiles_job`
-`klaviyo_list_campaigns` `klaviyo_get_campaign` `klaviyo_create_campaign` `klaviyo_update_campaign` `klaviyo_delete_campaign`
-`klaviyo_list_flows` `klaviyo_get_flow` `klaviyo_create_flow` `klaviyo_update_flow` `klaviyo_delete_flow`
+`klaviyo_list_campaigns` `klaviyo_get_campaign` `klaviyo_create_campaign` `klaviyo_update_campaign` `klaviyo_delete_campaign` `klaviyo_schedule_campaign` `klaviyo_send_campaign_now` `klaviyo_cancel_campaign`
+`klaviyo_list_flows` `klaviyo_get_flow` `klaviyo_create_flow` `klaviyo_update_flow` `klaviyo_delete_flow` `klaviyo_pause_flow` `klaviyo_resume_flow`
 `klaviyo_list_templates` `klaviyo_get_template` `klaviyo_create_template` `klaviyo_update_template` `klaviyo_delete_template` `klaviyo_render_template` `klaviyo_clone_template`
 `klaviyo_list_forms` `klaviyo_get_form` `klaviyo_create_form` `klaviyo_delete_form`
 `klaviyo_list_images` `klaviyo_get_image` `klaviyo_upload_image_from_url` `klaviyo_upload_image_from_file` `klaviyo_update_image`
@@ -510,19 +510,19 @@ The AI agent has access to 100+ tools organized by resource type:
 `loop_list_returns` `loop_get_return` `loop_approve_return` `loop_reject_return` `loop_process_exchange` `loop_issue_refund` `loop_create_label` `loop_add_note` `loop_batch_approve_returns` `loop_request`
 
 ### ShipStation
-`shipstation_list_orders` `shipstation_get_order` `shipstation_update_order` `shipstation_create_label` `shipstation_void_label` `shipstation_get_rates` `shipstation_list_shipments` `shipstation_list_carriers` `shipstation_list_stores` `shipstation_list_tags` `shipstation_add_tag` `shipstation_batch_create_labels` `shipstation_request`
+`shipstation_list_orders` `shipstation_get_order` `shipstation_update_order` `shipstation_create_label` `shipstation_void_label` `shipstation_get_rates` `shipstation_list_shipments` `shipstation_list_carriers` `shipstation_list_stores` `shipstation_list_tags` `shipstation_add_tag` `shipstation_batch_create_labels` `shipstation_create_order` `shipstation_cancel_shipment` `shipstation_create_scan_form` `shipstation_get_scan_form` `shipstation_schedule_pickup` `shipstation_cancel_pickup` `shipstation_request`
 
 ### ShipHero
-`shiphero_list_orders` `shiphero_get_order` `shiphero_update_order` `shiphero_create_shipment` `shiphero_get_inventory` `shiphero_adjust_inventory` `shiphero_list_warehouses` `shiphero_route_order` `shiphero_batch_ship_orders` `shiphero_graphql`
+`shiphero_list_orders` `shiphero_get_order` `shiphero_update_order` `shiphero_create_shipment` `shiphero_get_inventory` `shiphero_adjust_inventory` `shiphero_list_warehouses` `shiphero_route_order` `shiphero_batch_ship_orders` `shiphero_set_order_hold` `shiphero_cancel_shipment` `shiphero_create_return` `shiphero_update_return` `shiphero_resolve_order_exception` `shiphero_graphql`
 
 ### ShipFusion
-`shipfusion_list_orders` `shipfusion_get_order` `shipfusion_cancel_order` `shipfusion_get_inventory` `shipfusion_list_shipments` `shipfusion_get_shipment` `shipfusion_get_order_shipments` `shipfusion_get_tracking` `shipfusion_create_asn` `shipfusion_list_returns` `shipfusion_get_return` `shipfusion_process_return` `shipfusion_request`
+`shipfusion_list_orders` `shipfusion_get_order` `shipfusion_cancel_order` `shipfusion_get_inventory` `shipfusion_list_shipments` `shipfusion_get_shipment` `shipfusion_get_order_shipments` `shipfusion_get_tracking` `shipfusion_create_asn` `shipfusion_list_returns` `shipfusion_get_return` `shipfusion_process_return` `shipfusion_hold_order` `shipfusion_cancel_shipment` `shipfusion_create_return` `shipfusion_update_return` `shipfusion_resolve_exception` `shipfusion_job_status` `shipfusion_job_retry` `shipfusion_job_rollback` `shipfusion_request`
 
 ### ShipHawk
 `shiphawk_get_rates` `shiphawk_create_shipment` `shiphawk_get_shipment` `shiphawk_void_shipment` `shiphawk_track_shipment` `shiphawk_track_by_number` `shiphawk_list_shipments` `shiphawk_schedule_pickup` `shiphawk_get_bol` `shiphawk_batch_rate_shop` `shiphawk_request`
 
 ### Zendesk
-`zendesk_search_tickets` `zendesk_list_tickets` `zendesk_search_users` `zendesk_search_organizations` `zendesk_get_ticket` `zendesk_list_ticket_comments` `zendesk_list_ticket_audits` `zendesk_list_suspended_tickets` `zendesk_create_ticket` `zendesk_update_ticket` `zendesk_add_comment` `zendesk_close_ticket` `zendesk_escalate_ticket` `zendesk_apply_macro` `zendesk_add_tags` `zendesk_merge_tickets` `zendesk_list_macros` `zendesk_get_macro` `zendesk_list_groups` `zendesk_get_group` `zendesk_list_users` `zendesk_get_user` `zendesk_create_user` `zendesk_update_user` `zendesk_list_organizations` `zendesk_get_organization` `zendesk_create_organization` `zendesk_update_organization` `zendesk_list_ticket_fields` `zendesk_get_ticket_field` `zendesk_create_ticket_field` `zendesk_update_ticket_field` `zendesk_delete_ticket_field` `zendesk_list_ticket_forms` `zendesk_get_ticket_form` `zendesk_create_ticket_form` `zendesk_update_ticket_form` `zendesk_delete_ticket_form` `zendesk_list_views` `zendesk_get_view` `zendesk_list_triggers` `zendesk_get_trigger` `zendesk_list_automations` `zendesk_get_automation` `zendesk_list_sla_policies` `zendesk_get_sla_policy` `zendesk_batch_update_tickets` `zendesk_request`
+`zendesk_search_tickets` `zendesk_list_tickets` `zendesk_search_users` `zendesk_search_organizations` `zendesk_get_ticket` `zendesk_list_ticket_comments` `zendesk_list_ticket_audits` `zendesk_list_suspended_tickets` `zendesk_create_ticket` `zendesk_update_ticket` `zendesk_add_comment` `zendesk_reply_ticket` `zendesk_assign_ticket` `zendesk_set_ticket_state` `zendesk_close_ticket` `zendesk_escalate_ticket` `zendesk_apply_macro` `zendesk_add_tags` `zendesk_merge_tickets` `zendesk_list_macros` `zendesk_get_macro` `zendesk_list_groups` `zendesk_get_group` `zendesk_list_users` `zendesk_get_user` `zendesk_create_user` `zendesk_update_user` `zendesk_list_organizations` `zendesk_get_organization` `zendesk_create_organization` `zendesk_update_organization` `zendesk_list_ticket_fields` `zendesk_get_ticket_field` `zendesk_create_ticket_field` `zendesk_update_ticket_field` `zendesk_delete_ticket_field` `zendesk_list_ticket_forms` `zendesk_get_ticket_form` `zendesk_create_ticket_form` `zendesk_update_ticket_form` `zendesk_delete_ticket_form` `zendesk_list_views` `zendesk_get_view` `zendesk_list_triggers` `zendesk_get_trigger` `zendesk_list_automations` `zendesk_get_automation` `zendesk_list_sla_policies` `zendesk_get_sla_policy` `zendesk_batch_update_tickets` `zendesk_request`
 
 ### Organizations
 `get_organization` `get_organization_overview` `update_organization`
