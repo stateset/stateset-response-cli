@@ -16,6 +16,22 @@ const runRequest = createRequestRunner<ShipFusionConfig>((config, args) =>
   shipfusionRequest({ shipfusion: config, ...args }),
 );
 
+const shipfusionIdempotencyStore = new Map<string, { status: number; data: unknown }>();
+
+function withShipFusionIdempotency(
+  key: string | undefined,
+  status: number,
+  data: unknown,
+): { deduplicated: boolean; status: number; data: unknown } {
+  if (!key) return { deduplicated: false, status, data };
+  const existing = shipfusionIdempotencyStore.get(key);
+  if (existing) {
+    return { deduplicated: true, status: existing.status, data: existing.data };
+  }
+  shipfusionIdempotencyStore.set(key, { status, data });
+  return { deduplicated: false, status, data };
+}
+
 export function registerShipFusionTools(
   server: McpServer,
   shipfusion: ShipFusionConfig,
@@ -313,6 +329,257 @@ export function registerShipFusionTools(
         method: 'POST',
         path: `/returns/${args.return_id}/process`,
         body,
+      });
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
+  );
+
+  server.tool(
+    'shipfusion_hold_order',
+    'Put a ShipFusion order on hold or release it. Requires --apply or STATESET_ALLOW_APPLY.',
+    {
+      order_id: z.string().describe('ShipFusion order ID'),
+      on_hold: z.boolean().describe('true to hold, false to release'),
+      reason: z.string().optional().describe('Optional hold/release reason'),
+      endpoint_override: z
+        .string()
+        .optional()
+        .describe('Override default endpoint (default /orders/{id}/hold)'),
+      idempotency_key: z.string().optional().describe('Optional idempotency key'),
+      dry_run: z.boolean().optional().default(false).describe('Preview without applying'),
+      max_chars: MaxCharsSchema,
+    },
+    async (args) => {
+      const request = {
+        method: 'POST',
+        path: args.endpoint_override || `/orders/${args.order_id}/hold`,
+        body: { on_hold: args.on_hold, reason: args.reason },
+      };
+      if (args.dry_run) {
+        return wrapToolResult(
+          { success: true, dry_run: true, idempotency_key: args.idempotency_key || null, request },
+          args.max_chars as number | undefined,
+        );
+      }
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
+      const result = await runRequest(shipfusion, options, request);
+      const deduped = withShipFusionIdempotency(args.idempotency_key, result.status, result.data);
+      return wrapToolResult(
+        { success: true, idempotency_key: args.idempotency_key || null, ...deduped },
+        args.max_chars as number | undefined,
+      );
+    },
+  );
+
+  server.tool(
+    'shipfusion_cancel_shipment',
+    'Cancel a ShipFusion shipment. Requires --apply or STATESET_ALLOW_APPLY.',
+    {
+      shipment_id: z.string().describe('ShipFusion shipment ID'),
+      reason: z.string().optional().describe('Optional cancellation reason'),
+      endpoint_override: z
+        .string()
+        .optional()
+        .describe('Override default endpoint (default /shipments/{id}/cancel)'),
+      idempotency_key: z.string().optional().describe('Optional idempotency key'),
+      dry_run: z.boolean().optional().default(false).describe('Preview without applying'),
+      max_chars: MaxCharsSchema,
+    },
+    async (args) => {
+      const request = {
+        method: 'POST',
+        path: args.endpoint_override || `/shipments/${args.shipment_id}/cancel`,
+        body: args.reason ? { reason: args.reason } : undefined,
+      };
+      if (args.dry_run) {
+        return wrapToolResult(
+          { success: true, dry_run: true, idempotency_key: args.idempotency_key || null, request },
+          args.max_chars as number | undefined,
+        );
+      }
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
+      const result = await runRequest(shipfusion, options, request);
+      const deduped = withShipFusionIdempotency(args.idempotency_key, result.status, result.data);
+      return wrapToolResult(
+        { success: true, idempotency_key: args.idempotency_key || null, ...deduped },
+        args.max_chars as number | undefined,
+      );
+    },
+  );
+
+  server.tool(
+    'shipfusion_create_return',
+    'Create a ShipFusion return request. Requires --apply or STATESET_ALLOW_APPLY.',
+    {
+      return_payload: z.record(z.unknown()).describe('Return creation payload'),
+      endpoint_override: z
+        .string()
+        .optional()
+        .describe('Override default endpoint (default /returns)'),
+      idempotency_key: z.string().optional().describe('Optional idempotency key'),
+      dry_run: z.boolean().optional().default(false).describe('Preview without applying'),
+      max_chars: MaxCharsSchema,
+    },
+    async (args) => {
+      const request = {
+        method: 'POST',
+        path: args.endpoint_override || '/returns',
+        body: args.return_payload as Record<string, unknown>,
+      };
+      if (args.dry_run) {
+        return wrapToolResult(
+          { success: true, dry_run: true, idempotency_key: args.idempotency_key || null, request },
+          args.max_chars as number | undefined,
+        );
+      }
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
+      const result = await runRequest(shipfusion, options, request);
+      const deduped = withShipFusionIdempotency(args.idempotency_key, result.status, result.data);
+      return wrapToolResult(
+        { success: true, idempotency_key: args.idempotency_key || null, ...deduped },
+        args.max_chars as number | undefined,
+      );
+    },
+  );
+
+  server.tool(
+    'shipfusion_update_return',
+    'Update a ShipFusion return. Requires --apply or STATESET_ALLOW_APPLY.',
+    {
+      return_id: z.string().describe('Return ID'),
+      return_payload: z.record(z.unknown()).describe('Return update payload'),
+      endpoint_override: z
+        .string()
+        .optional()
+        .describe('Override default endpoint (default /returns/{id})'),
+      idempotency_key: z.string().optional().describe('Optional idempotency key'),
+      dry_run: z.boolean().optional().default(false).describe('Preview without applying'),
+      max_chars: MaxCharsSchema,
+    },
+    async (args) => {
+      const request = {
+        method: 'PATCH',
+        path: args.endpoint_override || `/returns/${args.return_id}`,
+        body: args.return_payload as Record<string, unknown>,
+      };
+      if (args.dry_run) {
+        return wrapToolResult(
+          { success: true, dry_run: true, idempotency_key: args.idempotency_key || null, request },
+          args.max_chars as number | undefined,
+        );
+      }
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
+      const result = await runRequest(shipfusion, options, request);
+      const deduped = withShipFusionIdempotency(args.idempotency_key, result.status, result.data);
+      return wrapToolResult(
+        { success: true, idempotency_key: args.idempotency_key || null, ...deduped },
+        args.max_chars as number | undefined,
+      );
+    },
+  );
+
+  server.tool(
+    'shipfusion_resolve_exception',
+    'Resolve a ShipFusion order/shipment exception with a standardized action. Requires --apply or STATESET_ALLOW_APPLY.',
+    {
+      exception_target: z.enum(['order', 'shipment']).describe('Exception target type'),
+      target_id: z.string().describe('Order ID or shipment ID'),
+      resolution: z
+        .enum(['release_hold', 'cancel', 'reroute', 'mark_resolved'])
+        .describe('Resolution action'),
+      notes: z.string().optional().describe('Optional resolution notes'),
+      endpoint_override: z.string().optional().describe('Override default endpoint'),
+      idempotency_key: z.string().optional().describe('Optional idempotency key'),
+      dry_run: z.boolean().optional().default(false).describe('Preview without applying'),
+      max_chars: MaxCharsSchema,
+    },
+    async (args) => {
+      const defaultPath = `/${args.exception_target}s/${args.target_id}/exceptions/resolve`;
+      const request = {
+        method: 'POST',
+        path: args.endpoint_override || defaultPath,
+        body: { resolution: args.resolution, notes: args.notes },
+      };
+      if (args.dry_run) {
+        return wrapToolResult(
+          { success: true, dry_run: true, idempotency_key: args.idempotency_key || null, request },
+          args.max_chars as number | undefined,
+        );
+      }
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
+      const result = await runRequest(shipfusion, options, request);
+      const deduped = withShipFusionIdempotency(args.idempotency_key, result.status, result.data);
+      return wrapToolResult(
+        { success: true, idempotency_key: args.idempotency_key || null, ...deduped },
+        args.max_chars as number | undefined,
+      );
+    },
+  );
+
+  server.tool(
+    'shipfusion_job_status',
+    'Get status for a ShipFusion async job.',
+    {
+      job_id: z.string().describe('Job ID'),
+      endpoint_override: z
+        .string()
+        .optional()
+        .describe('Override default endpoint (default /jobs/{id})'),
+      max_chars: MaxCharsSchema,
+    },
+    async (args) => {
+      const result = await runRequest(shipfusion, options, {
+        method: 'GET',
+        path: args.endpoint_override || `/jobs/${args.job_id}`,
+      });
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
+  );
+
+  server.tool(
+    'shipfusion_job_retry',
+    'Retry a ShipFusion async job. Requires --apply or STATESET_ALLOW_APPLY.',
+    {
+      job_id: z.string().describe('Job ID'),
+      endpoint_override: z
+        .string()
+        .optional()
+        .describe('Override default endpoint (default /jobs/{id}/retry)'),
+      max_chars: MaxCharsSchema,
+    },
+    async (args) => {
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
+      const result = await runRequest(shipfusion, options, {
+        method: 'POST',
+        path: args.endpoint_override || `/jobs/${args.job_id}/retry`,
+      });
+      return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
+  );
+
+  server.tool(
+    'shipfusion_job_rollback',
+    'Rollback a ShipFusion async job when supported. Requires --apply or STATESET_ALLOW_APPLY.',
+    {
+      job_id: z.string().describe('Job ID'),
+      endpoint_override: z
+        .string()
+        .optional()
+        .describe('Override default endpoint (default /jobs/{id}/rollback)'),
+      max_chars: MaxCharsSchema,
+    },
+    async (args) => {
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
+      const result = await runRequest(shipfusion, options, {
+        method: 'POST',
+        path: args.endpoint_override || `/jobs/${args.job_id}/rollback`,
       });
       return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
     },

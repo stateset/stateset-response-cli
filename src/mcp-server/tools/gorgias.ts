@@ -14,6 +14,20 @@ import {
 
 export type GorgiasToolOptions = IntegrationToolOptions;
 
+const gorgiasIdempotencyStore = new Map<string, unknown>();
+
+function withGorgiasIdempotency<T>(
+  key: string | undefined,
+  result: T,
+): { deduplicated: boolean; result: T } {
+  if (!key) return { deduplicated: false, result };
+  if (gorgiasIdempotencyStore.has(key)) {
+    return { deduplicated: true, result: gorgiasIdempotencyStore.get(key) as T };
+  }
+  gorgiasIdempotencyStore.set(key, result);
+  return { deduplicated: false, result };
+}
+
 interface GorgiasTicket {
   id?: number;
   subject?: string;
@@ -476,6 +490,168 @@ async function executeBatchTagTickets(
   };
 }
 
+async function executeReplyTicket(
+  api: ReturnType<typeof createGorgiasApi>,
+  input: {
+    ticket_id: number;
+    body_text: string;
+    internal?: boolean;
+    channel?: string;
+    close_after?: boolean;
+  },
+  { allowApply = false }: { allowApply?: boolean } = {},
+) {
+  if (!allowApply) {
+    return {
+      error: 'Reply operation not allowed. The --apply flag or STATESET_ALLOW_APPLY must be set.',
+      hint: 'Use get_ticket first to review ticket context before replying.',
+    };
+  }
+
+  const bodyText = String(input.body_text || '').trim();
+  if (!bodyText) {
+    throw new Error('body_text is required');
+  }
+
+  await api.addMessage(input.ticket_id, {
+    body_text: bodyText,
+    internal: Boolean(input.internal),
+    channel: input.channel || (input.internal ? 'internal-note' : 'email'),
+  });
+
+  if (input.close_after) {
+    await api.updateTicket(input.ticket_id, { status: 'closed' });
+  }
+
+  return {
+    success: true,
+    ticket_id: input.ticket_id,
+    replied: true,
+    internal: Boolean(input.internal),
+    closed_after: Boolean(input.close_after),
+  };
+}
+
+async function executeAssignTicket(
+  api: ReturnType<typeof createGorgiasApi>,
+  input: {
+    ticket_id: number;
+    assignee_email?: string;
+    team?: string;
+    priority?: 'low' | 'normal' | 'high' | 'urgent';
+  },
+  { allowApply = false }: { allowApply?: boolean } = {},
+) {
+  if (!allowApply) {
+    return {
+      error: 'Assign operation not allowed. The --apply flag or STATESET_ALLOW_APPLY must be set.',
+    };
+  }
+
+  const updateData: Record<string, unknown> = {};
+  let resolvedTeam: { id: number; name: string } | null = null;
+
+  if (input.assignee_email) {
+    const users = await api.listUsers();
+    const user = ((users.data as Array<{ id?: number; email?: string }> | undefined) || []).find(
+      (u: { id?: number; email?: string }) =>
+        String(u.email || '').toLowerCase() === String(input.assignee_email || '').toLowerCase(),
+    );
+    if (!user?.id) {
+      return { success: false, error: `Assignee "${input.assignee_email}" not found` };
+    }
+    updateData.assignee_user = { id: user.id };
+  }
+
+  if (input.team) {
+    const teams = await api.listTeams();
+    const resolved = resolveTeam(
+      (teams.data as Array<{ id?: number; name?: string }> | undefined) || [],
+      input.team,
+    );
+    if (resolved.error) {
+      return { success: false, error: resolved.error };
+    }
+    resolvedTeam = resolved.team;
+    if (resolvedTeam) {
+      updateData.assignee_team = { id: resolvedTeam.id };
+    }
+  }
+
+  if (input.priority) {
+    const priorityMap: Record<string, number> = { low: 0, normal: 1, high: 2, urgent: 3 };
+    updateData.priority = priorityMap[input.priority];
+  }
+
+  if (Object.keys(updateData).length === 0) {
+    throw new Error('Provide assignee_email, team, or priority');
+  }
+
+  await api.updateTicket(input.ticket_id, updateData);
+  return {
+    success: true,
+    ticket_id: input.ticket_id,
+    assignee_email: input.assignee_email || null,
+    team: resolvedTeam?.name || input.team || null,
+    priority: input.priority || null,
+  };
+}
+
+async function executeSetTicketState(
+  api: ReturnType<typeof createGorgiasApi>,
+  input: {
+    ticket_id: number;
+    status?: 'open' | 'closed' | 'snoozed';
+    priority?: 'low' | 'normal' | 'high' | 'urgent';
+    custom_fields?: Record<string, unknown>;
+    tags_to_add?: string[];
+    tags_to_remove?: string[];
+  },
+  { allowApply = false }: { allowApply?: boolean } = {},
+) {
+  if (!allowApply) {
+    return {
+      error:
+        'State update operation not allowed. The --apply flag or STATESET_ALLOW_APPLY must be set.',
+    };
+  }
+
+  const updateData: Record<string, unknown> = {};
+  if (input.status) updateData.status = input.status;
+  if (input.priority) {
+    const priorityMap: Record<string, number> = { low: 0, normal: 1, high: 2, urgent: 3 };
+    updateData.priority = priorityMap[input.priority];
+  }
+  if (input.custom_fields && Object.keys(input.custom_fields).length > 0) {
+    updateData.custom_fields = input.custom_fields;
+  }
+
+  if (
+    (input.tags_to_add && input.tags_to_add.length > 0) ||
+    (input.tags_to_remove || []).length > 0
+  ) {
+    const ticket = (await api.getTicket(input.ticket_id)) as GorgiasTicket;
+    const existing = ticket.tags?.map((t: { name?: string }) => String(t.name || '')) || [];
+    const add = (input.tags_to_add || []).map((t) => String(t).trim()).filter(Boolean);
+    const removeSet = new Set((input.tags_to_remove || []).map((t) => String(t).trim()));
+    const merged = [...new Set([...existing, ...add])].filter((tag) => !removeSet.has(tag));
+    updateData.tags = merged.map((name) => ({ name }));
+  }
+
+  if (Object.keys(updateData).length === 0) {
+    throw new Error('No state fields provided to update');
+  }
+
+  await api.updateTicket(input.ticket_id, updateData);
+  return {
+    success: true,
+    ticket_id: input.ticket_id,
+    status: input.status || null,
+    priority: input.priority || null,
+    custom_fields_updated: Boolean(input.custom_fields && Object.keys(input.custom_fields).length),
+  };
+}
+
 export function registerGorgiasTools(
   server: McpServer,
   gorgias: GorgiasConfig,
@@ -623,6 +799,126 @@ export function registerGorgiasTools(
     async (args) => {
       const result = await executeBatchTagTickets(api, args, { allowApply: options.allowApply });
       return wrapToolResult(result);
+    },
+  );
+
+  server.tool(
+    'gorgias_reply_ticket',
+    'Reply to a Gorgias ticket with custom text (public or internal). Requires --apply or STATESET_ALLOW_APPLY.',
+    {
+      ticket_id: z.number().describe('The Gorgias ticket ID'),
+      body_text: z.string().describe('Message body to send'),
+      internal: z.boolean().optional().describe('Send as internal note'),
+      channel: z
+        .string()
+        .optional()
+        .describe('Override channel (email, chat, internal-note, etc.)'),
+      close_after: z.boolean().optional().describe('Close ticket after sending message'),
+      idempotency_key: z.string().optional().describe('Optional idempotency key'),
+      dry_run: z.boolean().optional().describe('Preview without applying'),
+    },
+    async (args) => {
+      if (args.dry_run) {
+        return wrapToolResult({
+          success: true,
+          dry_run: true,
+          idempotency_key: args.idempotency_key || null,
+          request: {
+            action: 'reply',
+            ticket_id: args.ticket_id,
+            body_text: args.body_text,
+            internal: args.internal,
+            channel: args.channel,
+            close_after: args.close_after,
+          },
+        });
+      }
+      const result = await executeReplyTicket(api, args, { allowApply: options.allowApply });
+      const deduped = withGorgiasIdempotency(args.idempotency_key, result);
+      return wrapToolResult({
+        ...deduped.result,
+        deduplicated: deduped.deduplicated,
+        idempotency_key: args.idempotency_key || null,
+      });
+    },
+  );
+
+  server.tool(
+    'gorgias_assign_ticket',
+    'Assign/reassign a Gorgias ticket to an agent or team and optionally set priority.',
+    {
+      ticket_id: z.number().describe('The Gorgias ticket ID'),
+      assignee_email: z.string().optional().describe('Agent email to assign'),
+      team: z.string().optional().describe('Team name or team ID'),
+      priority: z.enum(['low', 'normal', 'high', 'urgent']).optional().describe('Priority level'),
+      idempotency_key: z.string().optional().describe('Optional idempotency key'),
+      dry_run: z.boolean().optional().describe('Preview without applying'),
+    },
+    async (args) => {
+      if (args.dry_run) {
+        return wrapToolResult({
+          success: true,
+          dry_run: true,
+          idempotency_key: args.idempotency_key || null,
+          request: {
+            action: 'assign',
+            ticket_id: args.ticket_id,
+            assignee_email: args.assignee_email,
+            team: args.team,
+            priority: args.priority,
+          },
+        });
+      }
+      const result = await executeAssignTicket(api, args, { allowApply: options.allowApply });
+      const deduped = withGorgiasIdempotency(args.idempotency_key, result);
+      return wrapToolResult({
+        ...deduped.result,
+        deduplicated: deduped.deduplicated,
+        idempotency_key: args.idempotency_key || null,
+      });
+    },
+  );
+
+  server.tool(
+    'gorgias_set_ticket_state',
+    'Set Gorgias ticket status/priority/custom fields and optional tag add/remove in one operation.',
+    {
+      ticket_id: z.number().describe('The Gorgias ticket ID'),
+      status: z.enum(['open', 'closed', 'snoozed']).optional().describe('Ticket status'),
+      priority: z.enum(['low', 'normal', 'high', 'urgent']).optional().describe('Priority level'),
+      custom_fields: z
+        .record(z.unknown())
+        .optional()
+        .describe('Custom fields payload accepted by Gorgias'),
+      tags_to_add: z.array(z.string()).optional().describe('Tags to add'),
+      tags_to_remove: z.array(z.string()).optional().describe('Tags to remove'),
+      idempotency_key: z.string().optional().describe('Optional idempotency key'),
+      dry_run: z.boolean().optional().describe('Preview without applying'),
+    },
+    async (args) => {
+      if (args.dry_run) {
+        return wrapToolResult({
+          success: true,
+          dry_run: true,
+          idempotency_key: args.idempotency_key || null,
+          request: {
+            action: 'set_state',
+            ticket_id: args.ticket_id,
+            status: args.status,
+            priority: args.priority,
+            custom_fields: args.custom_fields,
+            tags_to_add: args.tags_to_add,
+            tags_to_remove: args.tags_to_remove,
+          },
+        });
+      }
+      const result = await executeSetTicketState(api, args, { allowApply: options.allowApply });
+      const deduped = withGorgiasIdempotency(args.idempotency_key, result);
+      return wrapToolResult({
+        ...deduped.result,
+        deduplicated: deduped.deduplicated,
+        idempotency_key: args.idempotency_key || null,
+      });
     },
   );
 

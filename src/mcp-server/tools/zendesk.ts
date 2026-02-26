@@ -15,6 +15,20 @@ import {
 
 export type ZendeskToolOptions = IntegrationToolOptions;
 
+const zendeskIdempotencyStore = new Map<string, unknown>();
+
+function withZendeskIdempotency<T>(
+  key: string | undefined,
+  result: T,
+): { deduplicated: boolean; result: T } {
+  if (!key) return { deduplicated: false, result };
+  if (zendeskIdempotencyStore.has(key)) {
+    return { deduplicated: true, result: zendeskIdempotencyStore.get(key) as T };
+  }
+  zendeskIdempotencyStore.set(key, result);
+  return { deduplicated: false, result };
+}
+
 // Typed response shapes for Zendesk API responses
 interface ZendeskUsersResponse {
   users?: Array<{ id: number; email?: string; name?: string }>;
@@ -481,6 +495,222 @@ export function registerZendeskTools(
       });
 
       return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
+    },
+  );
+
+  server.tool(
+    'zendesk_reply_ticket',
+    'Reply to a Zendesk ticket with custom text (public or internal). Requires --apply or STATESET_ALLOW_APPLY.',
+    {
+      ticket_id: z.number().describe('Zendesk ticket ID'),
+      body: z.string().describe('Reply body text'),
+      public: z.boolean().optional().default(true).describe('Whether reply is public'),
+      close_after: z.boolean().optional().describe('Mark ticket solved after replying'),
+      idempotency_key: z.string().optional().describe('Optional idempotency key'),
+      dry_run: z.boolean().optional().describe('Preview without applying'),
+      max_chars: MaxCharsSchema,
+    },
+    async (args) => {
+      if (args.dry_run) {
+        return wrapToolResult(
+          {
+            success: true,
+            dry_run: true,
+            idempotency_key: args.idempotency_key || null,
+            request: {
+              action: 'reply',
+              ticket_id: args.ticket_id,
+              body: args.body,
+              public: args.public,
+              close_after: args.close_after,
+            },
+          },
+          args.max_chars as number | undefined,
+        );
+      }
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
+
+      const ticket: Record<string, unknown> = {
+        comment: { body: args.body, public: args.public },
+      };
+      if (args.close_after) {
+        ticket.status = 'solved';
+      }
+
+      const result = await runRequest(zendesk, options, {
+        method: 'PUT',
+        path: `/tickets/${args.ticket_id}.json`,
+        body: { ticket },
+      });
+
+      const deduped = withZendeskIdempotency(args.idempotency_key, result);
+      return wrapToolResult(
+        {
+          success: true,
+          ...deduped.result,
+          deduplicated: deduped.deduplicated,
+          idempotency_key: args.idempotency_key || null,
+        },
+        args.max_chars as number | undefined,
+      );
+    },
+  );
+
+  server.tool(
+    'zendesk_assign_ticket',
+    'Assign/reassign a Zendesk ticket to an agent or group and optionally set priority.',
+    {
+      ticket_id: z.number().describe('Zendesk ticket ID'),
+      assignee_email: z.string().optional().describe('Agent email to assign'),
+      group_name: z.string().optional().describe('Group name to assign'),
+      priority: z.enum(['low', 'normal', 'high', 'urgent']).optional().describe('Ticket priority'),
+      idempotency_key: z.string().optional().describe('Optional idempotency key'),
+      dry_run: z.boolean().optional().describe('Preview without applying'),
+      max_chars: MaxCharsSchema,
+    },
+    async (args) => {
+      if (args.dry_run) {
+        return wrapToolResult(
+          {
+            success: true,
+            dry_run: true,
+            idempotency_key: args.idempotency_key || null,
+            request: {
+              action: 'assign',
+              ticket_id: args.ticket_id,
+              assignee_email: args.assignee_email,
+              group_name: args.group_name,
+              priority: args.priority,
+            },
+          },
+          args.max_chars as number | undefined,
+        );
+      }
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
+
+      const update: Record<string, unknown> = {};
+      if (args.priority) update.priority = args.priority;
+
+      if (args.assignee_email) {
+        const assigneeId = await resolveAssigneeId(zendesk, args.assignee_email);
+        if (!assigneeId) {
+          throw new Error(`Assignee email not found: ${args.assignee_email}`);
+        }
+        update.assignee_id = assigneeId;
+      }
+
+      if (args.group_name) {
+        const groupId = await resolveGroupId(zendesk, args.group_name);
+        if (!groupId) {
+          throw new Error(`Group not found: ${args.group_name}`);
+        }
+        update.group_id = groupId;
+      }
+
+      if (Object.keys(update).length === 0) {
+        throw new Error('Provide assignee_email, group_name, or priority');
+      }
+
+      const result = await runRequest(zendesk, options, {
+        method: 'PUT',
+        path: `/tickets/${args.ticket_id}.json`,
+        body: { ticket: update },
+      });
+
+      const deduped = withZendeskIdempotency(args.idempotency_key, result);
+      return wrapToolResult(
+        {
+          success: true,
+          ...deduped.result,
+          deduplicated: deduped.deduplicated,
+          idempotency_key: args.idempotency_key || null,
+        },
+        args.max_chars as number | undefined,
+      );
+    },
+  );
+
+  server.tool(
+    'zendesk_set_ticket_state',
+    'Set Zendesk ticket status/priority/custom fields and optional tag add/remove in one operation.',
+    {
+      ticket_id: z.number().describe('Zendesk ticket ID'),
+      status: z.enum(['new', 'open', 'pending', 'hold', 'solved', 'closed']).optional(),
+      priority: z.enum(['low', 'normal', 'high', 'urgent']).optional(),
+      custom_fields: z
+        .array(z.object({ id: z.number(), value: z.unknown() }))
+        .optional()
+        .describe('Custom fields to set'),
+      tags_to_add: z.array(z.string()).optional().describe('Tags to add'),
+      tags_to_remove: z.array(z.string()).optional().describe('Tags to remove'),
+      internal_note: z.string().optional().describe('Optional internal note'),
+      idempotency_key: z.string().optional().describe('Optional idempotency key'),
+      dry_run: z.boolean().optional().describe('Preview without applying'),
+      max_chars: MaxCharsSchema,
+    },
+    async (args) => {
+      if (args.dry_run) {
+        return wrapToolResult(
+          {
+            success: true,
+            dry_run: true,
+            idempotency_key: args.idempotency_key || null,
+            request: {
+              action: 'set_state',
+              ticket_id: args.ticket_id,
+              status: args.status,
+              priority: args.priority,
+              custom_fields: args.custom_fields,
+              tags_to_add: args.tags_to_add,
+              tags_to_remove: args.tags_to_remove,
+              internal_note: args.internal_note,
+            },
+          },
+          args.max_chars as number | undefined,
+        );
+      }
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
+
+      const update: Record<string, unknown> = {};
+      if (args.status) update.status = args.status;
+      if (args.priority) update.priority = args.priority;
+      if (args.custom_fields) update.custom_fields = args.custom_fields;
+      if (args.internal_note) {
+        update.comment = { body: args.internal_note, public: false };
+      }
+
+      if (args.tags_to_add || args.tags_to_remove) {
+        const ticket = await zendeskRaw(zendesk, {
+          method: 'GET',
+          path: `/tickets/${args.ticket_id}.json`,
+        });
+        const existingTags = (ticket.data as ZendeskTicketResponse)?.ticket?.tags ?? [];
+        update.tags = mergeTags(existingTags, args.tags_to_add, args.tags_to_remove);
+      }
+
+      if (Object.keys(update).length === 0) {
+        throw new Error('No fields provided for state update');
+      }
+
+      const result = await runRequest(zendesk, options, {
+        method: 'PUT',
+        path: `/tickets/${args.ticket_id}.json`,
+        body: { ticket: update },
+      });
+
+      const deduped = withZendeskIdempotency(args.idempotency_key, result);
+      return wrapToolResult(
+        {
+          success: true,
+          ...deduped.result,
+          deduplicated: deduped.deduplicated,
+          idempotency_key: args.idempotency_key || null,
+        },
+        args.max_chars as number | undefined,
+      );
     },
   );
 

@@ -17,6 +17,22 @@ interface ShipStationLabelResponse {
   shipmentId?: number | string;
 }
 
+const shipstationIdempotencyStore = new Map<string, { status: number; data: unknown }>();
+
+function withShipStationIdempotency(
+  key: string | undefined,
+  status: number,
+  data: unknown,
+): { deduplicated: boolean; status: number; data: unknown } {
+  if (!key) return { deduplicated: false, status, data };
+  const existing = shipstationIdempotencyStore.get(key);
+  if (existing) {
+    return { deduplicated: true, status: existing.status, data: existing.data };
+  }
+  shipstationIdempotencyStore.set(key, { status, data });
+  return { deduplicated: false, status, data };
+}
+
 const runRequest = createRequestRunner<ShipStationConfig>((config, args) =>
   shipstationRequest({ shipstation: config, ...args }),
 );
@@ -380,6 +396,174 @@ export function registerShipStationTools(
       };
 
       return wrapToolResult(payload, args.max_chars);
+    },
+  );
+
+  server.tool(
+    'shipstation_create_order',
+    'Create a ShipStation order. Requires --apply or STATESET_ALLOW_APPLY.',
+    {
+      order: z.record(z.unknown()).describe('ShipStation order payload'),
+      idempotency_key: z.string().optional().describe('Optional idempotency key'),
+      dry_run: z.boolean().optional().default(false).describe('Preview without applying'),
+      max_chars: MaxCharsSchema,
+    },
+    async (args) => {
+      const request = { method: 'POST', path: '/orders/createorder', body: args.order };
+      if (args.dry_run) {
+        return wrapToolResult(
+          { success: true, dry_run: true, idempotency_key: args.idempotency_key || null, request },
+          args.max_chars,
+        );
+      }
+
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
+      const result = await runRequest(shipstation, options, request);
+      const deduped = withShipStationIdempotency(args.idempotency_key, result.status, result.data);
+      return wrapToolResult(
+        { success: true, idempotency_key: args.idempotency_key || null, ...deduped },
+        args.max_chars,
+      );
+    },
+  );
+
+  server.tool(
+    'shipstation_cancel_shipment',
+    'Cancel a ShipStation shipment. Requires --apply or STATESET_ALLOW_APPLY.',
+    {
+      shipment_id: z.number().describe('ShipStation shipment ID'),
+      reason: z.string().optional().describe('Optional cancellation reason'),
+      idempotency_key: z.string().optional().describe('Optional idempotency key'),
+      dry_run: z.boolean().optional().default(false).describe('Preview without applying'),
+      max_chars: MaxCharsSchema,
+    },
+    async (args) => {
+      const request = {
+        method: 'POST',
+        path: '/shipments/cancel',
+        body: { shipmentId: args.shipment_id, reason: args.reason },
+      };
+      if (args.dry_run) {
+        return wrapToolResult(
+          { success: true, dry_run: true, idempotency_key: args.idempotency_key || null, request },
+          args.max_chars,
+        );
+      }
+
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
+      const result = await runRequest(shipstation, options, request);
+      const deduped = withShipStationIdempotency(args.idempotency_key, result.status, result.data);
+      return wrapToolResult(
+        { success: true, idempotency_key: args.idempotency_key || null, ...deduped },
+        args.max_chars,
+      );
+    },
+  );
+
+  server.tool(
+    'shipstation_create_scan_form',
+    'Create a ShipStation scan form/manifest for shipments. Requires --apply or STATESET_ALLOW_APPLY.',
+    {
+      shipment_ids: z.array(z.number()).min(1).describe('Shipment IDs to include'),
+      idempotency_key: z.string().optional().describe('Optional idempotency key'),
+      dry_run: z.boolean().optional().default(false).describe('Preview without applying'),
+      max_chars: MaxCharsSchema,
+    },
+    async (args) => {
+      const request = {
+        method: 'POST',
+        path: '/scanforms',
+        body: { shipmentIds: args.shipment_ids },
+      };
+      if (args.dry_run) {
+        return wrapToolResult(
+          { success: true, dry_run: true, idempotency_key: args.idempotency_key || null, request },
+          args.max_chars,
+        );
+      }
+
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
+      const result = await runRequest(shipstation, options, request);
+      const deduped = withShipStationIdempotency(args.idempotency_key, result.status, result.data);
+      return wrapToolResult(
+        { success: true, idempotency_key: args.idempotency_key || null, ...deduped },
+        args.max_chars,
+      );
+    },
+  );
+
+  server.tool(
+    'shipstation_get_scan_form',
+    'Get a ShipStation scan form/manifest by ID.',
+    {
+      scan_form_id: z.number().describe('Scan form ID'),
+      max_chars: MaxCharsSchema,
+    },
+    async (args) => {
+      const result = await runRequest(shipstation, options, {
+        method: 'GET',
+        path: `/scanforms/${args.scan_form_id}`,
+      });
+      return wrapToolResult({ success: true, ...result }, args.max_chars);
+    },
+  );
+
+  server.tool(
+    'shipstation_schedule_pickup',
+    'Schedule a ShipStation carrier pickup. Requires --apply or STATESET_ALLOW_APPLY.',
+    {
+      pickup: z.record(z.unknown()).describe('Pickup payload accepted by ShipStation'),
+      idempotency_key: z.string().optional().describe('Optional idempotency key'),
+      dry_run: z.boolean().optional().default(false).describe('Preview without applying'),
+      max_chars: MaxCharsSchema,
+    },
+    async (args) => {
+      const request = { method: 'POST', path: '/pickups', body: args.pickup };
+      if (args.dry_run) {
+        return wrapToolResult(
+          { success: true, dry_run: true, idempotency_key: args.idempotency_key || null, request },
+          args.max_chars,
+        );
+      }
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
+      const result = await runRequest(shipstation, options, request);
+      const deduped = withShipStationIdempotency(args.idempotency_key, result.status, result.data);
+      return wrapToolResult(
+        { success: true, idempotency_key: args.idempotency_key || null, ...deduped },
+        args.max_chars,
+      );
+    },
+  );
+
+  server.tool(
+    'shipstation_cancel_pickup',
+    'Cancel a ShipStation carrier pickup. Requires --apply or STATESET_ALLOW_APPLY.',
+    {
+      pickup_id: z.number().describe('Pickup ID'),
+      idempotency_key: z.string().optional().describe('Optional idempotency key'),
+      dry_run: z.boolean().optional().default(false).describe('Preview without applying'),
+      max_chars: MaxCharsSchema,
+    },
+    async (args) => {
+      const request = { method: 'DELETE', path: `/pickups/${args.pickup_id}` };
+      if (args.dry_run) {
+        return wrapToolResult(
+          { success: true, dry_run: true, idempotency_key: args.idempotency_key || null, request },
+          args.max_chars,
+        );
+      }
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
+      const result = await runRequest(shipstation, options, request);
+      const deduped = withShipStationIdempotency(args.idempotency_key, result.status, result.data);
+      return wrapToolResult(
+        { success: true, idempotency_key: args.idempotency_key || null, ...deduped },
+        args.max_chars,
+      );
     },
   );
 

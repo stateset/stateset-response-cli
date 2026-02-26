@@ -174,6 +174,52 @@ const ROUTE_ORDER_MUTATION = `
   }
 `;
 
+const CANCEL_SHIPMENT_MUTATION = `
+  mutation cancelShipment($shipment_id: String!, $reason: String) {
+    shipment_cancel(data: { shipment_id: $shipment_id, reason: $reason }) {
+      shipment {
+        id
+      }
+    }
+  }
+`;
+
+const CREATE_RETURN_MUTATION = `
+  mutation createReturn($order_id: String!, $reason: String, $items: JSON) {
+    return_create(data: { order_id: $order_id, reason: $reason, items: $items }) {
+      return {
+        id
+      }
+    }
+  }
+`;
+
+const UPDATE_RETURN_MUTATION = `
+  mutation updateReturn($return_id: String!, $status: String, $notes: String) {
+    return_update(data: { return_id: $return_id, status: $status, notes: $notes }) {
+      return {
+        id
+      }
+    }
+  }
+`;
+
+const shipheroIdempotencyStore = new Map<string, { status: number; data: unknown }>();
+
+function withShipHeroIdempotency(
+  key: string | undefined,
+  status: number,
+  data: unknown,
+): { deduplicated: boolean; status: number; data: unknown } {
+  if (!key) return { deduplicated: false, status, data };
+  const existing = shipheroIdempotencyStore.get(key);
+  if (existing) {
+    return { deduplicated: true, status: existing.status, data: existing.data };
+  }
+  shipheroIdempotencyStore.set(key, { status, data });
+  return { deduplicated: false, status, data };
+}
+
 async function runShipHeroGraphql(
   shiphero: ShipHeroConfig,
   options: IntegrationToolOptions,
@@ -405,6 +451,203 @@ export function registerShipHeroTools(
           failed: errors.length,
           errors: errors.length > 0 ? errors : undefined,
         },
+        args.max_chars as number | undefined,
+      );
+    },
+  );
+
+  server.tool(
+    'shiphero_set_order_hold',
+    'Put a ShipHero order on hold or release it. Requires --apply or STATESET_ALLOW_APPLY.',
+    {
+      order_id: z.string().describe('ShipHero order ID'),
+      on_hold: z.boolean().describe('true to hold, false to release'),
+      note: z.string().optional().describe('Optional packing note'),
+      idempotency_key: z.string().optional().describe('Optional idempotency key'),
+      dry_run: z.boolean().optional().default(false).describe('Preview without applying'),
+      max_chars: MaxCharsSchema,
+    },
+    async (args) => {
+      const request = {
+        query: UPDATE_ORDER_MUTATION,
+        variables: { id: args.order_id, on_hold: args.on_hold, notes: args.note },
+      };
+      if (args.dry_run) {
+        return wrapToolResult(
+          { success: true, dry_run: true, idempotency_key: args.idempotency_key || null, request },
+          args.max_chars as number | undefined,
+        );
+      }
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
+      const result = await runShipHeroGraphql(shiphero, options, request.query, request.variables);
+      const deduped = withShipHeroIdempotency(args.idempotency_key, result.status, result.data);
+      return wrapToolResult(
+        { success: true, idempotency_key: args.idempotency_key || null, ...deduped },
+        args.max_chars as number | undefined,
+      );
+    },
+  );
+
+  server.tool(
+    'shiphero_cancel_shipment',
+    'Cancel a ShipHero shipment. Requires --apply or STATESET_ALLOW_APPLY.',
+    {
+      shipment_id: z.string().describe('ShipHero shipment ID'),
+      reason: z.string().optional().describe('Optional cancel reason'),
+      mutation_override: z
+        .string()
+        .optional()
+        .describe('Optional GraphQL mutation override for account-specific schemas'),
+      idempotency_key: z.string().optional().describe('Optional idempotency key'),
+      dry_run: z.boolean().optional().default(false).describe('Preview without applying'),
+      max_chars: MaxCharsSchema,
+    },
+    async (args) => {
+      const mutation = args.mutation_override || CANCEL_SHIPMENT_MUTATION;
+      const variables = { shipment_id: args.shipment_id, reason: args.reason };
+      if (args.dry_run) {
+        return wrapToolResult(
+          {
+            success: true,
+            dry_run: true,
+            idempotency_key: args.idempotency_key || null,
+            request: { mutation, variables },
+          },
+          args.max_chars as number | undefined,
+        );
+      }
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
+      const result = await runShipHeroGraphql(shiphero, options, mutation, variables);
+      const deduped = withShipHeroIdempotency(args.idempotency_key, result.status, result.data);
+      return wrapToolResult(
+        { success: true, idempotency_key: args.idempotency_key || null, ...deduped },
+        args.max_chars as number | undefined,
+      );
+    },
+  );
+
+  server.tool(
+    'shiphero_create_return',
+    'Create a ShipHero return. Requires --apply or STATESET_ALLOW_APPLY.',
+    {
+      order_id: z.string().describe('ShipHero order ID'),
+      reason: z.string().optional().describe('Return reason'),
+      items: z.array(z.record(z.unknown())).optional().describe('Return line items payload'),
+      mutation_override: z
+        .string()
+        .optional()
+        .describe('Optional GraphQL mutation override for account-specific schemas'),
+      idempotency_key: z.string().optional().describe('Optional idempotency key'),
+      dry_run: z.boolean().optional().default(false).describe('Preview without applying'),
+      max_chars: MaxCharsSchema,
+    },
+    async (args) => {
+      const mutation = args.mutation_override || CREATE_RETURN_MUTATION;
+      const variables = { order_id: args.order_id, reason: args.reason, items: args.items };
+      if (args.dry_run) {
+        return wrapToolResult(
+          {
+            success: true,
+            dry_run: true,
+            idempotency_key: args.idempotency_key || null,
+            request: { mutation, variables },
+          },
+          args.max_chars as number | undefined,
+        );
+      }
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
+      const result = await runShipHeroGraphql(shiphero, options, mutation, variables);
+      const deduped = withShipHeroIdempotency(args.idempotency_key, result.status, result.data);
+      return wrapToolResult(
+        { success: true, idempotency_key: args.idempotency_key || null, ...deduped },
+        args.max_chars as number | undefined,
+      );
+    },
+  );
+
+  server.tool(
+    'shiphero_update_return',
+    'Update a ShipHero return. Requires --apply or STATESET_ALLOW_APPLY.',
+    {
+      return_id: z.string().describe('ShipHero return ID'),
+      status: z.string().optional().describe('Return status'),
+      notes: z.string().optional().describe('Return notes'),
+      mutation_override: z
+        .string()
+        .optional()
+        .describe('Optional GraphQL mutation override for account-specific schemas'),
+      idempotency_key: z.string().optional().describe('Optional idempotency key'),
+      dry_run: z.boolean().optional().default(false).describe('Preview without applying'),
+      max_chars: MaxCharsSchema,
+    },
+    async (args) => {
+      const mutation = args.mutation_override || UPDATE_RETURN_MUTATION;
+      const variables = { return_id: args.return_id, status: args.status, notes: args.notes };
+      if (args.dry_run) {
+        return wrapToolResult(
+          {
+            success: true,
+            dry_run: true,
+            idempotency_key: args.idempotency_key || null,
+            request: { mutation, variables },
+          },
+          args.max_chars as number | undefined,
+        );
+      }
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
+      const result = await runShipHeroGraphql(shiphero, options, mutation, variables);
+      const deduped = withShipHeroIdempotency(args.idempotency_key, result.status, result.data);
+      return wrapToolResult(
+        { success: true, idempotency_key: args.idempotency_key || null, ...deduped },
+        args.max_chars as number | undefined,
+      );
+    },
+  );
+
+  server.tool(
+    'shiphero_resolve_order_exception',
+    'Resolve a ShipHero order exception by releasing hold, optionally reprioritizing, and adding a note.',
+    {
+      order_id: z.string().describe('ShipHero order ID'),
+      release_hold: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe('Release hold if currently blocked'),
+      priority: z.enum(['normal', 'high', 'urgent']).optional().describe('Optional new priority'),
+      note: z.string().optional().describe('Resolution note'),
+      idempotency_key: z.string().optional().describe('Optional idempotency key'),
+      dry_run: z.boolean().optional().default(false).describe('Preview without applying'),
+      max_chars: MaxCharsSchema,
+    },
+    async (args) => {
+      const variables = {
+        id: args.order_id,
+        on_hold: args.release_hold ? false : undefined,
+        priority: args.priority,
+        notes: args.note,
+      };
+      if (args.dry_run) {
+        return wrapToolResult(
+          {
+            success: true,
+            dry_run: true,
+            idempotency_key: args.idempotency_key || null,
+            request: { query: UPDATE_ORDER_MUTATION, variables },
+          },
+          args.max_chars as number | undefined,
+        );
+      }
+      const blocked = guardWrite(options);
+      if (blocked) return blocked;
+      const result = await runShipHeroGraphql(shiphero, options, UPDATE_ORDER_MUTATION, variables);
+      const deduped = withShipHeroIdempotency(args.idempotency_key, result.status, result.data);
+      return wrapToolResult(
+        { success: true, idempotency_key: args.idempotency_key || null, ...deduped },
         args.max_chars as number | undefined,
       );
     },

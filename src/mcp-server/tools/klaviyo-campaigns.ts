@@ -11,6 +11,22 @@ import {
   buildRelationshipPayload,
 } from './klaviyo-common.js';
 
+const klaviyoIdempotencyStore = new Map<string, { status: number; data: unknown }>();
+
+function withKlaviyoIdempotency(
+  key: string | undefined,
+  status: number,
+  data: unknown,
+): { deduplicated: boolean; status: number; data: unknown } {
+  if (!key) return { deduplicated: false, status, data };
+  const existing = klaviyoIdempotencyStore.get(key);
+  if (existing) {
+    return { deduplicated: true, status: existing.status, data: existing.data };
+  }
+  klaviyoIdempotencyStore.set(key, { status, data });
+  return { deduplicated: false, status, data };
+}
+
 export function registerKlaviyoCampaignTools(
   server: McpServer,
   klaviyo: KlaviyoConfig,
@@ -1013,6 +1029,191 @@ export function registerKlaviyoCampaignTools(
   );
 
   server.tool(
+    'klaviyo_schedule_campaign',
+    'Schedule a Klaviyo campaign send. Requires --apply or STATESET_ALLOW_APPLY.',
+    {
+      campaign_id: z.string().describe('Klaviyo campaign ID'),
+      scheduled_at: z.string().describe('ISO timestamp for scheduled send'),
+      attributes_override: z
+        .record(z.unknown())
+        .optional()
+        .describe('Override default schedule attributes'),
+      endpoint_override: z
+        .string()
+        .optional()
+        .describe('Override endpoint (default /campaigns/{id})'),
+      idempotency_key: z.string().optional().describe('Optional idempotency key'),
+      dry_run: z.boolean().optional().default(false).describe('Preview without applying'),
+      revision: z.string().optional().describe('Override Klaviyo revision header'),
+      max_chars: z.number().min(2000).max(20000).optional(),
+    },
+    async (args) => {
+      const attributes = (args.attributes_override as Record<string, unknown> | undefined) || {
+        status: 'scheduled',
+        send_time: args.scheduled_at,
+      };
+      const body = buildJsonApiPayload({
+        type: 'campaign',
+        id: args.campaign_id as string,
+        attributes,
+      });
+
+      if (args.dry_run) {
+        const { text } = stringifyToolResult(
+          {
+            success: true,
+            dry_run: true,
+            idempotency_key: args.idempotency_key || null,
+            request: {
+              method: 'PATCH',
+              path: args.endpoint_override || `/campaigns/${args.campaign_id}`,
+              body,
+            },
+          },
+          args.max_chars as number | undefined,
+        );
+        return { content: [{ type: 'text' as const, text }] };
+      }
+
+      if (!options.allowApply) return writeNotAllowed();
+      const result = await runKlaviyoRequest(klaviyo, options, {
+        method: 'PATCH',
+        path: args.endpoint_override || `/campaigns/${args.campaign_id}`,
+        body,
+        revision: args.revision as string | undefined,
+      });
+      const deduped = withKlaviyoIdempotency(args.idempotency_key, result.status, result.data);
+      const { text } = stringifyToolResult(
+        { success: true, idempotency_key: args.idempotency_key || null, ...deduped },
+        args.max_chars as number | undefined,
+      );
+      return { content: [{ type: 'text' as const, text }] };
+    },
+  );
+
+  server.tool(
+    'klaviyo_send_campaign_now',
+    'Trigger immediate send for a Klaviyo campaign. Requires --apply or STATESET_ALLOW_APPLY.',
+    {
+      campaign_id: z.string().describe('Klaviyo campaign ID'),
+      attributes_override: z
+        .record(z.unknown())
+        .optional()
+        .describe('Override default immediate-send attributes'),
+      endpoint_override: z
+        .string()
+        .optional()
+        .describe('Override endpoint (default /campaigns/{id})'),
+      idempotency_key: z.string().optional().describe('Optional idempotency key'),
+      dry_run: z.boolean().optional().default(false).describe('Preview without applying'),
+      revision: z.string().optional().describe('Override Klaviyo revision header'),
+      max_chars: z.number().min(2000).max(20000).optional(),
+    },
+    async (args) => {
+      const attributes = (args.attributes_override as Record<string, unknown> | undefined) || {
+        status: 'live',
+      };
+      const body = buildJsonApiPayload({
+        type: 'campaign',
+        id: args.campaign_id as string,
+        attributes,
+      });
+
+      if (args.dry_run) {
+        const { text } = stringifyToolResult(
+          {
+            success: true,
+            dry_run: true,
+            idempotency_key: args.idempotency_key || null,
+            request: {
+              method: 'PATCH',
+              path: args.endpoint_override || `/campaigns/${args.campaign_id}`,
+              body,
+            },
+          },
+          args.max_chars as number | undefined,
+        );
+        return { content: [{ type: 'text' as const, text }] };
+      }
+
+      if (!options.allowApply) return writeNotAllowed();
+      const result = await runKlaviyoRequest(klaviyo, options, {
+        method: 'PATCH',
+        path: args.endpoint_override || `/campaigns/${args.campaign_id}`,
+        body,
+        revision: args.revision as string | undefined,
+      });
+      const deduped = withKlaviyoIdempotency(args.idempotency_key, result.status, result.data);
+      const { text } = stringifyToolResult(
+        { success: true, idempotency_key: args.idempotency_key || null, ...deduped },
+        args.max_chars as number | undefined,
+      );
+      return { content: [{ type: 'text' as const, text }] };
+    },
+  );
+
+  server.tool(
+    'klaviyo_cancel_campaign',
+    'Cancel a scheduled Klaviyo campaign. Requires --apply or STATESET_ALLOW_APPLY.',
+    {
+      campaign_id: z.string().describe('Klaviyo campaign ID'),
+      attributes_override: z
+        .record(z.unknown())
+        .optional()
+        .describe('Override default cancellation attributes'),
+      endpoint_override: z
+        .string()
+        .optional()
+        .describe('Override endpoint (default /campaigns/{id})'),
+      idempotency_key: z.string().optional().describe('Optional idempotency key'),
+      dry_run: z.boolean().optional().default(false).describe('Preview without applying'),
+      revision: z.string().optional().describe('Override Klaviyo revision header'),
+      max_chars: z.number().min(2000).max(20000).optional(),
+    },
+    async (args) => {
+      const attributes = (args.attributes_override as Record<string, unknown> | undefined) || {
+        status: 'cancelled',
+      };
+      const body = buildJsonApiPayload({
+        type: 'campaign',
+        id: args.campaign_id as string,
+        attributes,
+      });
+
+      if (args.dry_run) {
+        const { text } = stringifyToolResult(
+          {
+            success: true,
+            dry_run: true,
+            idempotency_key: args.idempotency_key || null,
+            request: {
+              method: 'PATCH',
+              path: args.endpoint_override || `/campaigns/${args.campaign_id}`,
+              body,
+            },
+          },
+          args.max_chars as number | undefined,
+        );
+        return { content: [{ type: 'text' as const, text }] };
+      }
+
+      if (!options.allowApply) return writeNotAllowed();
+      const result = await runKlaviyoRequest(klaviyo, options, {
+        method: 'PATCH',
+        path: args.endpoint_override || `/campaigns/${args.campaign_id}`,
+        body,
+        revision: args.revision as string | undefined,
+      });
+      const deduped = withKlaviyoIdempotency(args.idempotency_key, result.status, result.data);
+      const { text } = stringifyToolResult(
+        { success: true, idempotency_key: args.idempotency_key || null, ...deduped },
+        args.max_chars as number | undefined,
+      );
+      return { content: [{ type: 'text' as const, text }] };
+    },
+  );
+
+  server.tool(
     'klaviyo_list_flows',
     'List Klaviyo flows.',
     {
@@ -1184,6 +1385,122 @@ export function registerKlaviyoCampaignTools(
       });
       const payload = { success: true, ...result };
       const { text } = stringifyToolResult(payload, args.max_chars as number | undefined);
+      return { content: [{ type: 'text' as const, text }] };
+    },
+  );
+
+  server.tool(
+    'klaviyo_pause_flow',
+    'Pause a Klaviyo flow. Requires --apply or STATESET_ALLOW_APPLY.',
+    {
+      flow_id: z.string().describe('Klaviyo flow ID'),
+      attributes_override: z
+        .record(z.unknown())
+        .optional()
+        .describe('Override default pause attributes'),
+      endpoint_override: z.string().optional().describe('Override endpoint (default /flows/{id})'),
+      idempotency_key: z.string().optional().describe('Optional idempotency key'),
+      dry_run: z.boolean().optional().default(false).describe('Preview without applying'),
+      revision: z.string().optional().describe('Override Klaviyo revision header'),
+      max_chars: z.number().min(2000).max(20000).optional(),
+    },
+    async (args) => {
+      const attributes = (args.attributes_override as Record<string, unknown> | undefined) || {
+        status: 'manual',
+      };
+      const body = buildJsonApiPayload({
+        type: 'flow',
+        id: args.flow_id as string,
+        attributes,
+      });
+
+      if (args.dry_run) {
+        const { text } = stringifyToolResult(
+          {
+            success: true,
+            dry_run: true,
+            idempotency_key: args.idempotency_key || null,
+            request: {
+              method: 'PATCH',
+              path: args.endpoint_override || `/flows/${args.flow_id}`,
+              body,
+            },
+          },
+          args.max_chars as number | undefined,
+        );
+        return { content: [{ type: 'text' as const, text }] };
+      }
+
+      if (!options.allowApply) return writeNotAllowed();
+      const result = await runKlaviyoRequest(klaviyo, options, {
+        method: 'PATCH',
+        path: args.endpoint_override || `/flows/${args.flow_id}`,
+        body,
+        revision: args.revision as string | undefined,
+      });
+      const deduped = withKlaviyoIdempotency(args.idempotency_key, result.status, result.data);
+      const { text } = stringifyToolResult(
+        { success: true, idempotency_key: args.idempotency_key || null, ...deduped },
+        args.max_chars as number | undefined,
+      );
+      return { content: [{ type: 'text' as const, text }] };
+    },
+  );
+
+  server.tool(
+    'klaviyo_resume_flow',
+    'Resume a paused Klaviyo flow. Requires --apply or STATESET_ALLOW_APPLY.',
+    {
+      flow_id: z.string().describe('Klaviyo flow ID'),
+      attributes_override: z
+        .record(z.unknown())
+        .optional()
+        .describe('Override default resume attributes'),
+      endpoint_override: z.string().optional().describe('Override endpoint (default /flows/{id})'),
+      idempotency_key: z.string().optional().describe('Optional idempotency key'),
+      dry_run: z.boolean().optional().default(false).describe('Preview without applying'),
+      revision: z.string().optional().describe('Override Klaviyo revision header'),
+      max_chars: z.number().min(2000).max(20000).optional(),
+    },
+    async (args) => {
+      const attributes = (args.attributes_override as Record<string, unknown> | undefined) || {
+        status: 'live',
+      };
+      const body = buildJsonApiPayload({
+        type: 'flow',
+        id: args.flow_id as string,
+        attributes,
+      });
+
+      if (args.dry_run) {
+        const { text } = stringifyToolResult(
+          {
+            success: true,
+            dry_run: true,
+            idempotency_key: args.idempotency_key || null,
+            request: {
+              method: 'PATCH',
+              path: args.endpoint_override || `/flows/${args.flow_id}`,
+              body,
+            },
+          },
+          args.max_chars as number | undefined,
+        );
+        return { content: [{ type: 'text' as const, text }] };
+      }
+
+      if (!options.allowApply) return writeNotAllowed();
+      const result = await runKlaviyoRequest(klaviyo, options, {
+        method: 'PATCH',
+        path: args.endpoint_override || `/flows/${args.flow_id}`,
+        body,
+        revision: args.revision as string | undefined,
+      });
+      const deduped = withKlaviyoIdempotency(args.idempotency_key, result.status, result.data);
+      const { text } = stringifyToolResult(
+        { success: true, idempotency_key: args.idempotency_key || null, ...deduped },
+        args.max_chars as number | undefined,
+      );
       return { content: [{ type: 'text' as const, text }] };
     },
   );
