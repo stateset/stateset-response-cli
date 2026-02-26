@@ -47,11 +47,12 @@ export type WatchOptions = TopLevelOptions & {
   once?: boolean;
 };
 
-export type DeploymentCommandOptions = {
+export type DeploymentCommandOptions = TopLevelOptions & {
   json?: boolean;
   mode?: string;
   status?: string;
   limit?: number | string;
+  offset?: number | string;
 };
 
 export type SnapshotDiffRow = {

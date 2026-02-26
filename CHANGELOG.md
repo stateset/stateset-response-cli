@@ -10,7 +10,7 @@
 ### Features
 - Added tab completion for all slash commands (press Tab to autocomplete).
 - Enriched session switching: shows message count, last activity, and tags on `/resume` and session switch.
-- Updated model aliases to latest Claude 4.6 family (`claude-sonnet-4-6-20250514`, `claude-haiku-4-5-20251001`, `claude-opus-4-6-20250514`).
+- Updated model aliases to latest Claude 4.6 family (`claude-sonnet-4-6`, `claude-haiku-4-5-20251001`, `claude-opus-4-6-20250514`).
 - Redesigned welcome screen: concise essential commands instead of 70-line wall of text.
 
 ### Fixes

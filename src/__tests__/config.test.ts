@@ -86,7 +86,7 @@ describe('getRuntimeContext', () => {
 
 describe('resolveModel', () => {
   it('resolves alias "sonnet"', () => {
-    expect(resolveModel('sonnet')).toBe('claude-sonnet-4-6-20250514');
+    expect(resolveModel('sonnet')).toBe('claude-sonnet-4-6');
   });
 
   it('resolves alias "haiku"', () => {
@@ -98,12 +98,16 @@ describe('resolveModel', () => {
   });
 
   it('is case-insensitive', () => {
-    expect(resolveModel('SONNET')).toBe('claude-sonnet-4-6-20250514');
+    expect(resolveModel('SONNET')).toBe('claude-sonnet-4-6');
     expect(resolveModel('Haiku')).toBe('claude-haiku-4-5-20251001');
   });
 
   it('accepts full model ID', () => {
-    expect(resolveModel('claude-sonnet-4-6-20250514')).toBe('claude-sonnet-4-6-20250514');
+    expect(resolveModel('claude-sonnet-4-6')).toBe('claude-sonnet-4-6');
+  });
+
+  it('maps legacy Sonnet model ID to canonical model ID', () => {
+    expect(resolveModel('claude-sonnet-4-6-20250514')).toBe('claude-sonnet-4-6');
   });
 
   it('returns null for unknown model', () => {
@@ -113,7 +117,7 @@ describe('resolveModel', () => {
   });
 
   it('trims whitespace', () => {
-    expect(resolveModel('  sonnet  ')).toBe('claude-sonnet-4-6-20250514');
+    expect(resolveModel('  sonnet  ')).toBe('claude-sonnet-4-6');
   });
 
   it('throws for invalid model in strict resolver', () => {

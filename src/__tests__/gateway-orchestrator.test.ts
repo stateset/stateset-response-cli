@@ -6,7 +6,7 @@ vi.mock('../config.js', () => ({
     orgConfig: {},
     anthropicApiKey: 'key',
   })),
-  getConfiguredModel: vi.fn(() => 'claude-sonnet-4-6-20250514'),
+  getConfiguredModel: vi.fn(() => 'claude-sonnet-4-6'),
   resolveModelOrThrow: vi.fn((input: string) => {
     if (input === 'bad-model') {
       throw new Error('Unknown model "bad-model". Valid: sonnet, haiku, opus');
@@ -95,7 +95,7 @@ describe('Orchestrator', () => {
   });
 
   it('resolves configured model using strict validation', async () => {
-    const orchestrator = new Orchestrator({ model: 'claude-sonnet-4-6-20250514' });
+    const orchestrator = new Orchestrator({ model: 'claude-sonnet-4-6' });
     vi.spyOn(
       orchestrator as unknown as { startSlack: (_model: unknown) => Promise<StartResult> },
       'startSlack',
@@ -107,7 +107,7 @@ describe('Orchestrator', () => {
 
     await orchestrator.start();
 
-    expect(resolveModelOrThrow).toHaveBeenCalledWith('claude-sonnet-4-6-20250514', 'valid');
+    expect(resolveModelOrThrow).toHaveBeenCalledWith('claude-sonnet-4-6', 'valid');
     await orchestrator.stop();
   });
 

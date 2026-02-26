@@ -14,21 +14,27 @@ export interface OrgConfig {
 }
 
 export const MODEL_IDS = [
-  'claude-sonnet-4-6-20250514',
+  'claude-sonnet-4-6',
   'claude-haiku-4-5-20251001',
   'claude-opus-4-6-20250514',
 ] as const;
 
 export type ModelId = (typeof MODEL_IDS)[number];
+type LegacyModelId = 'claude-sonnet-4-6-20250514';
+type AllowedModelId = ModelId | LegacyModelId;
 
 export const DEFAULT_MODEL: ModelId = MODEL_IDS[0];
 export const MODEL_ALIAS_NAMES = ['sonnet', 'haiku', 'opus'] as const;
 
 export const MODEL_ALIASES: Record<(typeof MODEL_ALIAS_NAMES)[number], ModelId> = {
-  sonnet: 'claude-sonnet-4-6-20250514',
+  sonnet: 'claude-sonnet-4-6',
   haiku: 'claude-haiku-4-5-20251001',
   opus: 'claude-opus-4-6-20250514',
 };
+const LEGACY_MODEL_ALIASES: Record<LegacyModelId, ModelId> = {
+  'claude-sonnet-4-6-20250514': 'claude-sonnet-4-6',
+};
+const ALLOWED_MODEL_IDS = [...MODEL_IDS, ...Object.keys(LEGACY_MODEL_ALIASES)] as const;
 const MODEL_ID_SET = new Set<ModelId>(MODEL_IDS);
 
 export function getModelAliasText(style: 'or' | 'list' = 'or'): string {
@@ -74,7 +80,7 @@ const OrgConfigSchema = z.object({
 const StateSetConfigSchema = z.object({
   currentOrg: z.string().min(1),
   anthropicApiKey: z.string().optional(),
-  model: z.enum(MODEL_IDS).optional(),
+  model: z.enum(ALLOWED_MODEL_IDS).optional(),
   organizations: z.record(z.string(), OrgConfigSchema),
 });
 
@@ -151,7 +157,17 @@ export function loadConfig(): StateSetConfig {
     );
   }
 
-  const config = result.data as StateSetConfig;
+  const parsedConfig = result.data as Omit<StateSetConfig, 'model'> & { model?: AllowedModelId };
+  const normalizedModel = parsedConfig.model ? resolveModel(parsedConfig.model) : null;
+  if (parsedConfig.model && !normalizedModel) {
+    throw new ConfigurationError(
+      `Invalid configuration:\n  - model: Unknown model "${parsedConfig.model}"`,
+    );
+  }
+  const config: StateSetConfig = {
+    ...parsedConfig,
+    model: normalizedModel ?? undefined,
+  };
 
   // Decrypt secrets on load
   if (config.anthropicApiKey) {
@@ -304,7 +320,10 @@ export function getAnthropicApiKey(): string {
 export function getConfiguredModel(): ModelId {
   if (configExists()) {
     const cfg = loadConfig();
-    if (cfg.model) return cfg.model;
+    if (cfg.model) {
+      const resolved = resolveModel(cfg.model);
+      if (resolved) return resolved;
+    }
   }
   return DEFAULT_MODEL;
 }
@@ -315,6 +334,8 @@ export function resolveModel(input: string): ModelId | null {
   const alias = lower as (typeof MODEL_ALIAS_NAMES)[number];
   if (alias in MODEL_ALIASES) return MODEL_ALIASES[alias];
   if (MODEL_ID_SET.has(lower as ModelId)) return lower as ModelId;
+  const legacy = LEGACY_MODEL_ALIASES[lower as LegacyModelId];
+  if (legacy) return legacy;
   return null;
 }
 
@@ -335,15 +356,21 @@ export function migrateConfigSecrets(): boolean {
       return false;
     }
 
-    const config = { ...parsedConfig.data } as StateSetConfig;
+    const config = { ...parsedConfig.data } as Omit<StateSetConfig, 'model'> & {
+      model?: AllowedModelId;
+    };
+    const normalizedModel = config.model ? resolveModel(config.model) : null;
     const normalizedConfig: StateSetConfig = {
       currentOrg: config.currentOrg,
-      model: config.model,
+      model: normalizedModel ?? undefined,
       anthropicApiKey: config.anthropicApiKey,
       organizations: { ...config.organizations },
     };
 
     let migrated = false;
+    if (config.model && normalizedModel && normalizedModel !== config.model) {
+      migrated = true;
+    }
     const next: StateSetConfig = {
       ...normalizedConfig,
       anthropicApiKey: normalizedConfig.anthropicApiKey,

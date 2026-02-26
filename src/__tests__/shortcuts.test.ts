@@ -80,7 +80,9 @@ describe('runAgentsCommand', () => {
 
     await runAgentsCommand(['create'], runner, logger);
 
-    expect(logger.warning).toHaveBeenCalledWith(expect.stringContaining('Usage'));
+    expect(logger.warning).toHaveBeenCalledWith(
+      'Usage: /agents create --name <name> --type <type>',
+    );
     expect(runner.callTool).not.toHaveBeenCalled();
   });
 
@@ -99,7 +101,7 @@ describe('runAgentsCommand', () => {
 
     await runAgentsCommand(['get'], runner, logger);
 
-    expect(logger.warning).toHaveBeenCalledWith(expect.stringContaining('Usage'));
+    expect(logger.warning).toHaveBeenCalledWith('Usage: /agents get <agent-id>');
   });
 
   it('switches agent by id', async () => {
@@ -119,7 +121,7 @@ describe('runAgentsCommand', () => {
 
     await runAgentsCommand(['switch'], runner, logger);
 
-    expect(logger.warning).toHaveBeenCalledWith(expect.stringContaining('Usage'));
+    expect(logger.warning).toHaveBeenCalledWith('Usage: /agents switch <agent-id>');
   });
 
   it('warns on missing bootstrap agent id', async () => {
@@ -128,7 +130,7 @@ describe('runAgentsCommand', () => {
 
     await runAgentsCommand(['bootstrap'], runner, logger);
 
-    expect(logger.warning).toHaveBeenCalledWith(expect.stringContaining('Usage'));
+    expect(logger.warning).toHaveBeenCalledWith('Usage: /agents bootstrap <agent-id>');
   });
 
   it('treats unknown action as agent ID lookup', async () => {

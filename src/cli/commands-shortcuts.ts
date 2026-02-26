@@ -4,6 +4,7 @@ import {
   parseCommandArgs,
   parseTopLevelOptionsFromSlashArgs,
   parsePeriodRangeAsIso,
+  parseNonNegativeIntegerOption,
   parsePositiveIntegerOption,
   toLines,
   buildSlashLogger,
@@ -303,10 +304,33 @@ export async function handleShortcutCommand(input: string, ctx: ChatContext) {
       return { handled: true };
     }
     if (command === '/deployments') {
-      await runDeploymentsCommand(tokens, logger, slashOptions.json, {
+      const deploymentOptions: {
+        mode?: string;
+        status?: string;
+        limit?: string;
+        offset?: string;
+        from?: string;
+        dryRun?: boolean;
+        yes?: boolean;
+        strict?: boolean;
+        includeSecrets?: boolean;
+      } = {
         mode: parsedArgs.options.mode,
         status: parsedArgs.options.status,
         limit: parsedArgs.options.limit,
+      };
+      if (parsedArgs.options.offset !== undefined) {
+        deploymentOptions.offset = parsedArgs.options.offset;
+      }
+      if (slashOptions.from) deploymentOptions.from = slashOptions.from;
+      if (slashOptions.dryRun !== undefined) deploymentOptions.dryRun = slashOptions.dryRun;
+      if (slashOptions.yes !== undefined) deploymentOptions.yes = slashOptions.yes;
+      if (slashOptions.strict !== undefined) deploymentOptions.strict = slashOptions.strict;
+      if (slashOptions.includeSecrets !== undefined) {
+        deploymentOptions.includeSecrets = slashOptions.includeSecrets;
+      }
+      await runDeploymentsCommand(tokens, logger, slashOptions.json, {
+        ...deploymentOptions,
       });
       logger.done();
       return { handled: true };
@@ -813,10 +837,23 @@ export function registerShortcutTopLevelCommands(program: Command): void {
   program
     .command('deployments')
     .description('Inspect deployment history')
-    .argument('[args...]', 'Deployment command: list|get|status|cancel|delete|<id>')
+    .argument(
+      '[args...]',
+      'Deployment command: list|get|status|approve|retry|reschedule|cancel|delete|<id>',
+    )
     .option('--mode <mode>', 'Filter by mode (deploy|rollback)')
     .option('--status <status>', 'Filter by status (scheduled|approved|applied|failed|cancelled)')
     .option('--limit <n>', 'Max rows for list view')
+    .option('--offset <n>', 'Rows to skip before applying --limit in list view')
+    .option('--from <snapshot>', 'Override source when approving or retrying a deployment')
+    .option('--dry-run', 'Show changes only when approving or retrying a deployment')
+    .option('--yes', 'Apply changes without prompting when approving or retrying a deployment')
+    .option(
+      '--strict',
+      'Fail fast if any import item fails when approving or retrying a deployment',
+    )
+    .option('--include-secrets', 'Include secrets when exporting current snapshot')
+    .option('--schedule <datetime>', 'Schedule timestamp for deployment reschedule')
     .option('--json', 'Output as JSON')
     .action(
       async (
@@ -825,6 +862,13 @@ export function registerShortcutTopLevelCommands(program: Command): void {
           mode?: string;
           status?: string;
           limit?: string;
+          offset?: string;
+          from?: string;
+          dryRun?: boolean;
+          yes?: boolean;
+          strict?: boolean;
+          includeSecrets?: boolean;
+          schedule?: string;
           json?: boolean;
         },
       ) => {
@@ -835,11 +879,25 @@ export function registerShortcutTopLevelCommands(program: Command): void {
             process.exitCode = 1;
             return;
           }
+          const parsedOffset =
+            opts.offset !== undefined ? parseNonNegativeIntegerOption(opts.offset) : undefined;
+          if (opts.offset !== undefined && parsedOffset === undefined) {
+            console.error(formatError('Invalid --offset value. Expected a non-negative integer.'));
+            process.exitCode = 1;
+            return;
+          }
           await runTopLevelDeployments(args, {
             json: opts.json,
             mode: opts.mode,
             status: opts.status,
             limit: parsedLimit,
+            offset: parsedOffset,
+            from: opts.from,
+            dryRun: opts.dryRun,
+            yes: opts.yes,
+            strict: opts.strict,
+            includeSecrets: opts.includeSecrets,
+            schedule: opts.schedule,
           });
         } catch (error) {
           if (error instanceof Error) {

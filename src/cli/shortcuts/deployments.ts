@@ -18,9 +18,10 @@ import { getErrorMessage } from '../../lib/errors.js';
 import {
   toLines,
   parseCommandArgs,
-  toPositiveInteger,
   parseDateInput,
+  parseNonNegativeIntegerOption,
   parsePositiveIntegerOption,
+  parseToggleValue,
   printPayload,
   buildTopLevelLogger,
   sleep,
@@ -74,6 +75,15 @@ function normalizeDeploymentStatus(rawStatus: string | undefined): string | unde
     normalized === 'cancelled'
   ) {
     return normalized;
+  }
+  return undefined;
+}
+
+function resolveToggleOption(...values: Array<boolean | string | undefined>): boolean | undefined {
+  for (const value of values) {
+    if (typeof value === 'boolean') return value;
+    const parsed = parseToggleValue(value);
+    if (parsed !== undefined) return parsed;
   }
   return undefined;
 }
@@ -293,20 +303,184 @@ export async function runDeploymentsCommand(
   const parsed = parseCommandArgs(raw);
   const action = (parsed.positionals[0] || 'list').toLowerCase();
   const firstArg = parsed.positionals[1];
-  const modeFilter = options.mode || normalizeDeploymentMode(parsed.options.mode);
-  const statusFilter = options.status || normalizeDeploymentStatus(parsed.options.status);
-  const limit = toPositiveInteger(
-    parsed.options.limit || (options.limit === undefined ? undefined : String(options.limit)),
-    50,
-    200,
-  );
-
-  if (parsed.options.mode && !modeFilter) {
-    logger.warning(`Unknown deployment mode: ${parsed.options.mode}. Use deploy|rollback.`);
+  const optionsMode = normalizeDeploymentMode(options.mode);
+  const parsedMode = normalizeDeploymentMode(parsed.options.mode);
+  const modeFilter = optionsMode || parsedMode;
+  const optionsStatus = normalizeDeploymentStatus(options.status);
+  const parsedStatus = normalizeDeploymentStatus(parsed.options.status);
+  const statusFilter = optionsStatus || parsedStatus;
+  const rawLimit =
+    parsed.options.limit ?? (options.limit === undefined ? undefined : String(options.limit));
+  const rawOffset =
+    parsed.options.offset ?? (options.offset === undefined ? undefined : String(options.offset));
+  const parsedLimit = parsePositiveIntegerOption(rawLimit);
+  if (rawLimit !== undefined && parsedLimit === undefined) {
+    logger.warning('Invalid --limit value. Expected a positive integer.');
     return;
   }
-  if (parsed.options.status && !statusFilter) {
+  const parsedOffset = parseNonNegativeIntegerOption(rawOffset);
+  if (rawOffset !== undefined && parsedOffset === undefined) {
+    logger.warning('Invalid --offset value. Expected a non-negative integer.');
+    return;
+  }
+  const limit = Math.min(parsedLimit ?? 50, 200);
+  const offset = parsedOffset ?? 0;
+
+  const invalidMode = (options.mode && !optionsMode && options.mode) || parsed.options.mode;
+  if (invalidMode && !normalizeDeploymentMode(invalidMode)) {
+    logger.warning(`Unknown deployment mode: ${invalidMode}. Use deploy|rollback.`);
+    return;
+  }
+  const invalidStatus =
+    (options.status && !optionsStatus && options.status) || parsed.options.status;
+  if (invalidStatus && !normalizeDeploymentStatus(invalidStatus)) {
     logger.warning('Unknown deployment status. Use scheduled|approved|applied|failed|cancelled.');
+    return;
+  }
+
+  if (action === 'approve') {
+    const targetRef = firstArg;
+    if (!targetRef) {
+      logger.warning(
+        'Usage: /deployments approve <deployment-id> [snapshot-ref] [--from <snapshot-ref>]',
+      );
+      return;
+    }
+    let deployment;
+    try {
+      deployment = getDeployment(targetRef);
+    } catch (error) {
+      logger.warning(getErrorMessage(error));
+      return;
+    }
+    const sourceOverride = options.from || parsed.options.from || parsed.positionals[2];
+    const dryRun = resolveToggleOption(
+      options.dryRun,
+      parsed.options.dryRun,
+      parsed.options['dry-run'],
+    );
+    const strict = resolveToggleOption(options.strict, parsed.options.strict);
+    const includeSecrets = resolveToggleOption(
+      options.includeSecrets,
+      parsed.options.includeSecrets,
+      parsed.options['include-secrets'],
+    );
+    const yes = resolveToggleOption(options.yes, parsed.options.yes);
+
+    await runTopLevelDeployment(
+      deployment.mode,
+      sourceOverride ? [sourceOverride] : [],
+      {
+        from: sourceOverride,
+        approve: deployment.id,
+        dryRun,
+        strict,
+        includeSecrets,
+        yes,
+      },
+      logger,
+    );
+    return;
+  }
+
+  if (action === 'retry') {
+    const targetRef = firstArg;
+    if (!targetRef) {
+      logger.warning(
+        'Usage: /deployments retry <deployment-id> [snapshot-ref] [--from <snapshot-ref>]',
+      );
+      return;
+    }
+    let deployment;
+    try {
+      deployment = getDeployment(targetRef);
+    } catch (error) {
+      logger.warning(getErrorMessage(error));
+      return;
+    }
+    if (deployment.status === 'applied') {
+      logger.warning(`Deployment ${deployment.id} has already been applied and cannot be retried.`);
+      return;
+    }
+    if (deployment.status === 'cancelled') {
+      logger.warning(`Deployment ${deployment.id} is cancelled and cannot be retried.`);
+      return;
+    }
+    if (deployment.status !== 'failed') {
+      logger.warning(
+        `Deployment ${deployment.id} is ${deployment.status}; only failed deployments can be retried.`,
+      );
+      return;
+    }
+
+    const sourceOverride = options.from || parsed.options.from || parsed.positionals[2];
+    const dryRun = resolveToggleOption(
+      options.dryRun,
+      parsed.options.dryRun,
+      parsed.options['dry-run'],
+    );
+    const strict = resolveToggleOption(options.strict, parsed.options.strict);
+    const includeSecrets = resolveToggleOption(
+      options.includeSecrets,
+      parsed.options.includeSecrets,
+      parsed.options['include-secrets'],
+    );
+    const yes = resolveToggleOption(options.yes, parsed.options.yes);
+
+    await runTopLevelDeployment(
+      deployment.mode,
+      sourceOverride ? [sourceOverride] : [],
+      {
+        from: sourceOverride,
+        approve: deployment.id,
+        dryRun,
+        strict,
+        includeSecrets,
+        yes,
+      },
+      logger,
+    );
+    return;
+  }
+
+  if (action === 'reschedule') {
+    const targetRef = firstArg;
+    const scheduleValue = options.schedule || parsed.options.schedule || parsed.positionals[2];
+    if (!targetRef || !scheduleValue) {
+      logger.warning(
+        'Usage: /deployments reschedule <deployment-id> <datetime> [--schedule <datetime>]',
+      );
+      return;
+    }
+    const scheduledForMs = parseDateInput(scheduleValue);
+    if (scheduledForMs === undefined) {
+      logger.warning(`Invalid schedule value: ${scheduleValue}`);
+      return;
+    }
+    const scheduledFor = new Date(scheduledForMs).toISOString();
+    try {
+      const deployment = getDeployment(targetRef);
+      if (deployment.status === 'applied') {
+        logger.warning(
+          `Deployment ${deployment.id} has already been applied and cannot be rescheduled.`,
+        );
+        return;
+      }
+      if (deployment.status === 'cancelled') {
+        logger.warning(`Deployment ${deployment.id} is cancelled and cannot be rescheduled.`);
+        return;
+      }
+      const updated = updateDeployment(targetRef, {
+        status: 'scheduled',
+        scheduledFor,
+        approvedAt: '',
+        appliedAt: '',
+        error: '',
+      });
+      logger.success(`Deployment ${updated.id} rescheduled for ${scheduledFor}.`);
+    } catch (error) {
+      logger.warning(getErrorMessage(error));
+    }
     return;
   }
 
@@ -324,13 +498,21 @@ export async function runDeploymentsCommand(
       return;
     }
 
-    const rowsToShow = filtered.slice(0, limit);
+    const rowsToShow = filtered.slice(offset, offset + limit);
+    if (rowsToShow.length === 0) {
+      logger.warning(
+        `No deployments found for --offset ${offset}. Total matches: ${filtered.length}.`,
+      );
+      return;
+    }
     if (json) {
       logger.output(
         JSON.stringify(
           {
             count: rowsToShow.length,
             total: filtered.length,
+            offset,
+            limit,
             deployments: rowsToShow,
           },
           null,
@@ -447,7 +629,7 @@ export async function runDeploymentsCommand(
     printPayload(logger, `Deployment ${deployment.id}`, deployment as unknown as AnyPayload, json);
   } catch {
     logger.warning(`Unknown deployments command "${action}".`);
-    logger.warning('Available: list, get, status, cancel, delete');
+    logger.warning('Available: list, get, status, approve, retry, reschedule, cancel, delete');
   }
 }
 
@@ -591,6 +773,10 @@ export async function runTopLevelDeployment(
     }
     if (target.status === 'applied') {
       logger.warning(`Deployment ${target.id} already applied.`);
+      return;
+    }
+    if (target.status === 'cancelled') {
+      logger.warning(`Deployment ${target.id} is cancelled and cannot be approved.`);
       return;
     }
     const actionSource = source || target.source;

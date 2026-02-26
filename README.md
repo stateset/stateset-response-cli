@@ -3,7 +3,7 @@
 AI-powered CLI for managing the [StateSet ResponseCX](https://response.cx) platform. Chat with an AI agent that can manage your agents, rules, skills, knowledge base, channels, messages, and more — all from the terminal.
 
 Includes optional WhatsApp and Slack gateways for connecting your agent to messaging platforms.
-Current version: `1.3.5`.
+Current version: `1.3.7`.
 
 ## Install
 
@@ -297,7 +297,8 @@ response diff --from snap1 --to snap2      # Compare two snapshots
 # Deploy & rollback
 response deploy <source> [--dry-run] [--strict] [--yes]
 response rollback <source> [--dry-run] [--yes]
-response deployments [--status applied] [--limit 10]
+response deployments [--status applied] [--limit 10] [--offset 10]
+response deployments retry <deployment-id> [--from <snapshot>]
 
 # Pull & push configuration
 response pull [--out ./backup]             # Export org config to disk

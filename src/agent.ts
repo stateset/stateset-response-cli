@@ -106,6 +106,75 @@ function buildMcpEnv(): Record<string, string> {
   return env;
 }
 
+function getContentBlocks(
+  content: Anthropic.MessageParam['content'],
+): Anthropic.ContentBlockParam[] | null {
+  return Array.isArray(content) ? content : null;
+}
+
+function extractToolUseIds(message: Anthropic.MessageParam): string[] {
+  const blocks = getContentBlocks(message.content);
+  if (!blocks) return [];
+  const ids: string[] = [];
+  for (const block of blocks) {
+    if (block.type === 'tool_use' && typeof block.id === 'string') {
+      ids.push(block.id);
+    }
+  }
+  return ids;
+}
+
+function extractToolResultIds(message: Anthropic.MessageParam): string[] {
+  const blocks = getContentBlocks(message.content);
+  if (!blocks) return [];
+  const ids: string[] = [];
+  for (const block of blocks) {
+    if (block.type === 'tool_result' && typeof block.tool_use_id === 'string') {
+      ids.push(block.tool_use_id);
+    }
+  }
+  return ids;
+}
+
+function isToolResultOnlyMessage(message: Anthropic.MessageParam): boolean {
+  const blocks = getContentBlocks(message.content);
+  if (!blocks || blocks.length === 0) return false;
+  return blocks.every((block) => block.type === 'tool_result');
+}
+
+export function normalizeToolHistory(messages: Anthropic.MessageParam[]): Anthropic.MessageParam[] {
+  const normalized: Anthropic.MessageParam[] = [];
+  const seenToolUseIds = new Set<string>();
+
+  for (const message of messages) {
+    if (message.role === 'assistant') {
+      normalized.push(message);
+      for (const id of extractToolUseIds(message)) {
+        seenToolUseIds.add(id);
+      }
+      continue;
+    }
+
+    if (message.role === 'user' && isToolResultOnlyMessage(message)) {
+      const toolResultIds = extractToolResultIds(message);
+      if (toolResultIds.length === 0) {
+        continue;
+      }
+      const missing = toolResultIds.some((id) => !seenToolUseIds.has(id));
+      if (missing) {
+        continue;
+      }
+      toolResultIds.forEach((id) => seenToolUseIds.delete(id));
+      normalized.push(message);
+      continue;
+    }
+
+    normalized.push(message);
+  }
+
+  return normalized;
+}
+
 /** Default system prompt injected when no override is provided via prompt files. */
 export const BASE_SYSTEM_PROMPT = `You are an AI assistant for managing the StateSet Response platform.
 You have tools to manage agents, rules, skills, attributes, examples, evals, datasets, functions,
@@ -226,7 +295,7 @@ export class StateSetAgent {
   useSessionStore(store: SessionStore): void {
     this.sessionStore = store;
     const loaded = store.loadMessages();
-    this.conversationHistory = loaded.slice(-MAX_HISTORY_MESSAGES);
+    this.conversationHistory = normalizeToolHistory(loaded.slice(-MAX_HISTORY_MESSAGES));
   }
 
   getModel(): ModelId {
@@ -537,8 +606,12 @@ export class StateSetAgent {
 
   private trimHistory(): void {
     if (this.conversationHistory.length > MAX_HISTORY_MESSAGES) {
-      this.conversationHistory = this.conversationHistory.slice(-MAX_HISTORY_MESSAGES);
+      this.conversationHistory = normalizeToolHistory(
+        this.conversationHistory.slice(-MAX_HISTORY_MESSAGES),
+      );
+      return;
     }
+    this.conversationHistory = normalizeToolHistory(this.conversationHistory);
   }
 
   /**

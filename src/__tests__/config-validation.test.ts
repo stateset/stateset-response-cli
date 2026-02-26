@@ -49,7 +49,7 @@ describe('loadConfig validation', () => {
       JSON.stringify({
         currentOrg: 'acme',
         anthropicApiKey: 'sk-ant-test',
-        model: 'claude-sonnet-4-6-20250514',
+        model: 'claude-sonnet-4-6',
         organizations: {
           acme: {
             name: 'Acme',
@@ -62,7 +62,24 @@ describe('loadConfig validation', () => {
     );
     const cfg = loadConfig();
     expect(cfg.anthropicApiKey).toBe('sk-ant-test');
-    expect(cfg.model).toBe('claude-sonnet-4-6-20250514');
+    expect(cfg.model).toBe('claude-sonnet-4-6');
+  });
+
+  it('normalizes legacy Sonnet model IDs', () => {
+    mockedFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        currentOrg: 'acme',
+        model: 'claude-sonnet-4-6-20250514',
+        organizations: {
+          acme: {
+            name: 'Acme',
+            graphqlEndpoint: 'https://api.acme.com/graphql',
+          },
+        },
+      }),
+    );
+    const cfg = loadConfig();
+    expect(cfg.model).toBe('claude-sonnet-4-6');
   });
 
   it('throws ConfigurationError for missing currentOrg', () => {

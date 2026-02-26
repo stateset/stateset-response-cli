@@ -16,6 +16,7 @@ import {
   stripQuotes,
   toPositiveInteger,
   toNonNegativeInteger,
+  parseNonNegativeIntegerOption,
   parsePositiveIntegerOption,
   extractEntityRows,
   extractEntityId,
@@ -201,6 +202,27 @@ describe('parseCommandArgs', () => {
     expect(result.options.json).toBe('true');
     expect(result.options.help).toBe('true');
     expect(result.options.yes).toBe('true');
+  });
+
+  it('handles toggle flags without explicit values', () => {
+    const result = parseCommandArgs(['--dry-run', '--strict', '--include-secrets', '--once']);
+    expect(result.options['dry-run']).toBe('true');
+    expect(result.options.strict).toBe('true');
+    expect(result.options['include-secrets']).toBe('true');
+    expect(result.options.once).toBe('true');
+  });
+
+  it('handles toggle flags with explicit values', () => {
+    const result = parseCommandArgs([
+      '--dry-run',
+      'false',
+      '--strict=yes',
+      '--include-secrets',
+      '0',
+    ]);
+    expect(result.options['dry-run']).toBe('false');
+    expect(result.options.strict).toBe('yes');
+    expect(result.options['include-secrets']).toBe('0');
   });
 
   it('throws for missing option value', () => {
@@ -539,7 +561,7 @@ describe('stripQuotes', () => {
 });
 
 // =============================================================================
-// toPositiveInteger / toNonNegativeInteger / parsePositiveIntegerOption
+// toPositiveInteger / toNonNegativeInteger / parsePositiveIntegerOption / parseNonNegativeIntegerOption
 // =============================================================================
 
 describe('toPositiveInteger', () => {
@@ -615,6 +637,22 @@ describe('parsePositiveIntegerOption', () => {
   it('parses integer part from float string (parseInt behavior)', () => {
     // parseInt('3.5', 10) returns 3 which is a valid positive integer
     expect(parsePositiveIntegerOption('3.5')).toBe(3);
+  });
+});
+
+describe('parseNonNegativeIntegerOption', () => {
+  it('returns undefined for empty input', () => {
+    expect(parseNonNegativeIntegerOption(undefined)).toBeUndefined();
+    expect(parseNonNegativeIntegerOption('')).toBeUndefined();
+  });
+
+  it('parses zero and positive integers', () => {
+    expect(parseNonNegativeIntegerOption('0')).toBe(0);
+    expect(parseNonNegativeIntegerOption('8')).toBe(8);
+  });
+
+  it('returns undefined for negative values', () => {
+    expect(parseNonNegativeIntegerOption('-1')).toBeUndefined();
   });
 });
 

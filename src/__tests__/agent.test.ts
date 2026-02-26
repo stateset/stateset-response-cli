@@ -129,7 +129,7 @@ function createMockStream(
 // Import the module under test (after mocks are declared)
 // ---------------------------------------------------------------------------
 
-import { StateSetAgent, BASE_SYSTEM_PROMPT } from '../agent.js';
+import { StateSetAgent, BASE_SYSTEM_PROMPT, normalizeToolHistory } from '../agent.js';
 import { DEFAULT_MODEL } from '../config.js';
 
 // ---------------------------------------------------------------------------
@@ -239,6 +239,37 @@ describe('StateSetAgent', () => {
 
       agent.clearHistory();
       expect(agent.getHistoryLength()).toBe(0);
+    });
+
+    it('drops orphan tool_result entries when loading session history', () => {
+      const agent = new StateSetAgent('test-key');
+      const store = createMockSessionStore([
+        {
+          role: 'user' as const,
+          content: [
+            {
+              type: 'tool_result' as const,
+              tool_use_id: 'missing',
+              content: 'missing tool use',
+            },
+          ],
+        },
+        {
+          role: 'assistant' as const,
+          content: [
+            {
+              type: 'tool_use' as const,
+              id: 'exists',
+              name: 'read',
+              input: { path: '/tmp/file' },
+            },
+          ],
+        },
+      ]);
+
+      agent.useSessionStore(store);
+
+      expect(agent.getHistoryLength()).toBe(1);
     });
   });
 
@@ -1058,6 +1089,62 @@ describe('StateSetAgent', () => {
 
       const callArgs = mockAnthropicInstance.messages.stream.mock.calls[0][0];
       expect(callArgs.system).toBe(BASE_SYSTEM_PROMPT);
+    });
+  });
+
+  describe('normalizeToolHistory', () => {
+    it('removes tool_result messages that lack matching tool_use context', () => {
+      const messages = [
+        {
+          role: 'user' as const,
+          content: [
+            {
+              type: 'tool_result' as const,
+              tool_use_id: 'missing',
+              content: 'orphan',
+            },
+          ],
+        },
+        {
+          role: 'assistant' as const,
+          content: 'hello',
+        },
+      ];
+
+      const normalized = normalizeToolHistory(messages);
+
+      expect(normalized).toHaveLength(1);
+      expect(normalized[0]).toEqual({
+        role: 'assistant',
+        content: 'hello',
+      });
+    });
+
+    it('keeps tool_result messages when their tool_use appears earlier', () => {
+      const toolUse = {
+        role: 'assistant' as const,
+        content: [
+          {
+            type: 'tool_use' as const,
+            id: 'toolu-1',
+            name: 'read_file',
+            input: { path: '/tmp/file' },
+          },
+        ],
+      };
+      const toolResult = {
+        role: 'user' as const,
+        content: [
+          {
+            type: 'tool_result' as const,
+            tool_use_id: 'toolu-1',
+            content: 'contents',
+          },
+        ],
+      };
+
+      const normalized = normalizeToolHistory([toolUse, toolResult]);
+      expect(normalized).toEqual([toolUse, toolResult]);
     });
   });
 });

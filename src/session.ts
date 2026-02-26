@@ -63,6 +63,7 @@ export function getSessionDir(sessionId: string): string {
 
 const MAX_SESSION_CONTEXT_FILE_SIZE_BYTES = MAX_TEXT_FILE_SIZE_BYTES;
 const MAX_SESSION_METADATA_FILE_SIZE_BYTES = MAX_TEXT_FILE_SIZE_BYTES;
+const seenSessionWarnings = new Set<string>();
 
 function ensureDir(dir: string): void {
   if (!fs.existsSync(dir)) {
@@ -92,6 +93,14 @@ function readSafeMeta(filePath: string): unknown {
   } catch {
     return null;
   }
+}
+
+function warnSessionIssue(action: string, targetPath: string, error: unknown): void {
+  const message = getErrorMessage(error);
+  const warningKey = `${action}:${targetPath}:${message}`;
+  if (seenSessionWarnings.has(warningKey)) return;
+  seenSessionWarnings.add(warningKey);
+  console.warn(`[stateset] ${action} failed for ${targetPath}: ${message}`);
 }
 
 /**
@@ -155,8 +164,9 @@ export class SessionStore {
     };
     try {
       fs.appendFileSync(this.contextPath, JSON.stringify(entry) + '\n', 'utf-8');
-    } catch {
+    } catch (error) {
       // Non-fatal: session persistence failure shouldn't crash the CLI
+      warnSessionIssue('Append session message', this.contextPath, error);
     }
   }
 
@@ -172,8 +182,9 @@ export class SessionStore {
     });
     try {
       fs.appendFileSync(this.contextPath, lines.join('\n') + '\n', 'utf-8');
-    } catch {
+    } catch (error) {
       // Non-fatal: session persistence failure shouldn't crash the CLI
+      warnSessionIssue('Append session messages', this.contextPath, error);
     }
   }
 
@@ -185,8 +196,9 @@ export class SessionStore {
     };
     try {
       fs.appendFileSync(this.logPath, JSON.stringify(payload) + '\n', 'utf-8');
-    } catch {
+    } catch (error) {
       // Non-fatal: log persistence failure shouldn't crash the CLI
+      warnSessionIssue('Append session log', this.logPath, error);
     }
   }
 
@@ -228,15 +240,17 @@ function getDirSize(dirPath: string): number {
       if (entry.isFile()) {
         try {
           total += fs.statSync(full).size;
-        } catch {
+        } catch (error) {
           // skip unreadable files
+          warnSessionIssue('Read session file metadata', full, error);
         }
       } else if (entry.isDirectory()) {
         total += getDirSize(full);
       }
     }
-  } catch {
+  } catch (error) {
     // skip unreadable dirs
+    warnSessionIssue('Read session directory', dirPath, error);
   }
   return total;
 }
@@ -260,7 +274,9 @@ export function cleanupSessions(options: CleanupOptions = {}, sessionsDir?: stri
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch {
+  } catch (error) {
+    result.errors.push(`sessions: ${getErrorMessage(error)}`);
+    warnSessionIssue('List sessions directory', dir, error);
     return result;
   }
 
@@ -274,8 +290,10 @@ export function cleanupSessions(options: CleanupOptions = {}, sessionsDir?: stri
     if (fs.existsSync(contextPath)) {
       try {
         messageCount = readSafeSessionLines(contextPath).length;
-      } catch {
+      } catch (error) {
         // treat as empty
+        result.errors.push(`${entry.name}: unable to read context (${getErrorMessage(error)})`);
+        warnSessionIssue('Read session context', contextPath, error);
       }
     }
     if (messageCount > 0) continue;
@@ -284,7 +302,9 @@ export function cleanupSessions(options: CleanupOptions = {}, sessionsDir?: stri
     let mtimeMs: number;
     try {
       mtimeMs = fs.statSync(sessionDir).mtimeMs;
-    } catch {
+    } catch (error) {
+      result.errors.push(`${entry.name}: unable to read metadata (${getErrorMessage(error)})`);
+      warnSessionIssue('Read session metadata', sessionDir, error);
       continue;
     }
     if (mtimeMs > cutoffMs) continue;
@@ -324,7 +344,8 @@ export function getSessionStorageStats(sessionsDir?: string): SessionStorageStat
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch {
+  } catch (error) {
+    warnSessionIssue('List sessions directory', dir, error);
     return stats;
   }
 
@@ -342,8 +363,9 @@ export function getSessionStorageStats(sessionsDir?: string): SessionStorageStat
     if (fs.existsSync(contextPath)) {
       try {
         messageCount = readSafeSessionLines(contextPath).length;
-      } catch {
+      } catch (error) {
         // treat as empty
+        warnSessionIssue('Read session context', contextPath, error);
       }
     }
     if (messageCount === 0) stats.emptySessions++;
@@ -359,8 +381,9 @@ export function getSessionStorageStats(sessionsDir?: string): SessionStorageStat
       const mtime = dirStat.mtimeMs;
       if (stats.oldestMs === null || mtime < stats.oldestMs) stats.oldestMs = mtime;
       if (stats.newestMs === null || mtime > stats.newestMs) stats.newestMs = mtime;
-    } catch {
+    } catch (error) {
       // skip
+      warnSessionIssue('Read session metadata', sessionDir, error);
     }
   }
 

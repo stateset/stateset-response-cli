@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const { mockExistsSync, mockReadFileSync, mockWriteFileSync, mockAppendFileSync, mockMkdirSync } =
   vi.hoisted(() => ({
@@ -37,11 +37,18 @@ vi.mock('../utils/file-read.js', () => ({
 import { SessionStore } from '../session.js';
 
 describe('SessionStore', () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockExistsSync.mockReturnValue(false);
     mockReadTextFile.mockReturnValue('');
     mockReadJsonFile.mockReturnValue(null);
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
   });
 
   it('creates session directory on construction', () => {
@@ -124,6 +131,21 @@ describe('SessionStore', () => {
       expect(parsed.content).toBe('test message');
       expect(parsed.ts).toBeDefined();
     });
+
+    it('logs warning once when append fails', () => {
+      const store = new SessionStore('sess-1');
+      mockAppendFileSync.mockImplementation(() => {
+        throw new Error('disk full');
+      });
+
+      store.appendMessage({ role: 'user', content: 'first' });
+      store.appendMessage({ role: 'user', content: 'second' });
+
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Append session message failed'),
+      );
+    });
   });
 
   describe('appendMessages', () => {
@@ -141,6 +163,19 @@ describe('SessionStore', () => {
       const lines = written.trim().split('\n');
       expect(lines).toHaveLength(2);
     });
+
+    it('warns when batch append fails', () => {
+      const store = new SessionStore('sess-1');
+      mockAppendFileSync.mockImplementation(() => {
+        throw new Error('permission denied');
+      });
+
+      store.appendMessages([{ role: 'user', content: 'one' }]);
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Append session messages failed'),
+      );
+    });
   });
 
   describe('appendLog', () => {
@@ -153,6 +188,17 @@ describe('SessionStore', () => {
       const parsed = JSON.parse(written.trim());
       expect(parsed.role).toBe('user');
       expect(parsed.text).toBe('hello');
+    });
+
+    it('warns when log append fails', () => {
+      const store = new SessionStore('sess-1');
+      mockAppendFileSync.mockImplementation(() => {
+        throw new Error('read-only fs');
+      });
+
+      store.appendLog({ ts: '2025-01-01T00:00:00Z', role: 'user', text: 'hello' });
+
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Append session log failed'));
     });
   });
 

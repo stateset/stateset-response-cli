@@ -170,6 +170,17 @@ export function parseOptionLike(value: string): [string, string | null] {
 export function parseCommandArgs(tokens: string[]) {
   const options: Record<string, string> = {};
   const positionals: string[] = [];
+  const booleanOptions = new Set([
+    'json',
+    'help',
+    'yes',
+    'dry-run',
+    'dryRun',
+    'strict',
+    'include-secrets',
+    'includeSecrets',
+    'once',
+  ]);
   let i = 0;
   while (i < tokens.length) {
     const token = tokens[i];
@@ -180,9 +191,20 @@ export function parseCommandArgs(tokens: string[]) {
     }
     const [keyRaw, inlineValue] = parseOptionLike(token);
     const key = keyRaw.replace(/^--/, '');
-    if (key === 'json' || key === 'help' || key === 'yes') {
-      options[key] = 'true';
-      i += 1;
+    if (booleanOptions.has(key)) {
+      if (inlineValue !== null) {
+        options[key] = inlineValue || 'true';
+        i += 1;
+        continue;
+      }
+      const next = i + 1 < tokens.length ? tokens[i + 1] : undefined;
+      if (next && !next.startsWith('--') && parseToggleValue(next) !== undefined) {
+        options[key] = next;
+        i += 2;
+      } else {
+        options[key] = 'true';
+        i += 1;
+      }
       continue;
     }
     const value =
@@ -417,6 +439,13 @@ export function parsePositiveIntegerOption(raw: string | undefined): number | un
   if (!raw) return undefined;
   const value = Number.parseInt(raw, 10);
   if (!Number.isFinite(value) || !Number.isInteger(value) || value < 1) return undefined;
+  return value;
+}
+
+export function parseNonNegativeIntegerOption(raw: string | undefined): number | undefined {
+  if (!raw && raw !== '0') return undefined;
+  const value = Number.parseInt(raw, 10);
+  if (!Number.isFinite(value) || !Number.isInteger(value) || value < 0) return undefined;
   return value;
 }
 

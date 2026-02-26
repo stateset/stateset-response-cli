@@ -14,7 +14,7 @@ vi.mock('../config.js', () => ({
   getModelAliasText: () => 'sonnet, haiku, opus',
   resolveModelOrThrow: vi.fn((input: string) => {
     const map: Record<string, string> = {
-      sonnet: 'claude-sonnet-4-6-20250514',
+      sonnet: 'claude-sonnet-4-6',
       haiku: 'claude-haiku-4-5-20251001',
       opus: 'claude-opus-4-6-20250514',
     };
@@ -31,7 +31,7 @@ vi.mock('../config.js', () => ({
 function createMockCtx(overrides: Partial<ChatContext> = {}): ChatContext {
   return {
     agent: {
-      getModel: vi.fn(() => 'claude-sonnet-4-6-20250514'),
+      getModel: vi.fn(() => 'claude-sonnet-4-6'),
       setModel: vi.fn(),
       setSystemPrompt: vi.fn(),
       setMcpEnvOverrides: vi.fn(),
@@ -126,7 +126,7 @@ describe('handleConfigCommand', () => {
     const ctx = createMockCtx({
       reconnectAgent,
       agent: {
-        getModel: vi.fn(() => 'claude-sonnet-4-6-20250514'),
+        getModel: vi.fn(() => 'claude-sonnet-4-6'),
         setModel: vi.fn(),
         setSystemPrompt,
         setMcpEnvOverrides,
@@ -169,7 +169,7 @@ describe('handleConfigCommand', () => {
     const ctx = createMockCtx({
       reconnectAgent,
       agent: {
-        getModel: vi.fn(() => 'claude-sonnet-4-6-20250514'),
+        getModel: vi.fn(() => 'claude-sonnet-4-6'),
         setModel: vi.fn(),
         setSystemPrompt,
         setMcpEnvOverrides,
@@ -262,7 +262,7 @@ describe('handleConfigCommand', () => {
     const ctx = createMockCtx({
       reconnectAgent,
       agent: {
-        getModel: vi.fn(() => 'claude-sonnet-4-6-20250514'),
+        getModel: vi.fn(() => 'claude-sonnet-4-6'),
         setModel: vi.fn(),
         setSystemPrompt,
         setMcpEnvOverrides,
@@ -309,7 +309,7 @@ describe('handleConfigCommand', () => {
     const ctx = createMockCtx();
     const result = await handleConfigCommand('/model sonnet', ctx);
     expect(result).toEqual({ handled: true });
-    expect(ctx.agent.setModel).toHaveBeenCalledWith('claude-sonnet-4-6-20250514');
+    expect(ctx.agent.setModel).toHaveBeenCalledWith('claude-sonnet-4-6');
   });
 
   it('/model invalid shows warning', async () => {

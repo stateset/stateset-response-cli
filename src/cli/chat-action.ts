@@ -306,7 +306,7 @@ export async function startChatSession(
     const msgCount = sessionStore.getMessageCount();
     if (msgCount > 0) infoParts.push(`Messages: ${msgCount}`);
     try {
-      const stat = fs.statSync(sessionStore.getSessionDir() + '/context.jsonl');
+      const stat = fs.statSync(sessionStore.getContextPath());
       infoParts.push(`Last activity: ${formatRelativeTime(stat.mtimeMs)}`);
     } catch {
       /* no context file yet */
@@ -331,20 +331,24 @@ export async function startChatSession(
     error: (message: string) => console.error(formatError(message)),
   });
 
-  const buildToolHookContext = () => ({
-    cwd,
-    sessionId,
-    sessionTags: Array.isArray(readSessionMeta(sessionStore.getSessionDir()).tags)
-      ? (readSessionMeta(sessionStore.getSessionDir()).tags as string[])
-      : [],
-    allowApply,
-    redact: redactEmails,
-    policy: extensions.getPolicyOverrides ? extensions.getPolicyOverrides() : {},
-    log: (message: string) => console.log(message),
-    success: (message: string) => console.log(formatSuccess(message)),
-    warn: (message: string) => console.log(formatWarning(message)),
-    error: (message: string) => console.error(formatError(message)),
-  });
+  const buildToolHookContext = () => {
+    const meta = readSessionMeta(sessionStore.getSessionDir());
+    const tags = Array.isArray(meta.tags)
+      ? meta.tags.filter((tag): tag is string => typeof tag === 'string')
+      : [];
+    return {
+      cwd,
+      sessionId,
+      sessionTags: tags,
+      allowApply,
+      redact: redactEmails,
+      policy: extensions.getPolicyOverrides ? extensions.getPolicyOverrides() : {},
+      log: (message: string) => console.log(message),
+      success: (message: string) => console.log(formatSuccess(message)),
+      warn: (message: string) => console.log(formatWarning(message)),
+      error: (message: string) => console.error(formatError(message)),
+    };
+  };
 
   const reconnectAgent = async () => {
     const reconnectSpinner = ora('Reconnecting to StateSet Response...').start();

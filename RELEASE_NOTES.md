@@ -14,7 +14,7 @@ StateSet ResponseCLI `v1.3.5` is a major architecture and quality release. The C
 ### Key features
 - **Tab completion** for all slash commands (press Tab to autocomplete).
 - **Richer session switching** — `/resume` and session switch now display message count, last activity, and tags.
-- **Updated model aliases** to the Claude 4.6 family (`claude-sonnet-4-6-20250514`, `claude-haiku-4-5-20251001`, `claude-opus-4-6-20250514`).
+- **Updated model aliases** to the Claude 4.6 family (`claude-sonnet-4-6`, `claude-haiku-4-5-20251001`, `claude-opus-4-6-20250514`).
 - **Redesigned welcome screen** — concise essential-commands view replaces the previous 70-line wall of text.
 
 ### Stability & fixes
