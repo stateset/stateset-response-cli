@@ -317,4 +317,87 @@ describe('executeQuery', () => {
       executeQuery(mockClient as unknown as GraphQLClient, 'query { data }'),
     ).rejects.toThrow('Unknown GraphQL error');
   });
+
+  it('retries on 429 status', async () => {
+    const error429 = new Error('Too Many Requests');
+    (error429 as unknown as { response: { status: number } }).response = { status: 429 };
+
+    mockClient.request.mockRejectedValueOnce(error429).mockResolvedValueOnce({ data: 'success' });
+
+    const resultPromise = executeQuery(mockClient as unknown as GraphQLClient, 'query { data }');
+
+    await vi.advanceTimersByTimeAsync(1000);
+
+    const result = await resultPromise;
+    expect(result).toEqual({ data: 'success' });
+    expect(mockClient.request).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses Retry-After header delay when present on 429', async () => {
+    const error429 = new Error('Too Many Requests');
+    (
+      error429 as unknown as {
+        response: { status: number; headers: { get: (name: string) => string | null } };
+      }
+    ).response = {
+      status: 429,
+      headers: { get: (name: string) => (name === 'retry-after' ? '3' : null) },
+    };
+
+    mockClient.request.mockRejectedValueOnce(error429).mockResolvedValueOnce({ data: 'ok' });
+
+    const resultPromise = executeQuery(mockClient as unknown as GraphQLClient, 'query { data }');
+
+    // Should wait 3000ms (3 seconds from Retry-After), not the default 1000ms
+    await vi.advanceTimersByTimeAsync(2999);
+    expect(mockClient.request).toHaveBeenCalledTimes(1); // not retried yet
+
+    await vi.advanceTimersByTimeAsync(1);
+    const result = await resultPromise;
+    expect(result).toEqual({ data: 'ok' });
+    expect(mockClient.request).toHaveBeenCalledTimes(2);
+  });
+
+  it('caps Retry-After at 60 seconds', async () => {
+    const error429 = new Error('Too Many Requests');
+    (
+      error429 as unknown as {
+        response: { status: number; headers: { get: (name: string) => string | null } };
+      }
+    ).response = {
+      status: 429,
+      headers: { get: (name: string) => (name === 'retry-after' ? '120' : null) },
+    };
+
+    mockClient.request.mockRejectedValueOnce(error429).mockResolvedValueOnce({ data: 'ok' });
+
+    const resultPromise = executeQuery(mockClient as unknown as GraphQLClient, 'query { data }');
+
+    // Should cap at 60000ms, not 120000ms
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(mockClient.request).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    const result = await resultPromise;
+    expect(result).toEqual({ data: 'ok' });
+    expect(mockClient.request).toHaveBeenCalledTimes(2);
+  });
+
+  it('falls back to exponential backoff when no Retry-After header', async () => {
+    const error429 = new Error('Too Many Requests');
+    (error429 as unknown as { response: { status: number } }).response = { status: 429 };
+
+    mockClient.request.mockRejectedValueOnce(error429).mockResolvedValueOnce({ data: 'ok' });
+
+    const resultPromise = executeQuery(mockClient as unknown as GraphQLClient, 'query { data }');
+
+    // Should use exponential backoff: 1000ms * 2^0 = 1000ms
+    await vi.advanceTimersByTimeAsync(999);
+    expect(mockClient.request).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    const result = await resultPromise;
+    expect(result).toEqual({ data: 'ok' });
+    expect(mockClient.request).toHaveBeenCalledTimes(2);
+  });
 });

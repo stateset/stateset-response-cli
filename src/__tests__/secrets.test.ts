@@ -6,6 +6,7 @@ import {
   encryptConfigSecrets,
   decryptConfigSecrets,
   redactSecret,
+  rotateSecret,
   SECRET_KEYS,
 } from '../lib/secrets.js';
 
@@ -24,11 +25,17 @@ describe('isEncrypted', () => {
 });
 
 describe('encryptSecret / decryptSecret', () => {
-  it('roundtrips a secret string', () => {
+  it('new encryptions produce enc:v2: prefix', () => {
     const original = 'my-secret-api-key-12345';
     const encrypted = encryptSecret(original);
-    expect(encrypted.startsWith('enc:')).toBe(true);
+    expect(encrypted.startsWith('enc:v2:')).toBe(true);
     expect(encrypted).not.toContain(original);
+  });
+
+  it('v2 values decrypt correctly (round-trip)', () => {
+    const original = 'my-secret-api-key-12345';
+    const encrypted = encryptSecret(original);
+    expect(encrypted.startsWith('enc:v2:')).toBe(true);
     expect(decryptSecret(encrypted)).toBe(original);
   });
 
@@ -58,6 +65,38 @@ describe('encryptSecret / decryptSecret', () => {
 
   it('throws on corrupt encrypted data', () => {
     expect(() => decryptSecret('enc:!!!invalid-base64!!!')).toThrow();
+  });
+
+  it('throws on corrupt v2 encrypted data', () => {
+    expect(() => decryptSecret('enc:v2:!!!invalid-base64!!!')).toThrow();
+  });
+});
+
+describe('rotateSecret', () => {
+  it('upgrades v2 values (re-encrypts with fresh IV)', () => {
+    const original = 'rotate-test-value';
+    const encrypted = encryptSecret(original);
+    expect(encrypted.startsWith('enc:v2:')).toBe(true);
+
+    const rotated = rotateSecret(encrypted);
+    expect(rotated.startsWith('enc:v2:')).toBe(true);
+    // Different IV means different ciphertext
+    expect(rotated).not.toBe(encrypted);
+    expect(decryptSecret(rotated)).toBe(original);
+  });
+
+  it('is idempotent for decrypted content', () => {
+    const original = 'rotate-idem-value';
+    const encrypted = encryptSecret(original);
+    const rotated1 = rotateSecret(encrypted);
+    const rotated2 = rotateSecret(rotated1);
+    expect(decryptSecret(rotated1)).toBe(original);
+    expect(decryptSecret(rotated2)).toBe(original);
+  });
+
+  it('returns non-encrypted values as-is', () => {
+    expect(rotateSecret('plaintext')).toBe('plaintext');
+    expect(rotateSecret('')).toBe('');
   });
 });
 

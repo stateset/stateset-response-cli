@@ -125,4 +125,44 @@ describe('handleTemplateCommand', () => {
     const result = await handleTemplateCommand('/prompt unknown', ctx);
     expect(result).toEqual({ handled: true });
   });
+
+  it('/prompt-validate with specific template and no file shows warning', async () => {
+    const ctx = createMockCtx();
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await handleTemplateCommand('/prompt-validate unknown-template', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) => typeof line === 'string' && line.includes('No prompt templates found'),
+      ),
+    ).toBe(true);
+  });
+
+  it('/prompt-validate all with no templates shows warning', async () => {
+    const ctx = createMockCtx();
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await handleTemplateCommand('/prompt-validate all', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) => typeof line === 'string' && line.includes('No prompt templates found'),
+      ),
+    ).toBe(true);
+  });
+
+  it('/prompt without template name shows usage warning', async () => {
+    const ctx = createMockCtx();
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await handleTemplateCommand('/prompt ', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(
+      consoleSpy.mock.calls.some(([line]) => typeof line === 'string' && line.includes('Usage')),
+    ).toBe(true);
+  });
 });

@@ -61,7 +61,7 @@ import { handlePolicyCommand } from '../cli/commands-policy.js';
 
 function createMockCtx(overrides: Partial<ChatContext> = {}): ChatContext {
   return {
-    rl: { prompt: () => {} } as any,
+    rl: { prompt: vi.fn(), pause: vi.fn(), resume: vi.fn() } as any,
     sessionId: 'test-session',
     cwd: '/tmp/test',
     permissionStore: { toolHooks: {} },
@@ -172,5 +172,197 @@ describe('handlePolicyCommand', () => {
 
     expect(result).toEqual({ handled: true });
     expect(mockWritePolicyOverrides).not.toHaveBeenCalled();
+  });
+
+  it('/permissions list shows empty when no permissions stored', async () => {
+    const ctx = createMockCtx();
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await handlePolicyCommand('/permissions', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) => typeof line === 'string' && line.includes('No stored permissions'),
+      ),
+    ).toBe(true);
+  });
+
+  it('/permissions list shows stored permissions', async () => {
+    const ctx = createMockCtx({
+      permissionStore: { toolHooks: { 'myHook::myTool': 'allow' as const } },
+    });
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await handlePolicyCommand('/permissions list', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) => typeof line === 'string' && line.includes('Stored permissions'),
+      ),
+    ).toBe(true);
+  });
+
+  it('/permissions with invalid action shows usage', async () => {
+    const ctx = createMockCtx();
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await handlePolicyCommand('/permissions bogus', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(
+      consoleSpy.mock.calls.some(([line]) => typeof line === 'string' && line.includes('Usage')),
+    ).toBe(true);
+  });
+
+  it('/policy list shows merged overrides', async () => {
+    const ctx = createMockCtx();
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await handlePolicyCommand('/policy list', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) => typeof line === 'string' && line.includes('Policy overrides'),
+      ),
+    ).toBe(true);
+  });
+
+  it('/policy with no action shows overrides', async () => {
+    const ctx = createMockCtx();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await handlePolicyCommand('/policy', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(mockReadPolicyOverridesDetailed).toHaveBeenCalled();
+  });
+
+  it('/policy set adds a policy override', async () => {
+    const ctx = createMockCtx({ cwd: '/tmp/project' });
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await handlePolicyCommand('/policy set my-hook allow', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(mockWritePolicyOverrides).toHaveBeenCalled();
+    expect(mockLoadExtensions).toHaveBeenCalled();
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) => typeof line === 'string' && line.includes('Policy set'),
+      ),
+    ).toBe(true);
+  });
+
+  it('/policy set with missing decision shows usage', async () => {
+    const ctx = createMockCtx();
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await handlePolicyCommand('/policy set my-hook', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(
+      consoleSpy.mock.calls.some(([line]) => typeof line === 'string' && line.includes('Usage')),
+    ).toBe(true);
+    expect(mockWritePolicyOverrides).not.toHaveBeenCalled();
+  });
+
+  it('/policy unset removes a policy override', async () => {
+    const ctx = createMockCtx({ cwd: '/tmp/project' });
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await handlePolicyCommand('/policy unset local-hook', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(mockWritePolicyOverrides).toHaveBeenCalled();
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) => typeof line === 'string' && line.includes('Policy removed'),
+      ),
+    ).toBe(true);
+  });
+
+  it('/policy unset with missing hook shows usage', async () => {
+    const ctx = createMockCtx();
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await handlePolicyCommand('/policy unset', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(
+      consoleSpy.mock.calls.some(([line]) => typeof line === 'string' && line.includes('Usage')),
+    ).toBe(true);
+  });
+
+  it('/policy unset with non-existent hook shows warning', async () => {
+    const ctx = createMockCtx({ cwd: '/tmp/project' });
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await handlePolicyCommand('/policy unset nonexistent', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) => typeof line === 'string' && line.includes('No policy set'),
+      ),
+    ).toBe(true);
+  });
+
+  it('/policy edit shows file location', async () => {
+    const ctx = createMockCtx({ cwd: '/tmp/project' });
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await handlePolicyCommand('/policy edit', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) => typeof line === 'string' && line.includes('Policy file location'),
+      ),
+    ).toBe(true);
+  });
+
+  it('/policy init creates a starter file', async () => {
+    const ctx = createMockCtx({ cwd: '/tmp/project' });
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await handlePolicyCommand('/policy init', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(mockWriteFileSync).toHaveBeenCalled();
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) => typeof line === 'string' && line.includes('Created policy file'),
+      ),
+    ).toBe(true);
+  });
+
+  it('/policy export without out= uses default path', async () => {
+    const ctx = createMockCtx({ cwd: '/tmp/project' });
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await handlePolicyCommand('/policy export', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(mockWriteFileSync).toHaveBeenCalled();
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) => typeof line === 'string' && line.includes('exported to'),
+      ),
+    ).toBe(true);
+  });
+
+  it('/policy with unknown action shows usage', async () => {
+    const ctx = createMockCtx();
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await handlePolicyCommand('/policy bogus', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(
+      consoleSpy.mock.calls.some(([line]) => typeof line === 'string' && line.includes('Usage')),
+    ).toBe(true);
   });
 });

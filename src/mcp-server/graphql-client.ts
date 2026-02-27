@@ -4,10 +4,40 @@ export type GraphQLAuth =
   | { type: 'admin_secret'; adminSecret: string }
   | { type: 'cli_token'; token: string };
 
-const RETRYABLE_STATUS_CODES = new Set([502, 503, 504]);
+const RETRYABLE_STATUS_CODES = new Set([429, 502, 503, 504]);
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
 const DEFAULT_TIMEOUT_MS = 30000; // 30 seconds
+const MAX_RETRY_AFTER_MS = 60_000;
+
+function getRetryAfterMs(error: unknown): number | null {
+  const errWithHeaders = error as {
+    response?: { headers?: { get?: (name: string) => string | null } & Record<string, unknown> };
+  };
+  const headers = errWithHeaders?.response?.headers;
+  if (!headers) return null;
+
+  let raw: string | null | undefined;
+  if (typeof headers.get === 'function') {
+    raw = headers.get('retry-after');
+  } else {
+    raw = (headers as Record<string, unknown>)['retry-after'] as string | undefined;
+  }
+  if (!raw) return null;
+
+  const seconds = Number(raw);
+  if (!Number.isNaN(seconds) && seconds >= 0) {
+    return Math.min(seconds * 1000, MAX_RETRY_AFTER_MS);
+  }
+
+  const dateMs = Date.parse(raw);
+  if (!Number.isNaN(dateMs)) {
+    const delayMs = dateMs - Date.now();
+    return Math.min(Math.max(delayMs, 0), MAX_RETRY_AFTER_MS);
+  }
+
+  return null;
+}
 
 function isTransientError(error: unknown): boolean {
   if (error instanceof TypeError) return true; // network failures
@@ -89,7 +119,8 @@ export async function executeQuery<T = Record<string, unknown>>(
         (error.name === 'AbortError' || error.message.includes('timed out'));
 
       if (attempt < MAX_RETRIES && (isTimeout || isTransientError(error))) {
-        const backoff = BASE_DELAY_MS * Math.pow(2, attempt);
+        const retryAfter = getRetryAfterMs(error);
+        const backoff = retryAfter ?? BASE_DELAY_MS * Math.pow(2, attempt);
         await delay(backoff);
         continue;
       }

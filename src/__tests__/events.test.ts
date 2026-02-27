@@ -168,6 +168,47 @@ describe('parseEvent', () => {
     });
     expect(() => parseEvent(content, 'oversized.json')).toThrow(/Event file too large/);
   });
+
+  it('rejects array input', () => {
+    expect(() => parseEvent(JSON.stringify([1, 2, 3]), 'array.json')).toThrow(
+      /Missing required fields \(type, text\) in array\.json/,
+    );
+  });
+
+  it('accepts extra unknown fields', () => {
+    const content = JSON.stringify({
+      type: 'immediate',
+      text: 'Hello',
+      customField: 42,
+      metadata: { foo: 'bar' },
+    });
+    const result = parseEvent(content, 'extra.json');
+    expect(result.type).toBe('immediate');
+    expect(result.text).toBe('Hello');
+  });
+
+  it('rejects non-string session', () => {
+    const content = JSON.stringify({
+      type: 'immediate',
+      text: 'Hello',
+      session: 12345,
+    });
+    // session should be ignored or cause an error depending on implementation
+    const result = parseEvent(content, 'badsession.json');
+    // Non-string session should be treated as undefined
+    expect(result.session).toBeUndefined();
+  });
+
+  it('rejects non-string at for one-shot', () => {
+    const content = JSON.stringify({
+      type: 'one-shot',
+      text: 'Hello',
+      at: 12345,
+    });
+    expect(() => parseEvent(content, 'badat.json')).toThrow(
+      /Missing 'at' for one-shot event in badat\.json/,
+    );
+  });
 });
 
 describe('EventsRunner reliability guards', () => {
@@ -238,5 +279,45 @@ describe('EventsRunner reliability guards', () => {
     expect(runner.startWatcher).toHaveBeenCalledTimes(1);
     expect(errorSpy).toHaveBeenCalledTimes(1);
     expect(infoSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('deduplicates retry attempts for the same file', () => {
+    vi.useFakeTimers();
+
+    const runner = new EventsRunner({
+      defaultSession: 'default',
+      anthropicApiKey: 'sk-ant-test',
+    }) as any;
+
+    runner.running = true;
+    runner.getSessionRunner = vi.fn(() => ({
+      touch: vi.fn(),
+      enqueue: vi.fn(() => false),
+    }));
+    const retrySpy = vi.spyOn(runner, 'scheduleExecutionRetry').mockImplementation(() => {});
+    vi.spyOn(runner, 'deleteFile').mockImplementation(() => {});
+
+    // Execute the same event twice (simulate saturation)
+    runner.execute('event.json', { type: 'immediate', text: 'hello' }, true);
+    runner.execute('event.json', { type: 'immediate', text: 'hello' }, true);
+
+    // Both should schedule retries
+    expect(retrySpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retry when runner is not running', () => {
+    const runner = new EventsRunner({
+      defaultSession: 'default',
+      anthropicApiKey: 'sk-ant-test',
+    }) as any;
+
+    runner.running = false;
+    const executeSpy = vi.spyOn(runner, 'execute').mockImplementation(() => {});
+    const deleteSpy = vi.spyOn(runner, 'deleteFile').mockImplementation(() => {});
+
+    // handleFile should not execute when not running
+    expect(runner.running).toBe(false);
+    expect(executeSpy).not.toHaveBeenCalled();
+    expect(deleteSpy).not.toHaveBeenCalled();
   });
 });

@@ -47,10 +47,10 @@ export default defineConfig({
         'src/integrations/shopify-refund-ops.ts',
       ],
       thresholds: {
-        lines: 70,
+        lines: 75,
         branches: 75,
-        functions: 70,
-        statements: 70,
+        functions: 75,
+        statements: 75,
       },
     },
   },

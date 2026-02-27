@@ -123,6 +123,12 @@ export function registerAllCommands(): void {
     category: 'core',
   });
   registerCommand({
+    name: '/metrics',
+    usage: '/metrics [json] [reset]',
+    description: 'Show session metrics, token usage, and tool breakdown',
+    category: 'core',
+  });
+  registerCommand({
     name: '/attach',
     usage: '/attach <path>',
     description: 'Attach a file or image to the next message',

@@ -14,10 +14,14 @@ import os from 'node:os';
 import { readTextFile as readSafeTextFile } from '../utils/file-read.js';
 
 const ENCRYPTION_PREFIX = 'enc:';
+const ENCRYPTION_PREFIX_V2 = 'enc:v2:';
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 16;
 const AUTH_TAG_LENGTH = 16;
 const SALT = 'stateset-response-cli-v1';
+const SCRYPT_COST = 2 ** 15;
+const SCRYPT_BLOCK_SIZE = 8;
+const SCRYPT_PARALLELIZATION = 1;
 
 function getSecretPassphrase(): string | null {
   const configured = process.env.STATESET_SECRET_PASSPHRASE?.trim();
@@ -90,27 +94,50 @@ function getPrimaryMacAddress(): string | null {
   }
 }
 
-/**
- * Derive encryption key from machine ID and user salt
- */
-function deriveKey(): Buffer {
+function getKeyMaterial(): { material: string; userSalt: string } {
   const machineId = getMachineId();
   const passphrase = getSecretPassphrase();
   const userSalt = `${SALT}-${os.userInfo().username}`;
-  const keyMaterial = passphrase ? `${SALT}:pass:${passphrase}` : machineId;
-  return crypto.scryptSync(keyMaterial, userSalt, 32);
+  const material = passphrase ? `${SALT}:pass:${passphrase}` : machineId;
+  return { material, userSalt };
 }
 
 /**
- * Check if a value is encrypted
+ * Derive encryption key using legacy (default) scrypt parameters.
+ * Used only for decrypting values encrypted with the original v1 format.
+ */
+function deriveKeyLegacy(): Buffer {
+  const { material, userSalt } = getKeyMaterial();
+  return crypto.scryptSync(material, userSalt, 32);
+}
+
+/**
+ * Derive encryption key using hardened scrypt parameters (v2).
+ */
+function deriveKeyV2(): Buffer {
+  const { material, userSalt } = getKeyMaterial();
+  return crypto.scryptSync(material, userSalt, 32, {
+    N: SCRYPT_COST,
+    r: SCRYPT_BLOCK_SIZE,
+    p: SCRYPT_PARALLELIZATION,
+    maxmem: 128 * SCRYPT_BLOCK_SIZE * SCRYPT_COST * 2,
+  });
+}
+
+/**
+ * Check if a value is encrypted (v1 or v2)
  */
 export function isEncrypted(value: string): boolean {
   return value.startsWith(ENCRYPTION_PREFIX);
 }
 
+function isV2(value: string): boolean {
+  return value.startsWith(ENCRYPTION_PREFIX_V2);
+}
+
 /**
- * Encrypt a plaintext secret
- * Returns a string in format: enc:<base64(iv + authTag + ciphertext)>
+ * Encrypt a plaintext secret using v2 (hardened scrypt) parameters.
+ * Returns a string in format: enc:v2:<base64(iv + authTag + ciphertext)>
  */
 export function encryptSecret(plaintext: string): string {
   if (!plaintext || plaintext.length === 0) {
@@ -122,7 +149,7 @@ export function encryptSecret(plaintext: string): string {
     return plaintext;
   }
 
-  const key = deriveKey();
+  const key = deriveKeyV2();
   const iv = crypto.randomBytes(IV_LENGTH);
 
   const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
@@ -132,12 +159,12 @@ export function encryptSecret(plaintext: string): string {
   // Combine: IV (16) + authTag (16) + ciphertext
   const combined = Buffer.concat([iv, authTag, encrypted]);
 
-  return ENCRYPTION_PREFIX + combined.toString('base64');
+  return ENCRYPTION_PREFIX_V2 + combined.toString('base64');
 }
 
 /**
- * Decrypt an encrypted secret
- * Handles both encrypted (enc:...) and plaintext values for backward compatibility
+ * Decrypt an encrypted secret.
+ * Handles v2 (enc:v2:...), legacy v1 (enc:...), and plaintext values.
  */
 export function decryptSecret(ciphertext: string): string {
   if (!ciphertext || ciphertext.length === 0) {
@@ -150,8 +177,18 @@ export function decryptSecret(ciphertext: string): string {
   }
 
   try {
-    const key = deriveKey();
-    const combined = Buffer.from(ciphertext.slice(ENCRYPTION_PREFIX.length), 'base64');
+    let key: Buffer;
+    let payload: string;
+
+    if (isV2(ciphertext)) {
+      key = deriveKeyV2();
+      payload = ciphertext.slice(ENCRYPTION_PREFIX_V2.length);
+    } else {
+      key = deriveKeyLegacy();
+      payload = ciphertext.slice(ENCRYPTION_PREFIX.length);
+    }
+
+    const combined = Buffer.from(payload, 'base64');
 
     if (combined.length < IV_LENGTH + AUTH_TAG_LENGTH) {
       throw new Error('Invalid encrypted data: too short');
@@ -176,6 +213,28 @@ export function decryptSecret(ciphertext: string): string {
         'Please run `response auth login` to re-authenticate.',
     );
   }
+}
+
+/**
+ * Rotate a secret from any encryption version to v2.
+ * Decrypts using the appropriate version, then re-encrypts with v2 parameters.
+ */
+export function rotateSecret(ciphertext: string): string {
+  if (!ciphertext || !isEncrypted(ciphertext)) {
+    return ciphertext;
+  }
+  // Already v2 — re-encrypt anyway to ensure fresh IV
+  const plaintext = decryptSecret(ciphertext);
+  // encryptSecret won't double-encrypt, but plaintext is decrypted so it's fine
+  const key = deriveKeyV2();
+  const iv = crypto.randomBytes(IV_LENGTH);
+
+  const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+
+  const combined = Buffer.concat([iv, authTag, encrypted]);
+  return ENCRYPTION_PREFIX_V2 + combined.toString('base64');
 }
 
 /**

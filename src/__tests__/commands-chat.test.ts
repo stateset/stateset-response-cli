@@ -196,4 +196,134 @@ describe('handleChatCommand', () => {
     const ctx = createMockCtx();
     expect(await handleChatCommand('/prompt\ttest', ctx)).toEqual({ handled: false });
   });
+
+  it('/metrics shows no metrics message when empty', async () => {
+    const ctx = createMockCtx();
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await handleChatCommand('/metrics', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(ctx.rl.prompt).toHaveBeenCalled();
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) => typeof line === 'string' && line.includes('No metrics recorded yet'),
+      ),
+    ).toBe(true);
+  });
+
+  it('/metrics json outputs valid JSON', async () => {
+    const ctx = createMockCtx();
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await handleChatCommand('/metrics json', ctx);
+
+    expect(result).toEqual({ handled: true });
+    // Find the JSON output call
+    const jsonCall = consoleSpy.mock.calls.find(([line]) => {
+      try {
+        if (typeof line === 'string') JSON.parse(line);
+        return typeof line === 'string';
+      } catch {
+        return false;
+      }
+    });
+    expect(jsonCall).toBeDefined();
+    const parsed = JSON.parse(jsonCall![0] as string);
+    expect(parsed).toHaveProperty('counters');
+    expect(parsed).toHaveProperty('tokenUsage');
+    expect(parsed).toHaveProperty('toolBreakdown');
+  });
+
+  it('/metrics reset clears metrics', async () => {
+    const ctx = createMockCtx();
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await handleChatCommand('/metrics reset', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) => typeof line === 'string' && line.includes('Metrics reset'),
+      ),
+    ).toBe(true);
+  });
+
+  it('/metricsx is not matched', async () => {
+    const ctx = createMockCtx();
+    expect(await handleChatCommand('/metricsx', ctx)).toEqual({ handled: false });
+  });
+
+  it('/clear clears conversation history', async () => {
+    const ctx = createMockCtx();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await handleChatCommand('/clear', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(ctx.agent.clearHistory).toHaveBeenCalled();
+    expect(ctx.sessionStore.clear).toHaveBeenCalled();
+  });
+
+  it('/history shows message count', async () => {
+    const ctx = createMockCtx();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await handleChatCommand('/history', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(ctx.agent.getHistoryLength).toHaveBeenCalled();
+  });
+
+  it('/extensions shows no extensions when empty', async () => {
+    const ctx = createMockCtx();
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await handleChatCommand('/extensions', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) => typeof line === 'string' && line.includes('No extensions loaded'),
+      ),
+    ).toBe(true);
+  });
+
+  it('/attach-clear clears all attachments', async () => {
+    const ctx = createMockCtx({ pendingAttachments: ['file1.txt', 'file2.txt'] } as any);
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await handleChatCommand('/attach-clear', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(ctx.pendingAttachments).toHaveLength(0);
+  });
+
+  it('/attachments lists staged attachments', async () => {
+    const ctx = createMockCtx({ pendingAttachments: ['file1.txt'] } as any);
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await handleChatCommand('/attachments', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) => typeof line === 'string' && line.includes('Staged attachments'),
+      ),
+    ).toBe(true);
+  });
+
+  it('/attachments shows empty message when none staged', async () => {
+    const ctx = createMockCtx();
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await handleChatCommand('/attachments', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) => typeof line === 'string' && line.includes('No attachments staged'),
+      ),
+    ).toBe(true);
+  });
 });

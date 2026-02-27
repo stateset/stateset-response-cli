@@ -21,6 +21,7 @@ import {
   printIntegrationLogs,
 } from './commands-integrations.js';
 import { hasCommand } from './utils.js';
+import { metrics } from '../lib/metrics.js';
 
 export async function handleChatCommand(input: string, ctx: ChatContext): Promise<CommandResult> {
   const prefix = input.split(/\s/)[0];
@@ -46,6 +47,69 @@ export async function handleChatCommand(input: string, ctx: ChatContext): Promis
     hasCommand(input, '/prompt')
   ) {
     return await handleTemplateCommand(input, ctx);
+  }
+
+  // /metrics — show session metrics
+  if (hasCommand(input, '/metrics')) {
+    const tokens = input.split(/\s+/).slice(1);
+    const arg = tokens[0]?.toLowerCase();
+
+    if (arg === 'reset') {
+      metrics.reset();
+      console.log(formatSuccess('Metrics reset.'));
+    } else if (arg === 'json') {
+      console.log(JSON.stringify(metrics.snapshot(), null, 2));
+    } else {
+      const snap = metrics.snapshot();
+
+      // Counters
+      const counterEntries = Object.entries(snap.counters);
+      if (counterEntries.length > 0) {
+        console.log(chalk.bold('Counters:'));
+        const rows = counterEntries.map(([name, value]) => ({ name, value: String(value) }));
+        console.log(formatTable(rows, ['name', 'value']));
+      }
+
+      // Token usage
+      const tu = snap.tokenUsage;
+      if (tu.inputTokens > 0 || tu.outputTokens > 0) {
+        console.log(chalk.bold('Token Usage:'));
+        console.log(
+          `  Input: ${tu.inputTokens}  Output: ${tu.outputTokens}  Cache-create: ${tu.cacheCreationInputTokens}  Cache-read: ${tu.cacheReadInputTokens}`,
+        );
+      }
+
+      // Tool breakdown
+      if (snap.toolBreakdown.length > 0) {
+        console.log(chalk.bold('Tool Breakdown:'));
+        const rows = snap.toolBreakdown.map((t) => ({
+          tool: t.name,
+          calls: String(t.calls),
+          errors: String(t.errors),
+          'p50 ms': String(Math.round(t.p50Ms)),
+          'p95 ms': String(Math.round(t.p95Ms)),
+        }));
+        console.log(formatTable(rows, ['tool', 'calls', 'errors', 'p50 ms', 'p95 ms']));
+      }
+
+      // Connection events
+      if (snap.connectionEvents.length > 0) {
+        console.log(chalk.bold('Connection Events:'));
+        for (const evt of snap.connectionEvents.slice(-5)) {
+          const ts = evt.timestamp.slice(11, 23);
+          const dur = evt.durationMs ? ` (${evt.durationMs}ms)` : '';
+          const err = evt.error ? ` — ${evt.error}` : '';
+          console.log(`  ${ts} ${evt.type}${dur}${err}`);
+        }
+      }
+
+      if (counterEntries.length === 0 && snap.toolBreakdown.length === 0) {
+        console.log(formatSuccess('No metrics recorded yet.'));
+      }
+    }
+    console.log('');
+    ctx.rl.prompt();
+    return { handled: true };
   }
 
   // /help — show help

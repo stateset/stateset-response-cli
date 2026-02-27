@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -470,5 +471,200 @@ describe('extensions', () => {
         message.includes('Skipping extension file too large: too-large.js (>1MB).'),
       ),
     ).toBe(true);
+  });
+});
+
+describe('extension hash verification', () => {
+  const trackedHashDirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of trackedHashDirs.splice(0)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  function setupHashExtension(name: string, content: string): { cwd: string; hash: string } {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stateset-ext-hash-'));
+    const extensionsDir = path.join(dir, '.stateset', 'extensions');
+    fs.mkdirSync(extensionsDir, { recursive: true });
+    const filePath = path.join(extensionsDir, `${name}.js`);
+    fs.writeFileSync(filePath, content, 'utf-8');
+    const hash = crypto.createHash('sha256').update(Buffer.from(content)).digest('hex');
+    trackedHashDirs.push(dir);
+    return { cwd: dir, hash };
+  }
+
+  it('loads extension when SHA256 hash matches', async () => {
+    const extCode = `export default function register(api) {
+      api.registerCommand({ name: 'hashok', handler: () => 'ok' });
+    }`;
+    const { cwd, hash } = setupHashExtension('hashext', extCode);
+    setupTrustRoot(cwd, { allow: ['hashext'], hashes: { hashext: hash } });
+
+    await withEnv(
+      {
+        STATESET_EXTENSIONS_ENFORCE_TRUST: 'true',
+        STATESET_EXTENSIONS_ALLOW: 'hashext',
+        STATESET_EXTENSIONS_REQUIRE_HASHES: 'true',
+        STATESET_EXTENSIONS_HASHES: `hashext:${hash}`,
+      },
+      async () => {
+        const manager = new ExtensionManager();
+        await manager.load(cwd);
+        expect(manager.listExtensions().map((e) => e.name)).toEqual(['hashext']);
+      },
+    );
+  });
+
+  it('blocks extension on hash mismatch', async () => {
+    const extCode = `export default function register(api) {
+      api.registerCommand({ name: 'bad', handler: () => 'bad' });
+    }`;
+    const { cwd } = setupHashExtension('badext', extCode);
+    const fakeHash = 'a'.repeat(64);
+    setupTrustRoot(cwd, { allow: ['badext'], hashes: { badext: fakeHash } });
+
+    await withEnv(
+      {
+        STATESET_EXTENSIONS_ENFORCE_TRUST: 'true',
+        STATESET_EXTENSIONS_ALLOW: 'badext',
+        STATESET_EXTENSIONS_HASHES: `badext:${fakeHash}`,
+      },
+      async () => {
+        const manager = new ExtensionManager();
+        await manager.load(cwd);
+        expect(manager.listExtensions()).toEqual([]);
+        expect(
+          manager.listDiagnostics().some((d) => d.message.includes('integrity hash mismatch')),
+        ).toBe(true);
+      },
+    );
+  });
+
+  it('blocks extension when requireHashes=true but no hash provided', async () => {
+    const extCode = `export default function register(api) {
+      api.registerCommand({ name: 'nohash', handler: () => 'nohash' });
+    }`;
+    const { cwd } = setupHashExtension('nohash', extCode);
+
+    await withEnv(
+      {
+        STATESET_EXTENSIONS_ENFORCE_TRUST: 'true',
+        STATESET_EXTENSIONS_ALLOW: 'nohash',
+        STATESET_EXTENSIONS_REQUIRE_HASHES: 'true',
+      },
+      async () => {
+        const manager = new ExtensionManager();
+        await manager.load(cwd);
+        expect(manager.listExtensions()).toEqual([]);
+        expect(
+          manager
+            .listDiagnostics()
+            .some((d) => d.message.includes('hash policy requires explicit digest')),
+        ).toBe(true);
+      },
+    );
+  });
+
+  it('loads without hash check when requireHashes=false', async () => {
+    const extCode = `export default function register(api) {
+      api.registerCommand({ name: 'noreq', handler: () => 'noreq' });
+    }`;
+    const { cwd } = setupHashExtension('noreq', extCode);
+
+    await withEnv(
+      {
+        STATESET_EXTENSIONS_ENFORCE_TRUST: 'true',
+        STATESET_EXTENSIONS_ALLOW: 'noreq',
+        STATESET_EXTENSIONS_REQUIRE_HASHES: undefined,
+      },
+      async () => {
+        const manager = new ExtensionManager();
+        await manager.load(cwd);
+        expect(manager.listExtensions().map((e) => e.name)).toEqual(['noreq']);
+      },
+    );
+  });
+
+  it('parses hashes from trust file JSON', async () => {
+    const extCode = `export default function register(api) {
+      api.registerCommand({ name: 'fromfile', handler: () => 'fromfile' });
+    }`;
+    const { cwd, hash } = setupHashExtension('fromfile', extCode);
+    setupTrustRoot(cwd, {
+      enforce: true,
+      allow: ['fromfile'],
+      requireHashes: true,
+      hashes: { fromfile: hash },
+    });
+
+    await withEnv(
+      {
+        STATESET_EXTENSIONS_ENFORCE_TRUST: undefined,
+        STATESET_EXTENSIONS_ALLOW: undefined,
+        STATESET_EXTENSIONS_REQUIRE_HASHES: undefined,
+        STATESET_EXTENSIONS_HASHES: undefined,
+      },
+      async () => {
+        const manager = new ExtensionManager();
+        await manager.load(cwd);
+        expect(manager.listExtensions().map((e) => e.name)).toEqual(['fromfile']);
+      },
+    );
+  });
+
+  it('rejects malformed hash entries in env var', async () => {
+    const extCode = `export default function register(api) {
+      api.registerCommand({ name: 'malformed', handler: () => 'malformed' });
+    }`;
+    const { cwd } = setupHashExtension('malformed', extCode);
+
+    await withEnv(
+      {
+        STATESET_EXTENSIONS_ENFORCE_TRUST: 'true',
+        STATESET_EXTENSIONS_ALLOW: 'malformed',
+        STATESET_EXTENSIONS_REQUIRE_HASHES: 'true',
+        STATESET_EXTENSIONS_HASHES: 'malformed:not-a-valid-hash',
+      },
+      async () => {
+        const manager = new ExtensionManager();
+        await manager.load(cwd);
+        // Malformed hash should be skipped, and since requireHashes is true,
+        // extension should be blocked for missing hash
+        expect(manager.listExtensions()).toEqual([]);
+      },
+    );
+  });
+
+  it('rejects oversized trust files', async () => {
+    const extCode = `export default function register(api) {
+      api.registerCommand({ name: 'bigfile', handler: () => 'bigfile' });
+    }`;
+    const { cwd } = setupHashExtension('bigfile', extCode);
+    const trustDir = path.join(cwd, '.stateset');
+    // Create an oversized trust file (>1MB)
+    const bigContent = JSON.stringify({ allow: ['bigfile'], extra: 'x'.repeat(1_048_577) });
+    fs.writeFileSync(path.join(trustDir, 'extension-trust.json'), bigContent, 'utf-8');
+
+    await withEnv(
+      {
+        STATESET_EXTENSIONS_ENFORCE_TRUST: 'true',
+        STATESET_EXTENSIONS_ALLOW: 'bigfile',
+      },
+      async () => {
+        const manager = new ExtensionManager();
+        await manager.load(cwd);
+        // The oversized file should produce a diagnostic
+        const diagnostics = manager.listDiagnostics().map((d) => d.message);
+        expect(
+          diagnostics.some(
+            (d) =>
+              d.includes('Failed to load extension trust policy') ||
+              d.includes('too large') ||
+              d.includes('exceeds'),
+          ),
+        ).toBe(true);
+      },
+    );
   });
 });

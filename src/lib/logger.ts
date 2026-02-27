@@ -45,6 +45,7 @@ class Logger {
   private level: LogLevel = 'info';
   private forceJson: boolean = false;
   private forcePretty: boolean = false;
+  private defaultContext: Record<string, unknown> = {};
 
   /**
    * Configure the logger
@@ -59,6 +60,13 @@ class Logger {
     if (options.forcePretty !== undefined) {
       this.forcePretty = options.forcePretty;
     }
+  }
+
+  /**
+   * Set default context that is merged into every log entry.
+   */
+  setDefaultContext(ctx: Record<string, unknown>): void {
+    this.defaultContext = { ...ctx };
   }
 
   /**
@@ -111,12 +119,17 @@ class Logger {
   private log(level: LogLevel, message: string, context?: Record<string, unknown>): void {
     if (!this.shouldLog(level)) return;
 
+    const merged =
+      Object.keys(this.defaultContext).length > 0 || (context && Object.keys(context).length > 0)
+        ? { ...this.defaultContext, ...context }
+        : undefined;
+
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
       level,
       message,
       ...(this.correlationId && { correlationId: this.correlationId }),
-      ...(context && Object.keys(context).length > 0 && { context }),
+      ...(merged && Object.keys(merged).length > 0 && { context: merged }),
     };
 
     if (this.isJsonMode()) {
@@ -164,10 +177,10 @@ class Logger {
   }
 
   /**
-   * Create a child logger with a specific correlation ID
+   * Create a child logger with a specific correlation ID and optional context.
    */
-  child(correlationId: string): ChildLogger {
-    return new ChildLogger(this, correlationId);
+  child(correlationId: string, context?: Record<string, unknown>): ChildLogger {
+    return new ChildLogger(this, correlationId, context);
   }
 }
 
@@ -176,25 +189,35 @@ class Logger {
  * mutate parent state.
  */
 class ChildLogger {
+  private childContext: Record<string, unknown>;
+
   constructor(
     private parent: Logger,
     private prefix: string,
-  ) {}
+    context?: Record<string, unknown>,
+  ) {
+    this.childContext = context ?? {};
+  }
+
+  private merge(context?: Record<string, unknown>): Record<string, unknown> | undefined {
+    if (Object.keys(this.childContext).length === 0) return context;
+    return { ...this.childContext, ...context };
+  }
 
   debug(message: string, context?: Record<string, unknown>): void {
-    this.parent.debug(`[${this.prefix}] ${message}`, context);
+    this.parent.debug(`[${this.prefix}] ${message}`, this.merge(context));
   }
 
   info(message: string, context?: Record<string, unknown>): void {
-    this.parent.info(`[${this.prefix}] ${message}`, context);
+    this.parent.info(`[${this.prefix}] ${message}`, this.merge(context));
   }
 
   warn(message: string, context?: Record<string, unknown>): void {
-    this.parent.warn(`[${this.prefix}] ${message}`, context);
+    this.parent.warn(`[${this.prefix}] ${message}`, this.merge(context));
   }
 
   error(message: string, context?: Record<string, unknown>): void {
-    this.parent.error(`[${this.prefix}] ${message}`, context);
+    this.parent.error(`[${this.prefix}] ${message}`, this.merge(context));
   }
 }
 

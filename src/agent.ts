@@ -7,6 +7,7 @@ import { SessionStore } from './session.js';
 import { type ModelId, DEFAULT_MODEL } from './config.js';
 import { INTEGRATION_DEFINITIONS } from './integrations/registry.js';
 import { isRetryable, getErrorMessage } from './lib/errors.js';
+import { metrics } from './lib/metrics.js';
 
 const THIS_FILE = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(THIS_FILE);
@@ -368,6 +369,7 @@ export class StateSetAgent {
     });
     this.transport = transport;
 
+    const connectStart = Date.now();
     try {
       await withTimeout(this.mcpClient.connect(transport), MCP_CONNECT_TIMEOUT_MS, 'MCP connect');
       const { tools } = await withTimeout(
@@ -380,7 +382,13 @@ export class StateSetAgent {
         description: tool.description || '',
         input_schema: tool.inputSchema as Anthropic.Tool.InputSchema,
       }));
+      metrics.recordConnectionEvent({ type: 'connect', durationMs: Date.now() - connectStart });
     } catch (error: unknown) {
+      metrics.recordConnectionEvent({
+        type: 'error',
+        durationMs: Date.now() - connectStart,
+        error: getErrorMessage(error),
+      });
       this.transport = null;
       this.tools = [];
       await transport.close().catch(() => {});
@@ -397,6 +405,7 @@ export class StateSetAgent {
     userMessage: Anthropic.MessageParam['content'],
     callbacks?: ChatCallbacks,
   ): Promise<string> {
+    metrics.increment('chat.messages');
     this.addMessage({ role: 'user', content: userMessage });
 
     const textParts: string[] = [];
@@ -444,6 +453,7 @@ export class StateSetAgent {
       }
 
       if (finalMessage.usage) {
+        metrics.recordTokenUsage(finalMessage.usage);
         callbacks?.onUsage?.(finalMessage.usage);
       }
 
@@ -555,15 +565,19 @@ export class StateSetAgent {
               content: resultText,
             });
 
+            const durationMs = Date.now() - startTime;
+            metrics.recordToolCall(block.name, durationMs, false);
+
             callbacks?.onToolCallEnd?.({
               name: block.name,
               args,
               resultText,
               isError: false,
-              durationMs: Date.now() - startTime,
+              durationMs,
             });
           } catch (error: unknown) {
             const elapsed = Date.now() - startTime;
+            metrics.recordToolCall(block.name, elapsed, true);
             const errMsg = getErrorMessage(error);
             const resultText = `Error calling tool "${block.name}" (${elapsed}ms): ${errMsg}`;
             toolResults.push({
@@ -602,6 +616,7 @@ export class StateSetAgent {
       }
     }
     this.tools = [];
+    metrics.recordConnectionEvent({ type: 'disconnect' });
   }
 
   private trimHistory(): void {

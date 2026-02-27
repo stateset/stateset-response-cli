@@ -28,6 +28,7 @@ import {
 } from '../utils/display.js';
 import { ExtensionManager } from '../extensions.js';
 import { logger } from '../lib/logger.js';
+import { metrics } from '../lib/metrics.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { extractInlineFlags, readBooleanEnv } from './utils.js';
 import type { ChatContext, ToolAuditEntry, CommandResult } from './types.js';
@@ -196,6 +197,8 @@ export async function startChatSession(
 
   let sessionId = sanitizeSessionId(options.session || 'default');
   let sessionStore = new SessionStore(sessionId);
+  metrics.increment('sessions.started');
+  logger.setDefaultContext({ sessionId });
   const agent = new StateSetAgent(apiKey, model);
   agent.setMcpEnvOverrides({
     STATESET_ALLOW_APPLY: allowApply ? 'true' : 'false',
@@ -297,6 +300,8 @@ export async function startChatSession(
   const switchSession = (nextSessionId: string) => {
     sessionId = sanitizeSessionId(nextSessionId || 'default');
     sessionStore = new SessionStore(sessionId);
+    metrics.increment('sessions.switched');
+    logger.setDefaultContext({ sessionId });
     agent.useSessionStore(sessionStore);
     pendingAttachments = [];
     const memory = loadMemory(sessionId);
@@ -566,6 +571,7 @@ export async function startChatSession(
     }
 
     processing = true;
+    metrics.increment('chat.userMessages');
     const startTime = Date.now();
 
     // Stream response: print text token-by-token

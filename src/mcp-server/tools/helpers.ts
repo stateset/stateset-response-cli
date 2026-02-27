@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { redactPii } from '../../integrations/redact.js';
 import { stringifyToolResult } from './output.js';
+import { logger } from '../../lib/logger.js';
 
 export interface IntegrationToolOptions {
   allowApply: boolean;
@@ -148,4 +149,17 @@ export function registerRawRequestTool<TConfig>(
       return wrapToolResult({ success: true, ...result }, args.max_chars as number | undefined);
     },
   );
+}
+
+/**
+ * Opt-in timing wrapper for MCP tool handlers.
+ * Logs execution duration via `logger.debug()` on the server (stderr).
+ */
+export async function withToolTiming<T>(toolName: string, fn: () => Promise<T>): Promise<T> {
+  const start = Date.now();
+  try {
+    return await fn();
+  } finally {
+    logger.debug(`[timing] ${toolName} completed in ${Date.now() - start}ms`);
+  }
 }
