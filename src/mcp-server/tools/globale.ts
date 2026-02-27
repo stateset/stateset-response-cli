@@ -11,25 +11,68 @@ import {
   wrapToolResult,
 } from './helpers.js';
 
-const globaleIdempotencyStore = new Map<string, { status: number; data: unknown }>();
+interface GlobalEIdempotencyEntry {
+  status: number;
+  data: unknown;
+}
+
+const globaleIdempotencyStore = new Map<string, GlobalEIdempotencyEntry>();
+const GLOBALE_IDEMPOTENCY_MAX_ENTRIES = 500;
+
+function globaleScopedIdempotencyKey(operation: string, key: string): string {
+  return `${operation}:${key}`;
+}
+
+function getGlobalEIdempotency(
+  operation: string,
+  key: string | undefined,
+): GlobalEIdempotencyEntry | null {
+  if (!key) return null;
+  return globaleIdempotencyStore.get(globaleScopedIdempotencyKey(operation, key)) || null;
+}
 
 function withGlobalEIdempotency(
+  operation: string,
   key: string | undefined,
   status: number,
   data: unknown,
 ): { deduplicated: boolean; status: number; data: unknown } {
   if (!key) return { deduplicated: false, status, data };
-  const existing = globaleIdempotencyStore.get(key);
+  const scopedKey = globaleScopedIdempotencyKey(operation, key);
+  const existing = globaleIdempotencyStore.get(scopedKey);
   if (existing) {
     return { deduplicated: true, status: existing.status, data: existing.data };
   }
-  globaleIdempotencyStore.set(key, { status, data });
+  if (globaleIdempotencyStore.size >= GLOBALE_IDEMPOTENCY_MAX_ENTRIES) {
+    const oldest = globaleIdempotencyStore.keys().next().value;
+    if (oldest) {
+      globaleIdempotencyStore.delete(oldest);
+    }
+  }
+  globaleIdempotencyStore.set(scopedKey, { status, data });
   return { deduplicated: false, status, data };
 }
 
 const runRequest = createRequestRunner<GlobalEConfig>((config, args) =>
   globalERequest({ globale: config, ...args }),
 );
+
+function requireGlobalEEndpoint(endpoint: string | undefined, action: string): string {
+  const normalized = String(endpoint || '').trim();
+  if (!normalized) {
+    throw new Error(`endpoint_override is required for ${action}.`);
+  }
+  return normalized;
+}
+
+function requireGlobalERatePayload(
+  payload: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  if (!payload || Object.keys(payload).length === 0) {
+    throw new Error('rate_payload is required for globale_get_rates.');
+  }
+  return payload;
+}
 
 export function registerGlobalETools(
   server: McpServer,
@@ -43,14 +86,14 @@ export function registerGlobalETools(
       tracking_number: z.string().describe('Shipment tracking number'),
       endpoint_override: z
         .string()
-        .optional()
-        .describe('Override default endpoint (/track/shipments)'),
+        .describe('Global-e tracking endpoint path (required, merchant-specific).'),
       max_chars: MaxCharsSchema,
     },
     async (args) => {
+      const endpoint = requireGlobalEEndpoint(args.endpoint_override, 'globale_track_shipment');
       const result = await runRequest(globale, options, {
         method: 'GET',
-        path: args.endpoint_override || '/track/shipments',
+        path: endpoint,
         query: { trackingNumber: args.tracking_number },
       });
       return wrapToolResult({ success: true, ...result }, args.max_chars);
@@ -59,43 +102,21 @@ export function registerGlobalETools(
 
   server.tool(
     'globale_get_rates',
-    'Get Global-e shipping rates/quote.',
+    'Get Global-e rates using a provider-native payload and explicit endpoint.',
     {
-      shipper_postal_code: z.string().describe('Shipper postal code'),
-      shipper_country_code: z.string().describe('Shipper country code'),
-      recipient_postal_code: z.string().describe('Recipient postal code'),
-      recipient_country_code: z.string().describe('Recipient country code'),
-      weight_kg: z.number().positive().describe('Package weight in kilograms'),
-      package_type: z.string().optional().describe('Package type code'),
-      planned_shipping_date: z.string().optional().describe('Planned shipping date (YYYY-MM-DD)'),
-      endpoint_override: z.string().optional().describe('Override default endpoint (/rates)'),
+      endpoint_override: z
+        .string()
+        .describe('Global-e rates endpoint path (required, merchant-specific).'),
+      rate_payload: z.record(z.unknown()).describe('Global-e native rates payload'),
       max_chars: MaxCharsSchema,
     },
     async (args) => {
-      const body: Record<string, unknown> = {
-        customerDetails: {
-          shipperDetails: {
-            postalCode: args.shipper_postal_code,
-            countryCode: args.shipper_country_code,
-          },
-          receiverDetails: {
-            postalCode: args.recipient_postal_code,
-            countryCode: args.recipient_country_code,
-          },
-        },
-        plannedShippingDateAndTime: args.planned_shipping_date,
-        unitOfMeasurement: 'metric',
-        isCustomsDeclarable: false,
-        packages: [{ weight: args.weight_kg }],
-      };
-      if (args.package_type) {
-        body.packages = [{ weight: args.weight_kg, typeCode: args.package_type }];
-      }
-
+      const endpoint = requireGlobalEEndpoint(args.endpoint_override, 'globale_get_rates');
+      const ratePayload = requireGlobalERatePayload(args.rate_payload);
       const result = await runRequest(globale, options, {
         method: 'POST',
-        path: args.endpoint_override || '/rates',
-        body,
+        path: endpoint,
+        body: ratePayload,
       });
       return wrapToolResult({ success: true, ...result }, args.max_chars);
     },
@@ -126,7 +147,7 @@ export function registerGlobalETools(
       if (blocked) return blocked;
 
       if (args.idempotency_key) {
-        const existing = globaleIdempotencyStore.get(args.idempotency_key);
+        const existing = getGlobalEIdempotency('create_shipment', args.idempotency_key);
         if (existing) {
           return wrapToolResult(
             {
@@ -142,7 +163,12 @@ export function registerGlobalETools(
       }
 
       const result = await runRequest(globale, options, request);
-      const dedupe = withGlobalEIdempotency(args.idempotency_key, result.status, result.data);
+      const dedupe = withGlobalEIdempotency(
+        'create_shipment',
+        args.idempotency_key,
+        result.status,
+        result.data,
+      );
       return wrapToolResult({ success: true, ...result, ...dedupe }, args.max_chars);
     },
   );
@@ -174,7 +200,7 @@ export function registerGlobalETools(
       if (blocked) return blocked;
 
       if (args.idempotency_key) {
-        const existing = globaleIdempotencyStore.get(args.idempotency_key);
+        const existing = getGlobalEIdempotency('cancel_shipment', args.idempotency_key);
         if (existing) {
           return wrapToolResult(
             {
@@ -190,7 +216,12 @@ export function registerGlobalETools(
       }
 
       const result = await runRequest(globale, options, request);
-      const dedupe = withGlobalEIdempotency(args.idempotency_key, result.status, result.data);
+      const dedupe = withGlobalEIdempotency(
+        'cancel_shipment',
+        args.idempotency_key,
+        result.status,
+        result.data,
+      );
       return wrapToolResult({ success: true, ...result, ...dedupe }, args.max_chars);
     },
   );
@@ -218,7 +249,7 @@ export function registerGlobalETools(
       if (blocked) return blocked;
 
       if (args.idempotency_key) {
-        const existing = globaleIdempotencyStore.get(args.idempotency_key);
+        const existing = getGlobalEIdempotency('schedule_pickup', args.idempotency_key);
         if (existing) {
           return wrapToolResult(
             {
@@ -234,7 +265,12 @@ export function registerGlobalETools(
       }
 
       const result = await runRequest(globale, options, request);
-      const dedupe = withGlobalEIdempotency(args.idempotency_key, result.status, result.data);
+      const dedupe = withGlobalEIdempotency(
+        'schedule_pickup',
+        args.idempotency_key,
+        result.status,
+        result.data,
+      );
       return wrapToolResult({ success: true, ...result, ...dedupe }, args.max_chars);
     },
   );
@@ -264,7 +300,7 @@ export function registerGlobalETools(
       if (blocked) return blocked;
 
       if (args.idempotency_key) {
-        const existing = globaleIdempotencyStore.get(args.idempotency_key);
+        const existing = getGlobalEIdempotency('cancel_pickup', args.idempotency_key);
         if (existing) {
           return wrapToolResult(
             {
@@ -280,7 +316,12 @@ export function registerGlobalETools(
       }
 
       const result = await runRequest(globale, options, request);
-      const dedupe = withGlobalEIdempotency(args.idempotency_key, result.status, result.data);
+      const dedupe = withGlobalEIdempotency(
+        'cancel_pickup',
+        args.idempotency_key,
+        result.status,
+        result.data,
+      );
       return wrapToolResult({ success: true, ...result, ...dedupe }, args.max_chars);
     },
   );

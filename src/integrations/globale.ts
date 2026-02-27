@@ -21,7 +21,7 @@ export async function globalERequest(
   const method = String(options.method || '').toUpperCase();
   if (!method) throw new ValidationError('Method is required');
 
-  const path = normalizePath(options.path, '/orders, /shipments, /returns');
+  const path = normalizePath(options.path, '/orders, /shipments, /returns, /pickups');
   const baseUrl = normalizeBaseUrl(options.globale.baseUrl);
   const url = new URL(`${baseUrl}${path}`);
 

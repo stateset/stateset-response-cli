@@ -11,19 +11,42 @@ import {
   wrapToolResult,
 } from './helpers.js';
 
-const dhlIdempotencyStore = new Map<string, { status: number; data: unknown }>();
+interface DhlIdempotencyEntry {
+  status: number;
+  data: unknown;
+}
+
+const dhlIdempotencyStore = new Map<string, DhlIdempotencyEntry>();
+const DHL_IDEMPOTENCY_MAX_ENTRIES = 500;
+
+function dhlScopedIdempotencyKey(operation: string, key: string): string {
+  return `${operation}:${key}`;
+}
+
+function getDhlIdempotency(operation: string, key: string | undefined): DhlIdempotencyEntry | null {
+  if (!key) return null;
+  return dhlIdempotencyStore.get(dhlScopedIdempotencyKey(operation, key)) || null;
+}
 
 function withDhlIdempotency(
+  operation: string,
   key: string | undefined,
   status: number,
   data: unknown,
 ): { deduplicated: boolean; status: number; data: unknown } {
   if (!key) return { deduplicated: false, status, data };
-  const existing = dhlIdempotencyStore.get(key);
+  const scopedKey = dhlScopedIdempotencyKey(operation, key);
+  const existing = dhlIdempotencyStore.get(scopedKey);
   if (existing) {
     return { deduplicated: true, status: existing.status, data: existing.data };
   }
-  dhlIdempotencyStore.set(key, { status, data });
+  if (dhlIdempotencyStore.size >= DHL_IDEMPOTENCY_MAX_ENTRIES) {
+    const oldest = dhlIdempotencyStore.keys().next().value;
+    if (oldest) {
+      dhlIdempotencyStore.delete(oldest);
+    }
+  }
+  dhlIdempotencyStore.set(scopedKey, { status, data });
   return { deduplicated: false, status, data };
 }
 
@@ -126,7 +149,7 @@ export function registerDhlTools(
       if (blocked) return blocked;
 
       if (args.idempotency_key) {
-        const existing = dhlIdempotencyStore.get(args.idempotency_key);
+        const existing = getDhlIdempotency('create_shipment', args.idempotency_key);
         if (existing) {
           return wrapToolResult(
             {
@@ -142,7 +165,12 @@ export function registerDhlTools(
       }
 
       const result = await runRequest(dhl, options, request);
-      const dedupe = withDhlIdempotency(args.idempotency_key, result.status, result.data);
+      const dedupe = withDhlIdempotency(
+        'create_shipment',
+        args.idempotency_key,
+        result.status,
+        result.data,
+      );
       return wrapToolResult({ success: true, ...result, ...dedupe }, args.max_chars);
     },
   );
@@ -174,7 +202,7 @@ export function registerDhlTools(
       if (blocked) return blocked;
 
       if (args.idempotency_key) {
-        const existing = dhlIdempotencyStore.get(args.idempotency_key);
+        const existing = getDhlIdempotency('cancel_shipment', args.idempotency_key);
         if (existing) {
           return wrapToolResult(
             {
@@ -190,7 +218,12 @@ export function registerDhlTools(
       }
 
       const result = await runRequest(dhl, options, request);
-      const dedupe = withDhlIdempotency(args.idempotency_key, result.status, result.data);
+      const dedupe = withDhlIdempotency(
+        'cancel_shipment',
+        args.idempotency_key,
+        result.status,
+        result.data,
+      );
       return wrapToolResult({ success: true, ...result, ...dedupe }, args.max_chars);
     },
   );
@@ -218,7 +251,7 @@ export function registerDhlTools(
       if (blocked) return blocked;
 
       if (args.idempotency_key) {
-        const existing = dhlIdempotencyStore.get(args.idempotency_key);
+        const existing = getDhlIdempotency('schedule_pickup', args.idempotency_key);
         if (existing) {
           return wrapToolResult(
             {
@@ -234,7 +267,12 @@ export function registerDhlTools(
       }
 
       const result = await runRequest(dhl, options, request);
-      const dedupe = withDhlIdempotency(args.idempotency_key, result.status, result.data);
+      const dedupe = withDhlIdempotency(
+        'schedule_pickup',
+        args.idempotency_key,
+        result.status,
+        result.data,
+      );
       return wrapToolResult({ success: true, ...result, ...dedupe }, args.max_chars);
     },
   );
@@ -264,7 +302,7 @@ export function registerDhlTools(
       if (blocked) return blocked;
 
       if (args.idempotency_key) {
-        const existing = dhlIdempotencyStore.get(args.idempotency_key);
+        const existing = getDhlIdempotency('cancel_pickup', args.idempotency_key);
         if (existing) {
           return wrapToolResult(
             {
@@ -280,7 +318,12 @@ export function registerDhlTools(
       }
 
       const result = await runRequest(dhl, options, request);
-      const dedupe = withDhlIdempotency(args.idempotency_key, result.status, result.data);
+      const dedupe = withDhlIdempotency(
+        'cancel_pickup',
+        args.idempotency_key,
+        result.status,
+        result.data,
+      );
       return wrapToolResult({ success: true, ...result, ...dedupe }, args.max_chars);
     },
   );

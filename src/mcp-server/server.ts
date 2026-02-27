@@ -160,6 +160,11 @@ const INTEGRATIONS: IntegrationEntry[] = [
   },
 ];
 
+function resolveMcpServerVersion(): string {
+  const npmVersion = String(process.env.npm_package_version || '').trim();
+  return npmVersion || '1.3.10';
+}
+
 export function createServer(): McpServer {
   const { orgId, config: orgConfig } = getCurrentOrg();
   const cliToken = orgConfig.cliToken?.trim();
@@ -176,7 +181,7 @@ export function createServer(): McpServer {
   const graphqlClient = createGraphQLClient(orgConfig.graphqlEndpoint, auth, orgId);
 
   const server = new McpServer(
-    { name: 'stateset-response', version: '1.0.0' },
+    { name: 'stateset-response', version: resolveMcpServerVersion() },
     {
       capabilities: { tools: {} },
     },

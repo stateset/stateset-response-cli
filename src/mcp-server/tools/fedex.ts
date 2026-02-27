@@ -11,20 +11,105 @@ import {
   wrapToolResult,
 } from './helpers.js';
 
-const fedexIdempotencyStore = new Map<string, { status: number; data: unknown }>();
+interface FedExIdempotencyEntry {
+  status: number;
+  data: unknown;
+}
+
+interface FedExRatesArgs {
+  shipper_postal_code: string;
+  shipper_country_code: string;
+  recipient_postal_code: string;
+  recipient_country_code: string;
+  weight_kg: number;
+  package_type?: string;
+  service_type?: string;
+  planned_shipping_date?: string;
+}
+
+const fedexIdempotencyStore = new Map<string, FedExIdempotencyEntry>();
+const FEDEX_IDEMPOTENCY_MAX_ENTRIES = 500;
+
+function fedexScopedIdempotencyKey(operation: string, key: string): string {
+  return `${operation}:${key}`;
+}
+
+function getFedExIdempotency(
+  operation: string,
+  key: string | undefined,
+): FedExIdempotencyEntry | null {
+  if (!key) return null;
+  return fedexIdempotencyStore.get(fedexScopedIdempotencyKey(operation, key)) || null;
+}
 
 function withFedExIdempotency(
+  operation: string,
   key: string | undefined,
   status: number,
   data: unknown,
 ): { deduplicated: boolean; status: number; data: unknown } {
   if (!key) return { deduplicated: false, status, data };
-  const existing = fedexIdempotencyStore.get(key);
+  const scopedKey = fedexScopedIdempotencyKey(operation, key);
+  const existing = fedexIdempotencyStore.get(scopedKey);
   if (existing) {
     return { deduplicated: true, status: existing.status, data: existing.data };
   }
-  fedexIdempotencyStore.set(key, { status, data });
+  if (fedexIdempotencyStore.size >= FEDEX_IDEMPOTENCY_MAX_ENTRIES) {
+    const oldest = fedexIdempotencyStore.keys().next().value;
+    if (oldest) {
+      fedexIdempotencyStore.delete(oldest);
+    }
+  }
+  fedexIdempotencyStore.set(scopedKey, { status, data });
   return { deduplicated: false, status, data };
+}
+
+function buildFedExRateQuoteBody(
+  fedex: FedExConfig,
+  args: FedExRatesArgs,
+): Record<string, unknown> {
+  const requestedPackageLineItem: Record<string, unknown> = {
+    weight: {
+      units: 'KG',
+      value: args.weight_kg,
+    },
+  };
+
+  const requestedShipment: Record<string, unknown> = {
+    shipper: {
+      address: {
+        postalCode: args.shipper_postal_code,
+        countryCode: args.shipper_country_code,
+      },
+    },
+    recipient: {
+      address: {
+        postalCode: args.recipient_postal_code,
+        countryCode: args.recipient_country_code,
+      },
+    },
+    pickupType: 'DROPOFF_AT_FEDEX_LOCATION',
+    rateRequestType: ['LIST'],
+    requestedPackageLineItems: [requestedPackageLineItem],
+  };
+
+  if (args.package_type) {
+    requestedShipment.packagingType = args.package_type;
+  }
+  if (args.service_type) {
+    requestedShipment.serviceType = args.service_type;
+  }
+  if (args.planned_shipping_date) {
+    requestedShipment.shipDateStamp = args.planned_shipping_date;
+  }
+
+  const body: Record<string, unknown> = {
+    requestedShipment,
+  };
+  if (fedex.accountNumber) {
+    body.accountNumber = { value: fedex.accountNumber };
+  }
+  return body;
 }
 
 const runRequest = createRequestRunner<FedExConfig>((config, args) =>
@@ -75,7 +160,8 @@ export function registerFedExTools(
       recipient_postal_code: z.string().describe('Recipient postal code'),
       recipient_country_code: z.string().describe('Recipient country code'),
       weight_kg: z.number().positive().describe('Package weight in kilograms'),
-      package_type: z.string().optional().describe('Package type code'),
+      package_type: z.string().optional().describe('FedEx packaging type'),
+      service_type: z.string().optional().describe('FedEx service type'),
       planned_shipping_date: z.string().optional().describe('Planned shipping date (YYYY-MM-DD)'),
       endpoint_override: z
         .string()
@@ -84,30 +170,10 @@ export function registerFedExTools(
       max_chars: MaxCharsSchema,
     },
     async (args) => {
-      const body: Record<string, unknown> = {
-        customerDetails: {
-          shipperDetails: {
-            postalCode: args.shipper_postal_code,
-            countryCode: args.shipper_country_code,
-          },
-          receiverDetails: {
-            postalCode: args.recipient_postal_code,
-            countryCode: args.recipient_country_code,
-          },
-        },
-        plannedShippingDateAndTime: args.planned_shipping_date,
-        unitOfMeasurement: 'metric',
-        isCustomsDeclarable: false,
-        packages: [{ weight: args.weight_kg }],
-      };
-      if (args.package_type) {
-        body.packages = [{ weight: args.weight_kg, typeCode: args.package_type }];
-      }
-
       const result = await runRequest(fedex, options, {
         method: 'POST',
         path: args.endpoint_override || '/rate/v1/rates/quotes',
-        body,
+        body: buildFedExRateQuoteBody(fedex, args),
       });
       return wrapToolResult({ success: true, ...result }, args.max_chars);
     },
@@ -141,7 +207,7 @@ export function registerFedExTools(
       if (blocked) return blocked;
 
       if (args.idempotency_key) {
-        const existing = fedexIdempotencyStore.get(args.idempotency_key);
+        const existing = getFedExIdempotency('create_shipment', args.idempotency_key);
         if (existing) {
           return wrapToolResult(
             {
@@ -157,7 +223,12 @@ export function registerFedExTools(
       }
 
       const result = await runRequest(fedex, options, request);
-      const dedupe = withFedExIdempotency(args.idempotency_key, result.status, result.data);
+      const dedupe = withFedExIdempotency(
+        'create_shipment',
+        args.idempotency_key,
+        result.status,
+        result.data,
+      );
       return wrapToolResult({ success: true, ...result, ...dedupe }, args.max_chars);
     },
   );
@@ -192,7 +263,7 @@ export function registerFedExTools(
       if (blocked) return blocked;
 
       if (args.idempotency_key) {
-        const existing = fedexIdempotencyStore.get(args.idempotency_key);
+        const existing = getFedExIdempotency('cancel_shipment', args.idempotency_key);
         if (existing) {
           return wrapToolResult(
             {
@@ -208,7 +279,12 @@ export function registerFedExTools(
       }
 
       const result = await runRequest(fedex, options, request);
-      const dedupe = withFedExIdempotency(args.idempotency_key, result.status, result.data);
+      const dedupe = withFedExIdempotency(
+        'cancel_shipment',
+        args.idempotency_key,
+        result.status,
+        result.data,
+      );
       return wrapToolResult({ success: true, ...result, ...dedupe }, args.max_chars);
     },
   );
@@ -239,7 +315,7 @@ export function registerFedExTools(
       if (blocked) return blocked;
 
       if (args.idempotency_key) {
-        const existing = fedexIdempotencyStore.get(args.idempotency_key);
+        const existing = getFedExIdempotency('schedule_pickup', args.idempotency_key);
         if (existing) {
           return wrapToolResult(
             {
@@ -255,7 +331,12 @@ export function registerFedExTools(
       }
 
       const result = await runRequest(fedex, options, request);
-      const dedupe = withFedExIdempotency(args.idempotency_key, result.status, result.data);
+      const dedupe = withFedExIdempotency(
+        'schedule_pickup',
+        args.idempotency_key,
+        result.status,
+        result.data,
+      );
       return wrapToolResult({ success: true, ...result, ...dedupe }, args.max_chars);
     },
   );
@@ -288,7 +369,7 @@ export function registerFedExTools(
       if (blocked) return blocked;
 
       if (args.idempotency_key) {
-        const existing = fedexIdempotencyStore.get(args.idempotency_key);
+        const existing = getFedExIdempotency('cancel_pickup', args.idempotency_key);
         if (existing) {
           return wrapToolResult(
             {
@@ -304,7 +385,12 @@ export function registerFedExTools(
       }
 
       const result = await runRequest(fedex, options, request);
-      const dedupe = withFedExIdempotency(args.idempotency_key, result.status, result.data);
+      const dedupe = withFedExIdempotency(
+        'cancel_pickup',
+        args.idempotency_key,
+        result.status,
+        result.data,
+      );
       return wrapToolResult({ success: true, ...result, ...dedupe }, args.max_chars);
     },
   );

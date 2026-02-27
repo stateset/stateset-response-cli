@@ -81,7 +81,10 @@ export async function fedexRequest(
   const method = String(options.method || '').toUpperCase();
   if (!method) throw new ValidationError('Method is required');
 
-  const path = normalizePath(options.path, '/track/v1/trackingnumbers, /ship/v1/shipments');
+  const path = normalizePath(
+    options.path,
+    '/track/v1/trackingnumbers, /rate/v1/rates/quotes, /ship/v1/shipments',
+  );
   const baseUrl = normalizeBaseUrl(options.fedex.baseUrl);
   const url = new URL(`${baseUrl}${path}`);
 

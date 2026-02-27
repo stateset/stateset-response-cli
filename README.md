@@ -526,9 +526,11 @@ The AI agent has access to 100+ tools organized by resource type:
 
 ### Global-e
 `globale_track_shipment` `globale_get_rates` `globale_create_shipment` `globale_cancel_shipment` `globale_schedule_pickup` `globale_cancel_pickup` `globale_request`
+`globale_track_shipment` requires `endpoint_override`; `globale_get_rates` requires both `endpoint_override` and `rate_payload` (merchant-specific contract).
 
 ### FedEx
 `fedex_track_shipment` `fedex_get_rates` `fedex_create_shipment` `fedex_cancel_shipment` `fedex_schedule_pickup` `fedex_cancel_pickup` `fedex_request`
+`fedex_get_rates` builds a FedEx Rate v1 quote payload and supports optional `package_type` and `service_type`.
 
 ### Klaviyo
 `klaviyo_list_profiles` `klaviyo_get_profile` `klaviyo_create_profile` `klaviyo_create_or_update_profile` `klaviyo_update_profile` `klaviyo_merge_profiles`
