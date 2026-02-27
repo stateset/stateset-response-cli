@@ -144,13 +144,18 @@ program
         }
       }
     } else if (options.integrations !== false && options.nonInteractive) {
-      console.log(chalk.gray('  Skipping interactive integrations setup in non-interactive mode.'));
-      console.log(
-        chalk.gray(
-          '  Run "response integrations setup --from-env --validate-only" after exporting integration env vars.',
-        ),
-      );
-      console.log('');
+      try {
+        await runIntegrationsSetup(process.cwd(), {
+          target: options.integration,
+          fromEnv: Boolean(options.fromEnv),
+          validateOnly: !options.fromEnv,
+          nonInteractive: true,
+        });
+      } catch (e: unknown) {
+        console.error(formatError(getErrorMessage(e)));
+        process.exitCode = 1;
+        return;
+      }
     }
 
     if (options.chat === false) {

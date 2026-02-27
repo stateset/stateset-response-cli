@@ -34,6 +34,7 @@ response chat
 response auth status
 response integrations status
 response integrations setup --from-env --validate-only
+response integrations setup shopify --from-env --non-interactive --scope local
 ```
 
 For full command reference, return to [`README.md`](../README.md).

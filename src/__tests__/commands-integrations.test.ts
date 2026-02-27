@@ -356,4 +356,94 @@ describe('commands-integrations', () => {
       runIntegrationsSetup('/tmp/project', { target: 'missing', validateOnly: true }),
     ).rejects.toThrow('Integration not found: missing');
   });
+
+  it('non-interactive setup fails when required values are missing', async () => {
+    mockedLoadIntegrationsStore.mockReturnValue({
+      scope: 'global',
+      path: '/tmp/.stateset/integrations.json',
+      store: { version: 1, integrations: {} },
+    } as any);
+    mockedLoadIntegrationsStoreForScope.mockReturnValue({
+      path: '/tmp/.stateset/integrations.json',
+      store: { version: 1, integrations: {} },
+    } as any);
+    mockedReadFirstEnvValue.mockReturnValue('');
+
+    await expect(
+      runIntegrationsSetup('/tmp/project', { nonInteractive: true, target: 'shopify' }),
+    ).rejects.toThrow('Missing required field "apiKey" for integration "shopify"');
+  });
+
+  it('non-interactive setup supports --from-env without prompts', async () => {
+    const store = { version: 1, integrations: {} };
+    mockedLoadIntegrationsStore.mockReturnValue({
+      scope: 'global',
+      path: '/tmp/.stateset/integrations.json',
+      store,
+    } as any);
+    mockedLoadIntegrationsStoreForScope.mockReturnValue({
+      path: '/tmp/project/.stateset/integrations.json',
+      store,
+    } as any);
+    mockedReadFirstEnvValue.mockImplementation((envVars: string[]) =>
+      envVars[0] === 'SHOPIFY_API_KEY' ? 'env-shop-key' : '',
+    );
+    mockedSaveIntegrationsStore.mockReturnValue('/tmp/project/.stateset/integrations.json');
+
+    await runIntegrationsSetup('/tmp/project', {
+      nonInteractive: true,
+      fromEnv: true,
+      target: 'shopify',
+      scope: 'local',
+    });
+
+    expect(mockedInquirer.prompt).not.toHaveBeenCalled();
+    expect(mockedSaveIntegrationsStore).toHaveBeenCalledWith(
+      '/tmp/project',
+      'local',
+      expect.objectContaining({
+        integrations: expect.objectContaining({
+          shopify: expect.objectContaining({
+            enabled: true,
+            config: { apiKey: 'env-shop-key' },
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('interactive setup still prompts when env var exists but --from-env is off', async () => {
+    const store = { version: 1, integrations: {} };
+    mockedLoadIntegrationsStore.mockReturnValue({
+      scope: 'global',
+      path: '/tmp/.stateset/integrations.json',
+      store,
+    } as any);
+    mockedLoadIntegrationsStoreForScope.mockReturnValue({
+      path: '/tmp/project/.stateset/integrations.json',
+      store,
+    } as any);
+    mockedReadFirstEnvValue.mockImplementation((envVars: string[]) =>
+      envVars[0] === 'SHOPIFY_API_KEY' ? 'env-shop-key' : '',
+    );
+    mockedInquirer.prompt
+      .mockResolvedValueOnce({ scope: 'local' })
+      .mockResolvedValueOnce({ apiKey: 'prompted-shop-key' })
+      .mockResolvedValueOnce({ baseUrl: '' });
+    mockedSaveIntegrationsStore.mockReturnValue('/tmp/project/.stateset/integrations.json');
+
+    await runIntegrationsSetup('/tmp/project', { target: 'shopify' });
+
+    expect(mockedSaveIntegrationsStore).toHaveBeenCalledWith(
+      '/tmp/project',
+      'local',
+      expect.objectContaining({
+        integrations: expect.objectContaining({
+          shopify: expect.objectContaining({
+            config: { apiKey: 'prompted-shop-key' },
+          }),
+        }),
+      }),
+    );
+  });
 });

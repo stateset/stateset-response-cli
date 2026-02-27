@@ -54,6 +54,7 @@ export interface IntegrationsSetupOptions {
   fromEnv?: boolean;
   validateOnly?: boolean;
   scope?: IntegrationStoreScope;
+  nonInteractive?: boolean;
 }
 
 const SOURCE_ORDER: FieldSource[] = ['env', 'store', 'default'];
@@ -491,7 +492,7 @@ export async function runIntegrationsSetup(
   let scope: IntegrationStoreScope;
   if (options.scope) {
     scope = options.scope;
-  } else if (options.validateOnly) {
+  } else if (options.validateOnly || options.nonInteractive) {
     scope = existingScope ?? 'global';
   } else {
     const scopeAnswer = await inquirer.prompt([
@@ -530,7 +531,7 @@ export async function runIntegrationsSetup(
   let selectedIds: IntegrationId[] = [];
   if (normalizedTarget) {
     selectedIds = targetDefinitions.map((def) => def.id);
-  } else if (options.validateOnly) {
+  } else if (options.validateOnly || options.nonInteractive) {
     selectedIds = targetDefinitions.map((def) => def.id);
   } else {
     const answer = await inquirer.prompt([
@@ -554,7 +555,7 @@ export async function runIntegrationsSetup(
     .filter((def) => store.integrations[def.id] && !selectedSet.has(def.id))
     .map((def) => def.id);
   let disableOthers = false;
-  if (!options.validateOnly && disableCandidates.length > 0) {
+  if (!options.validateOnly && !options.nonInteractive && disableCandidates.length > 0) {
     const response = await inquirer.prompt([
       {
         type: 'confirm',
@@ -594,13 +595,16 @@ export async function runIntegrationsSetup(
       const existingValue = existing[field.key];
       const defaultValue = existingValue || field.defaultValue || '';
       const required = field.required !== false;
+      const includeEnvCoverage = Boolean(options.fromEnv || options.validateOnly);
 
       if (options.fromEnv && envValue) {
         nextConfig[field.key] = envValue;
         continue;
       }
 
-      const hasRequiredCoverage = Boolean(envValue || existingValue || defaultValue);
+      const hasRequiredCoverage = includeEnvCoverage
+        ? Boolean(envValue || existingValue || defaultValue)
+        : Boolean(existingValue || defaultValue);
       if (required && hasRequiredCoverage) {
         if (existingValue) {
           nextConfig[field.key] = existingValue;
@@ -613,6 +617,16 @@ export async function runIntegrationsSetup(
       if (options.validateOnly) {
         if (required && !hasRequiredCoverage) {
           missingRequired.push(field.key);
+        }
+        continue;
+      }
+
+      if (options.nonInteractive) {
+        if (required && !hasRequiredCoverage) {
+          const envHint = field.envVars[0] ? ` or export ${field.envVars[0]}` : '';
+          throw new Error(
+            `Missing required field "${field.key}" for integration "${def.id}". Use interactive setup${envHint}.`,
+          );
         }
         continue;
       }
@@ -712,11 +726,17 @@ export function registerIntegrationsCommands(program: Command): void {
     .argument('[integration]', 'Integration id or label (optional)')
     .option('--from-env', 'Prefill values from environment variables when available')
     .option('--validate-only', 'Validate required fields without writing config')
+    .option('--non-interactive', 'Configure without prompts (fails if required values are missing)')
     .option('--scope <scope>', 'Config scope: global or local')
     .action(
       async (
         integration: string | undefined,
-        opts: { fromEnv?: boolean; validateOnly?: boolean; scope?: string },
+        opts: {
+          fromEnv?: boolean;
+          validateOnly?: boolean;
+          nonInteractive?: boolean;
+          scope?: string;
+        },
       ) => {
         const requestedScope = opts.scope?.trim().toLowerCase();
         if (requestedScope && requestedScope !== 'global' && requestedScope !== 'local') {
@@ -728,6 +748,7 @@ export function registerIntegrationsCommands(program: Command): void {
           target: integration,
           fromEnv: Boolean(opts.fromEnv),
           validateOnly: Boolean(opts.validateOnly),
+          nonInteractive: Boolean(opts.nonInteractive),
           scope: requestedScope as IntegrationStoreScope | undefined,
         });
       },

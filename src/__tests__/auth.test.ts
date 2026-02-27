@@ -15,6 +15,7 @@ const mockGetCurrentOrg = vi.fn(() => ({
   config: { name: 'Acme' },
 }));
 const mockEnsureConfigDir = vi.fn();
+const mockRequestJson = vi.fn();
 
 vi.mock('../config.js', () => ({
   ensureConfigDir: () => mockEnsureConfigDir(),
@@ -22,6 +23,10 @@ vi.mock('../config.js', () => ({
   configExists: () => mockConfigExists(),
   loadConfig: () => mockLoadConfig(),
   getCurrentOrg: () => mockGetCurrentOrg(),
+}));
+
+vi.mock('../integrations/http.js', () => ({
+  requestJson: (...args: unknown[]) => mockRequestJson(...args),
 }));
 
 const mockPrompt = vi.fn();
@@ -43,6 +48,7 @@ describe('auth command', () => {
     mockConfigExists.mockReturnValue(false);
     mockSaveConfig.mockClear();
     mockPrompt.mockReset();
+    mockRequestJson.mockReset();
     process.exitCode = undefined;
   });
 
@@ -117,5 +123,58 @@ describe('auth command', () => {
     ).toBe(true);
     expect(process.exitCode).toBe(1);
     errSpy.mockRestore();
+  });
+
+  it('supports non-interactive device login', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    mockRequestJson
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          device_code: 'dev-code',
+          user_code: 'USER123',
+          verification_url: 'https://verify.example.com',
+          expires_in: 60,
+          interval: 0,
+        },
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          status: 'authorized',
+          token: 'cli-token-123',
+          org: { id: 'org-device', name: 'Device Org' },
+          graphqlEndpoint: 'https://example.com/graphql',
+        },
+      });
+
+    const program = new Command();
+    registerAuthCommands(program);
+
+    await program.parseAsync([
+      'node',
+      'response',
+      'auth',
+      'login',
+      '--device',
+      '--instance-url',
+      'https://response.example.com',
+      '--non-interactive',
+      '--no-open-browser',
+    ]);
+
+    expect(mockPrompt).not.toHaveBeenCalled();
+    expect(mockedSaveConfig).toHaveBeenCalledWith({
+      currentOrg: 'org-device',
+      organizations: {
+        'org-device': {
+          name: 'Device Org',
+          graphqlEndpoint: 'https://example.com/graphql',
+          cliToken: 'cli-token-123',
+        },
+      },
+    });
+    expect(mockRequestJson).toHaveBeenCalledTimes(2);
+    logSpy.mockRestore();
   });
 });

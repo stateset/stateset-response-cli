@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import ora from 'ora';
-import { spawn } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import {
   loadConfig,
   saveConfig,
@@ -165,12 +165,11 @@ function tryOpenBrowser(url: string): boolean {
       command = 'xdg-open';
       args = [url];
     }
-    const child = spawn(command, args, { stdio: 'ignore', detached: true });
-    child.on('error', () => {
-      // Best-effort only.
-    });
-    child.unref();
-    return true;
+    const result = spawnSync(command, args, { stdio: 'ignore' });
+    if (result.error) {
+      return false;
+    }
+    return result.status === 0;
   } catch {
     return false;
   }

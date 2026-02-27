@@ -376,6 +376,9 @@ response integrations setup shopify
 # Use env vars to prefill + validate only
 response integrations setup --from-env --validate-only
 
+# Non-interactive setup from env vars (fails if required fields are missing)
+response integrations setup shopify --from-env --non-interactive --scope local
+
 # Show config file path
 response integrations edit
 
