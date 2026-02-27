@@ -20,6 +20,7 @@ describe('writeNotAllowed', () => {
     const result = writeNotAllowed();
     expect(result.content).toHaveLength(1);
     expect(result.content[0].type).toBe('text');
+    expect(result.isError).toBe(true);
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.error).toMatch(/Write operation not allowed/);
     expect(parsed.hint).toMatch(/list\/get operations/i);
@@ -34,6 +35,7 @@ describe('guardWrite', () => {
   it('returns error structure when allowApply is false', () => {
     const result = guardWrite({ allowApply: false });
     expect(result).not.toBeNull();
+    expect(result?.isError).toBe(true);
     const parsed = JSON.parse(result!.content[0].text);
     expect(parsed.error).toMatch(/Write operation not allowed/);
   });

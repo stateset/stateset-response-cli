@@ -393,6 +393,9 @@ export async function startChatSession(
     model: model as string,
     switchSession: async (nextId: string) => {
       switchSession(nextId);
+      ctx.sessionId = sessionId;
+      ctx.sessionStore = sessionStore;
+      ctx.pendingAttachments = pendingAttachments;
     },
     reconnectAgent,
     refreshSystemPrompt: () => {

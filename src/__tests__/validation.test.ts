@@ -304,9 +304,35 @@ describe('safeUrlSchema', () => {
       'http://10.0.0.1/api',
       'http://172.16.0.1/api',
       'http://172.31.255.255/api',
+      'http://127.0.0.2/api',
+      'http://127.1.2.3/api',
+      'http://0.1.2.3/api',
     ];
 
     for (const url of privateUrls) {
+      const result = safeUrlSchema.safeParse(url);
+      expect(result.success, `Expected ${url} to be rejected`).toBe(false);
+    }
+  });
+
+  it('rejects localhost-like internal hostnames', () => {
+    const internalUrls = [
+      'http://localhost.localdomain/api',
+      'http://dev.localhost/api',
+      'http://service.internal/api',
+      'http://api.local/api',
+    ];
+
+    for (const url of internalUrls) {
+      const result = safeUrlSchema.safeParse(url);
+      expect(result.success, `Expected ${url} to be rejected`).toBe(false);
+    }
+  });
+
+  it('rejects loopback and private IPv6 targets', () => {
+    const ipv6Urls = ['http://[::1]/api', 'http://[fc00::1]/api', 'http://[::ffff:127.0.0.1]/api'];
+
+    for (const url of ipv6Urls) {
       const result = safeUrlSchema.safeParse(url);
       expect(result.success, `Expected ${url} to be rejected`).toBe(false);
     }

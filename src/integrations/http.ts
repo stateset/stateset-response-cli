@@ -39,6 +39,12 @@ const BACKOFF_MULTIPLIER = 1.8;
 const MAX_BACKOFF_MS = 30_000;
 const MAX_RETRY_AFTER_MS = 60_000;
 const MAX_TEXT_RESPONSE_BYTES = MAX_TEXT_FILE_SIZE_BYTES;
+const RETRYABLE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS', 'TRACE', 'PUT', 'DELETE']);
+
+function hasIdempotencyKey(headers?: Record<string, string>): boolean {
+  if (!headers) return false;
+  return Object.keys(headers).some((key) => key.toLowerCase() === 'idempotency-key');
+}
 
 async function readResponseText(response: Response, maxBytes: number): Promise<string> {
   const contentLength = Number.parseInt(response.headers.get('content-length') || '', 10);
@@ -146,6 +152,9 @@ export async function requestJsonWithRetry(
     hostname = 'unknown';
   }
   const breaker = getCircuitBreaker(`http:${hostname}`);
+  const method = String(options.method || 'GET').toUpperCase();
+  const canRetry =
+    RETRYABLE_METHODS.has(method) || (method === 'POST' && hasIdempotencyKey(options.headers));
 
   return breaker.execute(async () => {
     let attempt = 0;
@@ -158,7 +167,7 @@ export async function requestJsonWithRetry(
       try {
         res = await requestJson(url, options);
       } catch (error) {
-        if (attempt < maxRetries) {
+        if (canRetry && attempt < maxRetries) {
           const waitMs = backoffMs + Math.random() * BACKOFF_JITTER_MS;
           await new Promise((resolve) => setTimeout(resolve, waitMs));
           backoffMs = Math.min(backoffMs * BACKOFF_MULTIPLIER, MAX_BACKOFF_MS);
@@ -185,7 +194,7 @@ export async function requestJsonWithRetry(
       }
 
       const shouldRetry = res.status === 429 || (res.status >= 500 && res.status < 600);
-      if (shouldRetry && attempt < maxRetries) {
+      if (canRetry && shouldRetry && attempt < maxRetries) {
         const waitMs = Number.isFinite(retryAfterMs)
           ? retryAfterMs
           : backoffMs + Math.random() * BACKOFF_JITTER_MS;

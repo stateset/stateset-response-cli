@@ -11,12 +11,16 @@ const {
   mockWriteFileSync,
   mockReadFileSync,
   mockExistsSync,
+  mockLstatSync,
+  mockChmodSync,
 } = vi.hoisted(() => ({
   mockExecuteQuery: vi.fn(),
   mockCreateGraphQLClient: vi.fn().mockReturnValue({ request: vi.fn() }),
   mockWriteFileSync: vi.fn(),
   mockReadFileSync: vi.fn(),
   mockExistsSync: vi.fn(),
+  mockLstatSync: vi.fn(),
+  mockChmodSync: vi.fn(),
 }));
 
 vi.mock('../mcp-server/graphql-client.js', () => ({
@@ -40,10 +44,14 @@ vi.mock('node:fs', () => ({
     writeFileSync: (...args: unknown[]) => mockWriteFileSync(...args),
     readFileSync: (...args: unknown[]) => mockReadFileSync(...args),
     existsSync: (...args: unknown[]) => mockExistsSync(...args),
+    lstatSync: (...args: unknown[]) => mockLstatSync(...args),
+    chmodSync: (...args: unknown[]) => mockChmodSync(...args),
   },
   writeFileSync: (...args: unknown[]) => mockWriteFileSync(...args),
   readFileSync: (...args: unknown[]) => mockReadFileSync(...args),
   existsSync: (...args: unknown[]) => mockExistsSync(...args),
+  lstatSync: (...args: unknown[]) => mockLstatSync(...args),
+  chmodSync: (...args: unknown[]) => mockChmodSync(...args),
 }));
 
 // --- Import module under test ------------------------------------------------
@@ -115,7 +123,11 @@ describe('exportOrg', () => {
 
     // Should have written the file
     expect(mockWriteFileSync).toHaveBeenCalledTimes(1);
-    expect(mockWriteFileSync).toHaveBeenCalledWith('/tmp/export.json', expect.any(String), 'utf-8');
+    expect(mockWriteFileSync).toHaveBeenCalledWith(
+      '/tmp/export.json',
+      expect.any(String),
+      expect.objectContaining({ encoding: 'utf-8', mode: 0o600 }),
+    );
 
     // Verify the written JSON is valid and has the correct structure
     const writtenJson = JSON.parse(mockWriteFileSync.mock.calls[0][1] as string);

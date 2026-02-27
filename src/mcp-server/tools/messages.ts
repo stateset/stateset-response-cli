@@ -21,14 +21,15 @@ export function registerMessageTools(server: McpServer, client: GraphQLClient, o
       offset: z.number().optional().describe('Offset for pagination (default 0)'),
     },
     async ({ chat_id, limit, offset }) => {
-      const query = `query ($chat_id: uuid!, $limit: Int!, $offset: Int!) {
+      const query = `query ($org_id: String!, $chat_id: uuid!, $limit: Int!, $offset: Int!) {
         message(
-          where: { chat_id: { _eq: $chat_id } },
+          where: { _and: [{ org_id: { _eq: $org_id } }, { chat_id: { _eq: $chat_id } }] },
           order_by: { timestamp: asc },
           limit: $limit, offset: $offset
         ) { ${MESSAGE_FIELDS} }
       }`;
       const data = await executeQuery<{ message: unknown[] }>(client, query, {
+        org_id: orgId,
         chat_id,
         limit: limit ?? 100,
         offset: offset ?? 0,
@@ -42,12 +43,12 @@ export function registerMessageTools(server: McpServer, client: GraphQLClient, o
     'Get a specific message by ID',
     { id: z.string().describe('UUID of the message') },
     async ({ id }) => {
-      const query = `query ($id: String!) {
-        message(where: { id: { _eq: $id } }) {
+      const query = `query ($org_id: String!, $id: String!) {
+        message(where: { _and: [{ org_id: { _eq: $org_id } }, { id: { _eq: $id } }] }) {
           ${MESSAGE_FIELDS}
         }
       }`;
-      const data = await executeQuery<{ message: unknown[] }>(client, query, { id });
+      const data = await executeQuery<{ message: unknown[] }>(client, query, { org_id: orgId, id });
       if (!data.message.length) {
         return errorResult('Message not found');
       }
@@ -136,15 +137,18 @@ export function registerMessageTools(server: McpServer, client: GraphQLClient, o
         return errorResult('No fields to update');
       }
 
-      const mutation = `mutation ($id: String!, $set: message_set_input!) {
-        update_message(where: { id: { _eq: $id } }, _set: $set) {
+      const mutation = `mutation ($org_id: String!, $id: String!, $set: message_set_input!) {
+        update_message(
+          where: { _and: [{ org_id: { _eq: $org_id } }, { id: { _eq: $id } }] }
+          _set: $set
+        ) {
           returning { ${MESSAGE_FIELDS} }
         }
       }`;
       const data = await executeQuery<{ update_message: { returning: unknown[] } }>(
         client,
         mutation,
-        { id, set: setFields },
+        { org_id: orgId, id, set: setFields },
       );
       if (!data.update_message.returning.length) {
         return errorResult('Message not found');
@@ -165,15 +169,15 @@ export function registerMessageTools(server: McpServer, client: GraphQLClient, o
     'Delete a message by ID',
     { id: z.string().describe('UUID of the message to delete') },
     async ({ id }) => {
-      const mutation = `mutation ($id: String!) {
-        delete_message(where: { id: { _eq: $id } }) {
+      const mutation = `mutation ($org_id: String!, $id: String!) {
+        delete_message(where: { _and: [{ org_id: { _eq: $org_id } }, { id: { _eq: $id } }] }) {
           affected_rows
         }
       }`;
       const data = await executeQuery<{ delete_message: { affected_rows: number } }>(
         client,
         mutation,
-        { id },
+        { org_id: orgId, id },
       );
       if (data.delete_message.affected_rows === 0) {
         return errorResult('Message not found');

@@ -6,6 +6,8 @@ const {
   mockWriteFileSync,
   mockAppendFileSync,
   mockMkdirSync,
+  mockLstatSync,
+  mockChmodSync,
   mockRenameSync,
   mockUnlinkSync,
 } = vi.hoisted(() => ({
@@ -14,6 +16,14 @@ const {
   mockWriteFileSync: vi.fn((_path?: any, _data?: any) => undefined as any),
   mockAppendFileSync: vi.fn((_path?: any, _data?: any) => undefined as any),
   mockMkdirSync: vi.fn((_path?: any, _opts?: any) => undefined as any),
+  mockLstatSync: vi.fn(
+    (_path?: any) =>
+      ({
+        isSymbolicLink: () => false,
+        isDirectory: () => true,
+      }) as any,
+  ),
+  mockChmodSync: vi.fn((_path?: any, _mode?: any) => undefined as any),
   mockRenameSync: vi.fn((_oldPath?: any, _newPath?: any) => undefined as any),
   mockUnlinkSync: vi.fn((_path?: any) => undefined as any),
 }));
@@ -30,6 +40,8 @@ vi.mock('node:fs', () => ({
     writeFileSync: mockWriteFileSync,
     appendFileSync: mockAppendFileSync,
     mkdirSync: mockMkdirSync,
+    lstatSync: mockLstatSync,
+    chmodSync: mockChmodSync,
     renameSync: mockRenameSync,
     unlinkSync: mockUnlinkSync,
   },

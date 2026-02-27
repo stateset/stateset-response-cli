@@ -54,6 +54,11 @@ function writeStoreFile(filePath: string, store: IntegrationsStore): void {
   const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   fs.writeFileSync(filePath, JSON.stringify(store, null, 2), { encoding: 'utf-8', mode: 0o600 });
+  try {
+    fs.chmodSync(filePath, 0o600);
+  } catch {
+    // Best-effort on non-POSIX systems
+  }
 }
 
 function decryptEntry(id: IntegrationId, entry: IntegrationEntry): IntegrationEntry {
@@ -139,7 +144,12 @@ export function decryptStore(store: IntegrationsStore): IntegrationsStore {
   const integrations: Record<string, IntegrationEntry> = {};
   for (const [id, entry] of Object.entries(store.integrations || {})) {
     if (!entry) continue;
-    integrations[id] = decryptEntry(id as IntegrationId, entry);
+    try {
+      integrations[id] = decryptEntry(id as IntegrationId, entry);
+    } catch {
+      // Keep the original entry so one bad secret does not break the entire store.
+      integrations[id] = { ...entry };
+    }
   }
   return { version: store.version || STORE_VERSION, integrations };
 }

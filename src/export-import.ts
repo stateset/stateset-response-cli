@@ -7,6 +7,7 @@
  */
 
 import fs from 'node:fs';
+import path from 'node:path';
 import {
   createGraphQLClient,
   executeQuery,
@@ -171,8 +172,27 @@ export async function exportOrg(
     exportData = redactSecrets(exportData) as OrgExport;
   }
 
+  const resolvedOutputPath = path.resolve(outputPath);
+  if (fs.existsSync(resolvedOutputPath)) {
+    const stats = fs.lstatSync(resolvedOutputPath);
+    if (stats.isDirectory()) {
+      throw new Error(`Export path is a directory: ${resolvedOutputPath}`);
+    }
+    if (stats.isSymbolicLink()) {
+      throw new Error(`Export path must not be a symlink: ${resolvedOutputPath}`);
+    }
+  }
+
   try {
-    fs.writeFileSync(outputPath, JSON.stringify(exportData, null, 2), 'utf-8');
+    fs.writeFileSync(resolvedOutputPath, JSON.stringify(exportData, null, 2), {
+      encoding: 'utf-8',
+      mode: 0o600,
+    });
+    try {
+      fs.chmodSync(resolvedOutputPath, 0o600);
+    } catch {
+      // Best-effort on non-POSIX systems
+    }
   } catch (e) {
     throw new Error(`Failed to write export file: ${getErrorMessage(e)}`);
   }

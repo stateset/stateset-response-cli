@@ -2,6 +2,7 @@
  * Shared Zod validation schemas for MCP tools
  * Replaces loose z.any() with strict, type-safe schemas
  */
+import { isIP } from 'node:net';
 import { z } from 'zod';
 
 // ============================================================================
@@ -286,31 +287,93 @@ export const rateLimitSchema = z
 // URL Validation (SSRF Prevention)
 // ============================================================================
 
-const BLOCKED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0', '[::1]'];
+const BLOCKED_HOSTS = new Set(['localhost', 'localhost.localdomain']);
+const BLOCKED_HOST_SUFFIXES = ['.localhost', '.local', '.localdomain', '.internal'];
 
-const BLOCKED_IP_PREFIXES = [
-  '10.', // Private Class A
-  '172.16.',
-  '172.17.',
-  '172.18.',
-  '172.19.', // Private Class B (partial)
-  '172.20.',
-  '172.21.',
-  '172.22.',
-  '172.23.',
-  '172.24.',
-  '172.25.',
-  '172.26.',
-  '172.27.',
-  '172.28.',
-  '172.29.',
-  '172.30.',
-  '172.31.',
-  '192.168.', // Private Class C
-  '169.254.', // Link-local
-  'fc',
-  'fd', // IPv6 private
-];
+function isBlockedHostname(host: string): boolean {
+  if (BLOCKED_HOSTS.has(host)) return true;
+  return BLOCKED_HOST_SUFFIXES.some((suffix) => host.endsWith(suffix));
+}
+
+function normalizeHost(host: string): string {
+  const lowered = host.toLowerCase();
+  const bracketMatch = /^\[(.*)\]$/.exec(lowered);
+  return (bracketMatch ? bracketMatch[1] : lowered).split('%')[0];
+}
+
+function parseIPv4(host: string): number[] | null {
+  const parts = host.split('.');
+  if (parts.length !== 4) return null;
+  const octets = parts.map((part) => Number.parseInt(part, 10));
+  if (octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) {
+    return null;
+  }
+  return octets;
+}
+
+function isPrivateIPv4(host: string): boolean {
+  const octets = parseIPv4(host);
+  if (!octets) return false;
+  const [a, b] = octets;
+
+  if (a === 10) return true;
+  if (a === 127) return true;
+  if (a === 0) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true;
+  if (a === 198 && (b === 18 || b === 19)) return true;
+  if (a >= 224) return true;
+
+  return false;
+}
+
+function parseMappedIPv4(host: string): string | null {
+  const normalized = host.toLowerCase();
+  if (!normalized.startsWith('::ffff:')) return null;
+  const mapped = normalized.slice('::ffff:'.length);
+  const dotted = parseIPv4(mapped);
+  if (dotted) return mapped;
+
+  const hexParts = mapped.split(':');
+  if (hexParts.length === 1) {
+    const [part] = hexParts;
+    if (!/^[0-9a-f]{1,8}$/.test(part)) return null;
+    const value = Number.parseInt(part, 16);
+    if (!Number.isFinite(value) || value < 0 || value > 0xffffffff) return null;
+    return `${(value >>> 24) & 0xff}.${(value >>> 16) & 0xff}.${(value >>> 8) & 0xff}.${value & 0xff}`;
+  }
+
+  if (hexParts.length === 2) {
+    const [highHex, lowHex] = hexParts;
+    if (!/^[0-9a-f]{1,4}$/.test(highHex) || !/^[0-9a-f]{1,4}$/.test(lowHex)) return null;
+    const high = Number.parseInt(highHex, 16);
+    const low = Number.parseInt(lowHex, 16);
+    const value = high * 0x10000 + low;
+    return `${(value >>> 24) & 0xff}.${(value >>> 16) & 0xff}.${(value >>> 8) & 0xff}.${value & 0xff}`;
+  }
+
+  return null;
+}
+
+function isPrivateIPv6(host: string): boolean {
+  const normalized = host.toLowerCase().split('%')[0];
+  if (normalized === '::1' || normalized === '::') return true;
+  if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true;
+  if (/^fe[89ab]/.test(normalized)) return true;
+  const mapped = parseMappedIPv4(normalized);
+  if (mapped && isPrivateIPv4(mapped)) return true;
+  return false;
+}
+
+function isPrivateIpHost(host: string): boolean {
+  const normalized = normalizeHost(host);
+  const family = isIP(normalized);
+  if (family === 4) return isPrivateIPv4(normalized);
+  if (family === 6) return isPrivateIPv6(normalized);
+  return false;
+}
 
 /** Safe URL that blocks private/internal networks */
 export const safeUrlSchema = z
@@ -321,20 +384,20 @@ export const safeUrlSchema = z
     (url) => {
       try {
         const parsed = new URL(url);
-        const host = parsed.hostname.toLowerCase();
-
-        // Block known private hosts
-        if (BLOCKED_HOSTS.includes(host)) {
-          return false;
-        }
-
-        // Block private IP ranges
-        if (BLOCKED_IP_PREFIXES.some((prefix) => host.startsWith(prefix))) {
-          return false;
-        }
+        const host = normalizeHost(parsed.hostname);
 
         // Only allow http/https
         if (!['http:', 'https:'].includes(parsed.protocol)) {
+          return false;
+        }
+
+        // Block known private hosts and internal hostname suffixes.
+        if (isBlockedHostname(host)) {
+          return false;
+        }
+
+        // Block direct private/link-local/loopback IP targets.
+        if (isPrivateIpHost(host)) {
           return false;
         }
 

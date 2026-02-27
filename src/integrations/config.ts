@@ -1,5 +1,6 @@
 import { getIntegrationConfigFromStore } from './store.js';
 import { KLAVIYO_DEFAULT_REVISION, type IntegrationId } from './registry.js';
+import { safeUrlSchema } from '../lib/validation.js';
 
 export interface ShopifyConfig {
   shop: string;
@@ -147,11 +148,10 @@ function normalizeApiBaseUrl(value: string, envName: string): string {
   if (!/^https?:\/\//i.test(normalized)) {
     throw new Error(`API base URL must include http(s) protocol. Check ${envName}.`);
   }
-  // Validate as a proper URL to prevent SSRF via malformed values.
-  try {
-    new URL(normalized);
-  } catch {
-    throw new Error(`Invalid URL for ${envName}: "${normalized}".`);
+  // Require a public HTTP(S) endpoint to reduce SSRF risk.
+  const parsed = safeUrlSchema.safeParse(normalized);
+  if (!parsed.success) {
+    throw new Error(`Invalid or unsafe URL for ${envName}: "${normalized}".`);
   }
   return normalized;
 }

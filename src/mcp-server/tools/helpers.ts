@@ -9,7 +9,7 @@ export interface IntegrationToolOptions {
   redact: boolean;
 }
 
-export function writeNotAllowed(): { content: [{ type: 'text'; text: string }] } {
+export function writeNotAllowed(): { content: [{ type: 'text'; text: string }]; isError: true } {
   return {
     content: [
       {
@@ -25,6 +25,7 @@ export function writeNotAllowed(): { content: [{ type: 'text'; text: string }] }
         ),
       },
     ],
+    isError: true,
   };
 }
 

@@ -212,19 +212,21 @@ export class WhatsAppGateway {
 
     this.setupEventHandlers(this.sock);
 
+    let connected = false;
     try {
       await waitForConnection(this.sock);
+      connected = true;
       this.reconnectAttempts = 0;
       this.ownJid = this.sock.user?.id ?? null;
       this.ownPhone = this.ownJid ? normalizePhone(this.ownJid) : null;
       this.log.info(`Connected as ${this.ownJid ?? 'unknown'}`);
     } catch (err) {
       this.log.error(`Initial connection failed: ${err instanceof Error ? err.message : err}`);
-      if (this.running) {
-        await this.scheduleReconnect();
-      }
     } finally {
       this.connecting = false;
+    }
+    if (!connected && this.running) {
+      await this.scheduleReconnect();
     }
   }
 

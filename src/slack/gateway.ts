@@ -91,6 +91,7 @@ const MIN_CHUNK_RATIO = 0.3;
 
 export class SlackGateway {
   private sessions = new Map<string, SenderSession>();
+  private activeChannelThreads = new Map<string, number>();
   private app: SlackApp | null = null;
   private running = false;
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
@@ -183,6 +184,7 @@ export class SlackGateway {
     }
     await Promise.all(disconnects);
     this.sessions.clear();
+    this.activeChannelThreads.clear();
 
     if (this.app) {
       try {
@@ -289,10 +291,10 @@ export class SlackGateway {
 
     // In channels (not DMs), only respond when @mentioned or in existing threads
     if (event.channel_type !== 'im') {
-      if (this.botUserId && !text.includes(`<@${this.botUserId}>`)) {
-        // Not mentioned — only respond if it's a thread reply (bot may have participated)
-        if (!event.thread_ts) return;
-      }
+      const hasMention = this.botUserId ? text.includes(`<@${this.botUserId}>`) : false;
+      const inTrackedThread = this.isTrackedThread(channel, event.thread_ts);
+      if (!hasMention && !inTrackedThread) return;
+
       // Strip the mention
       if (this.botUserId) {
         text = text.replace(new RegExp(`<@${this.botUserId}>`, 'g'), '').trim();
@@ -561,6 +563,12 @@ export class SlackGateway {
       this.evictOldestSessions();
       if (this.sessions.size >= before) break;
     }
+
+    for (const [threadKey, seenAt] of this.activeChannelThreads.entries()) {
+      if (now - seenAt > SESSION_TTL_MS) {
+        this.activeChannelThreads.delete(threadKey);
+      }
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -568,6 +576,9 @@ export class SlackGateway {
   // -------------------------------------------------------------------------
 
   private async sendText(channel: string, text: string, threadTs?: string): Promise<void> {
+    if (threadTs) {
+      this.markThreadActive(channel, threadTs);
+    }
     if (!this.app) return;
     try {
       const opts: Record<string, unknown> = {
@@ -589,6 +600,19 @@ export class SlackGateway {
   // -------------------------------------------------------------------------
   // Logging
   // -------------------------------------------------------------------------
+
+  private getThreadKey(channel: string, threadTs: string): string {
+    return `${channel}:${threadTs}`;
+  }
+
+  private markThreadActive(channel: string, threadTs: string): void {
+    this.activeChannelThreads.set(this.getThreadKey(channel, threadTs), Date.now());
+  }
+
+  private isTrackedThread(channel: string, threadTs?: string): boolean {
+    if (!threadTs) return false;
+    return this.activeChannelThreads.has(this.getThreadKey(channel, threadTs));
+  }
 
   private readonly log = logger.child('slack');
 }

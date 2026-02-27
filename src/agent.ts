@@ -560,6 +560,7 @@ export class StateSetAgent {
           const startTime = Date.now();
           try {
             const result = await this.callToolWithRetry(block.name, args);
+            const isError = Boolean((result as { isError?: boolean }).isError);
 
             const resultText = (result.content as Array<{ type: string; text?: string }>)
               .map((c) => (c.type === 'text' ? c.text : JSON.stringify(c)))
@@ -569,16 +570,17 @@ export class StateSetAgent {
               type: 'tool_result',
               tool_use_id: block.id,
               content: resultText,
+              is_error: isError,
             });
 
             const durationMs = Date.now() - startTime;
-            metrics.recordToolCall(block.name, durationMs, false);
+            metrics.recordToolCall(block.name, durationMs, isError);
 
             callbacks?.onToolCallEnd?.({
               name: block.name,
               args,
               resultText,
-              isError: false,
+              isError,
               durationMs,
             });
           } catch (error: unknown) {

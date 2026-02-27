@@ -101,6 +101,13 @@ describe('getSkioConfigFromEnv', () => {
     expect(result?.apiKey).toBe('skio-key-123456');
     expect(result?.baseUrl).toBe('https://api.skio.com/v1');
   });
+
+  it('rejects unsafe private SKIO base URLs', async () => {
+    env.set('SKIO_API_KEY', 'skio-key-123456');
+    env.set('SKIO_BASE_URL', 'http://127.0.0.2:8080');
+    const { getSkioConfigFromEnv } = await import('../integrations/config.js');
+    expect(() => getSkioConfigFromEnv()).toThrow('Invalid or unsafe URL for SKIO_BASE_URL');
+  });
 });
 
 describe('getStayAiConfigFromEnv', () => {

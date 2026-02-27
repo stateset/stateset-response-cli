@@ -136,17 +136,51 @@ export async function createWhatsAppSocket(
  */
 export function waitForConnection(sock: WhatsAppSocket): Promise<void> {
   return new Promise((resolve, reject) => {
+    const cleanup = (
+      handler: (update: {
+        connection?: string;
+        lastDisconnect?: { error?: { output?: { statusCode?: number } } };
+      }) => void,
+      timeout: ReturnType<typeof setTimeout>,
+    ) => {
+      clearTimeout(timeout);
+      const ev = sock.ev as unknown as {
+        off?: (event: string, listener: unknown) => void;
+        removeListener?: (event: string, listener: unknown) => void;
+      };
+      if (typeof ev.off === 'function') {
+        ev.off('connection.update', handler as never);
+      } else if (typeof ev.removeListener === 'function') {
+        ev.removeListener('connection.update', handler as never);
+      }
+    };
+
+    let settled = false;
+    const finish = (fn: typeof resolve | typeof reject, value?: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup(handler, timeout);
+      if (fn === resolve) {
+        resolve();
+      } else {
+        reject(value ?? new Error('Connection failed'));
+      }
+    };
+
     const handler = (update: {
       connection?: string;
       lastDisconnect?: { error?: { output?: { statusCode?: number } } };
     }) => {
       if (update.connection === 'open') {
-        resolve();
+        finish(resolve);
       } else if (update.connection === 'close') {
         const code = getStatusCode(update.lastDisconnect);
-        reject(new Error(`Connection closed before opening (code: ${code})`));
+        finish(reject, new Error(`Connection closed before opening (code: ${code})`));
       }
     };
+    const timeout = setTimeout(() => {
+      finish(reject, new Error('Connection timed out before opening'));
+    }, 60_000);
     sock.ev.on('connection.update', handler as never);
   });
 }

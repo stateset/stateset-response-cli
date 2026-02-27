@@ -250,6 +250,67 @@ describe('requestJsonWithRetry', () => {
     expect(result.data).toEqual({ ok: true });
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
+
+  it('does not retry non-idempotent POST requests without an idempotency key', async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 500,
+        headers: new Headers(),
+        text: () => Promise.resolve('server error'),
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: new Headers(),
+        text: () => Promise.resolve('{"ok":true}'),
+      });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const result = await requestJsonWithRetry(
+      'https://example.com/api',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hello: 'world' }),
+      },
+      { maxRetries: 3 },
+    );
+
+    expect(result.status).toBe(500);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries POST requests when an idempotency key is provided', async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 500,
+        headers: new Headers(),
+        text: () => Promise.resolve('server error'),
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: new Headers(),
+        text: () => Promise.resolve('{"ok":true}'),
+      });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const result = await requestJsonWithRetry(
+      'https://example.com/api',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': 'req-123',
+        },
+        body: JSON.stringify({ hello: 'world' }),
+      },
+      { maxRetries: 3 },
+    );
+
+    expect(result.data).toEqual({ ok: true });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('normalizePath', () => {
