@@ -1,6 +1,6 @@
 {
   "name": "stateset-response-cli",
-  "version": "1.7.1",
+  "version": "1.7.2",
   "description": "CLI tool for managing the StateSet Response platform via AI agent",
   "license": "MIT",
   "type": "module",

@@ -17,26 +17,26 @@ import {
 } from './utils.js';
 
 const ANALYTICS_PAGE_LIMIT = 500;
-const ANALYTICS_MAX_PAGES = 20;
 
 async function fetchPaginatedAnalytics(
   runner: ShortcutRunner,
   toolName: 'list_channels' | 'list_responses',
-): Promise<{ rows: unknown[]; truncated: boolean }> {
+): Promise<unknown[]> {
   const rows: unknown[] = [];
-  for (let page = 0; page < ANALYTICS_MAX_PAGES; page++) {
-    const offset = page * ANALYTICS_PAGE_LIMIT;
+  let offset = 0;
+  while (true) {
     const result = await runner.callTool<unknown[]>(toolName, {
       limit: ANALYTICS_PAGE_LIMIT,
       offset,
     });
     const batch = Array.isArray(result.payload) ? result.payload : [];
     rows.push(...batch);
-    if (batch.length < ANALYTICS_PAGE_LIMIT) {
-      return { rows, truncated: false };
+    if (batch.length < ANALYTICS_PAGE_LIMIT || batch.length === 0) {
+      break;
     }
+    offset += ANALYTICS_PAGE_LIMIT;
   }
-  return { rows, truncated: true };
+  return rows;
 }
 
 export async function runStatusCommand(
@@ -146,7 +146,6 @@ export async function runAnalyticsCommand(
     const messageCount = extractAggregateCount(messageCountResult.payload, 'message_aggregate');
     let channelCount = 0;
     let responseCount = 0;
-    let truncated = false;
 
     if (!dateSupported) {
       const [channelCountResult, responseCountResult] = await Promise.all([
@@ -160,13 +159,12 @@ export async function runAnalyticsCommand(
         fetchPaginatedAnalytics(runner, 'list_channels'),
         fetchPaginatedAnalytics(runner, 'list_responses'),
       ]);
-      channelCount = channelsData.rows.filter((item) =>
+      channelCount = channelsData.filter((item) =>
         isInDateRange(asStringRecord(item).created_at, dateRange.from, dateRange.to),
       ).length;
-      responseCount = responsesData.rows.filter((item) =>
+      responseCount = responsesData.filter((item) =>
         isInDateRange(asStringRecord(item).created_date, dateRange.from, dateRange.to),
       ).length;
-      truncated = channelsData.truncated || responsesData.truncated;
     }
 
     const rows: AnalyticsRows[] = [
@@ -182,7 +180,7 @@ export async function runAnalyticsCommand(
     if (dateSupported) {
       rows.push({
         metric: 'Date range filtering',
-        value: truncated ? 'applied (sampled up to 10k records per metric)' : 'applied',
+        value: 'applied',
       });
     }
     if (json) {

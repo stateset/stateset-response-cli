@@ -16,7 +16,7 @@ import {
 } from '../integrations/store.js';
 import { getSessionsDir } from '../session.js';
 import { formatSuccess, formatWarning, formatTable } from '../utils/display.js';
-import { readToolAudit } from './audit.js';
+import { readIntegrationTelemetry, readToolAudit } from './audit.js';
 import type { ToolAuditEntry } from './types.js';
 import { readFirstEnvValue } from './utils.js';
 
@@ -248,25 +248,36 @@ function loadIntegrationSnapshots(cwd: string, integrationId?: string): Integrat
 
 function loadIntegrationAuditEntries(): Array<ToolAuditEntry & { integrationId: IntegrationId }> {
   const sessionsDir = getSessionsDir();
-  if (!fs.existsSync(sessionsDir)) {
-    return [];
-  }
-
+  const dedupe = new Set<string>();
   const allEntries: Array<ToolAuditEntry & { integrationId: IntegrationId }> = [];
-  let sessions: fs.Dirent[] = [];
-  try {
-    sessions = fs.readdirSync(sessionsDir, { withFileTypes: true });
-  } catch {
-    return [];
+
+  const register = (entry: ToolAuditEntry) => {
+    const integrationId = resolveIntegrationIdFromTool(entry.name);
+    if (!integrationId) return;
+    const key = `${entry.ts}|${entry.type}|${entry.session}|${entry.name}|${entry.durationMs || 0}`;
+    if (dedupe.has(key)) return;
+    dedupe.add(key);
+    allEntries.push({ ...entry, integrationId });
+  };
+
+  for (const entry of readIntegrationTelemetry()) {
+    register(entry);
   }
 
-  for (const session of sessions) {
-    if (!session.isDirectory()) continue;
-    const auditEntries = readToolAudit(session.name);
-    for (const entry of auditEntries) {
-      const integrationId = resolveIntegrationIdFromTool(entry.name);
-      if (!integrationId) continue;
-      allEntries.push({ ...entry, integrationId });
+  if (fs.existsSync(sessionsDir)) {
+    let sessions: fs.Dirent[] = [];
+    try {
+      sessions = fs.readdirSync(sessionsDir, { withFileTypes: true });
+    } catch {
+      return allEntries;
+    }
+
+    for (const session of sessions) {
+      if (!session.isDirectory()) continue;
+      const auditEntries = readToolAudit(session.name);
+      for (const entry of auditEntries) {
+        register(entry);
+      }
     }
   }
 

@@ -15,7 +15,7 @@ import {
   loadIntegrationsStoreForScope,
   saveIntegrationsStore,
 } from '../integrations/store.js';
-import { readToolAudit } from '../cli/audit.js';
+import { readIntegrationTelemetry, readToolAudit } from '../cli/audit.js';
 import { getSessionsDir } from '../session.js';
 import { readFirstEnvValue } from '../cli/utils.js';
 import { formatTable } from '../utils/display.js';
@@ -37,6 +37,7 @@ vi.mock('../integrations/store.js', () => ({
 }));
 
 vi.mock('../cli/audit.js', () => ({
+  readIntegrationTelemetry: vi.fn(),
   readToolAudit: vi.fn(),
 }));
 
@@ -59,6 +60,7 @@ const mockedListIntegrations = vi.mocked(listIntegrations);
 const mockedLoadIntegrationsStore = vi.mocked(loadIntegrationsStore);
 const mockedLoadIntegrationsStoreForScope = vi.mocked(loadIntegrationsStoreForScope);
 const mockedSaveIntegrationsStore = vi.mocked(saveIntegrationsStore);
+const mockedReadIntegrationTelemetry = vi.mocked(readIntegrationTelemetry);
 const mockedReadToolAudit = vi.mocked(readToolAudit);
 const mockedGetSessionsDir = vi.mocked(getSessionsDir);
 const mockedReadFirstEnvValue = vi.mocked(readFirstEnvValue);
@@ -101,6 +103,7 @@ describe('commands-integrations', () => {
       store: { version: 1, integrations: {} },
     } as any);
     mockedGetSessionsDir.mockReturnValue('/tmp/.stateset/sessions');
+    mockedReadIntegrationTelemetry.mockReturnValue([]);
     mockedReadToolAudit.mockReturnValue([]);
   });
 
@@ -204,14 +207,7 @@ describe('commands-integrations', () => {
       },
     } as any);
 
-    existsSpy.mockReturnValue(true);
-    readdirSpy.mockReturnValue([
-      {
-        name: 'session-a',
-        isDirectory: () => true,
-      },
-    ] as any);
-    mockedReadToolAudit.mockReturnValue([
+    mockedReadIntegrationTelemetry.mockReturnValue([
       {
         ts: '2026-02-27T10:00:00.000Z',
         type: 'tool_call',

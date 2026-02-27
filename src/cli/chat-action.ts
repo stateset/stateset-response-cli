@@ -35,7 +35,13 @@ import type { ChatContext, ToolAuditEntry, CommandResult } from './types.js';
 
 const SIGINT_GRACE_MS = 2000;
 import { readSessionMeta, listSessionSummaries } from './session-meta.js';
-import { sanitizeToolArgs, appendToolAudit } from './audit.js';
+import {
+  sanitizeToolArgs,
+  appendToolAudit,
+  appendIntegrationTelemetry,
+  isIntegrationToolName,
+  isRateLimitedResult,
+} from './audit.js';
 import { readPermissionStore, writePermissionStore, makeHookPermissionKey } from './permissions.js';
 import { printIntegrationStatus, runIntegrationsSetup } from './commands-integrations.js';
 import { routeSlashCommand } from './command-router.js';
@@ -674,18 +680,23 @@ export async function startChatSession(
               }
             }
 
+            const callEntry: ToolAuditEntry = {
+              ts: new Date().toISOString(),
+              type: 'tool_call',
+              session: sessionId,
+              name,
+              args: sanitizeToolArgs(
+                decision?.action === 'allow' && decision.args ? decision.args : args,
+              ),
+              decision: decision?.action || 'allow',
+              reason: decision && 'reason' in decision ? decision.reason : undefined,
+            };
+
             if (auditEnabled) {
-              appendToolAudit(sessionId, {
-                ts: new Date().toISOString(),
-                type: 'tool_call',
-                session: sessionId,
-                name,
-                args: sanitizeToolArgs(
-                  decision?.action === 'allow' && decision.args ? decision.args : args,
-                ),
-                decision: decision?.action || 'allow',
-                reason: decision && 'reason' in decision ? decision.reason : undefined,
-              });
+              appendToolAudit(sessionId, callEntry);
+            }
+            if (isIntegrationToolName(name)) {
+              appendIntegrationTelemetry(callEntry);
             }
 
             return decision;
@@ -712,6 +723,22 @@ export async function startChatSession(
               entry.resultExcerpt = result.resultText.slice(0, 500);
             }
             appendToolAudit(sessionId, entry);
+          }
+          if (isIntegrationToolName(result.name)) {
+            const entry: ToolAuditEntry = {
+              ts: new Date().toISOString(),
+              type: 'tool_result',
+              session: sessionId,
+              name: result.name,
+              durationMs: result.durationMs,
+              isError: result.isError,
+              resultLength: result.resultText.length,
+              reason:
+                result.isError && isRateLimitedResult(result.resultText)
+                  ? 'rate_limited'
+                  : undefined,
+            };
+            appendIntegrationTelemetry(entry);
           }
         },
         onUsage: (usage) => {

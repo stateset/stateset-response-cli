@@ -9,6 +9,24 @@ export const REDACT_KEY_RE =
   /(secret|token|authorization|api[-_]?key|password|admin|email|phone|address|customer_email|customer_phone|customer_name|first_name|last_name)/i;
 
 const MAX_AUDIT_LOG_BYTES = MAX_TEXT_FILE_SIZE_BYTES;
+const INTEGRATION_TOOL_PREFIXES = [
+  'shopify_',
+  'gorgias_',
+  'recharge_',
+  'skio_',
+  'stayai_',
+  'amazon_',
+  'dhl_',
+  'globale_',
+  'fedex_',
+  'klaviyo_',
+  'loop_',
+  'shipstation_',
+  'shiphero_',
+  'shipfusion_',
+  'shiphawk_',
+  'zendesk_',
+];
 
 function readSafeJsonl(filePath: string): string[] {
   try {
@@ -113,4 +131,51 @@ export function readPromptHistory(limit = 20): PromptHistoryEntry[] {
     }
   }
   return entries.slice(-limit).reverse();
+}
+
+export function isIntegrationToolName(name: string): boolean {
+  const lower = String(name || '').toLowerCase();
+  return INTEGRATION_TOOL_PREFIXES.some((prefix) => lower.startsWith(prefix));
+}
+
+export function isRateLimitedResult(text: string): boolean {
+  const haystack = String(text || '').toLowerCase();
+  return (
+    haystack.includes('429') ||
+    haystack.includes('rate limit') ||
+    haystack.includes('too many requests') ||
+    haystack.includes('retry-after')
+  );
+}
+
+export function getIntegrationTelemetryPath(): string {
+  return path.join(getStateSetDir(), 'integration-telemetry.jsonl');
+}
+
+export function appendIntegrationTelemetry(entry: ToolAuditEntry): void {
+  const filePath = getIntegrationTelemetryPath();
+  ensureDirExists(filePath);
+  try {
+    fs.appendFileSync(filePath, JSON.stringify(entry) + '\n', { encoding: 'utf-8', mode: 0o600 });
+  } catch {
+    // Non-fatal: telemetry persistence failure shouldn't crash the CLI
+  }
+}
+
+export function readIntegrationTelemetry(limit = 5000): ToolAuditEntry[] {
+  const filePath = getIntegrationTelemetryPath();
+  if (!fs.existsSync(filePath)) return [];
+  const lines = readSafeJsonl(filePath);
+  const entries: ToolAuditEntry[] = [];
+  for (const line of lines) {
+    try {
+      const parsed = JSON.parse(line) as ToolAuditEntry;
+      if (!parsed?.type || !parsed?.name) continue;
+      if (!isIntegrationToolName(parsed.name)) continue;
+      entries.push(parsed);
+    } catch {
+      // skip malformed lines
+    }
+  }
+  return entries.slice(-Math.max(1, Math.floor(limit)));
 }
