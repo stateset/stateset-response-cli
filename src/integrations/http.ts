@@ -36,6 +36,7 @@ const INITIAL_BACKOFF_MS = 800;
 const BACKOFF_JITTER_MS = 250;
 const BACKOFF_MULTIPLIER = 1.8;
 const MAX_BACKOFF_MS = 30_000;
+const MAX_RETRY_AFTER_MS = 60_000;
 const MAX_TEXT_RESPONSE_BYTES = MAX_TEXT_FILE_SIZE_BYTES;
 
 async function readResponseText(response: Response, maxBytes: number): Promise<string> {
@@ -157,12 +158,26 @@ export async function requestJsonWithRetry(
     }
 
     const retryAfterRaw = res.headers.get('retry-after');
-    const retryAfterSeconds = retryAfterRaw ? Number(retryAfterRaw) : NaN;
+    let retryAfterMs = NaN;
+    if (retryAfterRaw) {
+      const numeric = Number(retryAfterRaw);
+      if (Number.isFinite(numeric)) {
+        retryAfterMs = numeric * 1000;
+      } else {
+        const dateMs = Date.parse(retryAfterRaw);
+        if (Number.isFinite(dateMs)) {
+          retryAfterMs = Math.max(0, dateMs - Date.now());
+        }
+      }
+      if (Number.isFinite(retryAfterMs)) {
+        retryAfterMs = Math.min(retryAfterMs, MAX_RETRY_AFTER_MS);
+      }
+    }
 
     const shouldRetry = res.status === 429 || (res.status >= 500 && res.status < 600);
     if (shouldRetry && attempt < maxRetries) {
-      const waitMs = Number.isFinite(retryAfterSeconds)
-        ? retryAfterSeconds * 1000
+      const waitMs = Number.isFinite(retryAfterMs)
+        ? retryAfterMs
         : backoffMs + Math.random() * BACKOFF_JITTER_MS;
       await new Promise((resolve) => setTimeout(resolve, waitMs));
       backoffMs = Math.min(backoffMs * BACKOFF_MULTIPLIER, MAX_BACKOFF_MS);

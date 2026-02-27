@@ -33,7 +33,8 @@ function readFileIfExists(filePath: string): string | null {
       label: 'resource file',
       maxBytes: MAX_TEXT_FILE_SIZE_BYTES,
     });
-    return content.trim().length ? content.trim() : null;
+    const trimmed = content.trim();
+    return trimmed.length > 0 ? trimmed : null;
   } catch {
     return null;
   }

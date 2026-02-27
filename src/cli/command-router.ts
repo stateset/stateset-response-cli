@@ -84,7 +84,8 @@ export async function routeSlashCommand(input: string, ctx: ChatContext): Promis
 
   const trimmed = input.slice(1).trim();
   if (trimmed) {
-    const [commandName, ...restParts] = trimmed.split(/\s+/);
+    const [rawCommandName, ...restParts] = trimmed.split(/\s+/);
+    const commandName = rawCommandName.slice(0, 64);
     let extCommand: (ExtensionCommand & { source: string }) | null = null;
     try {
       extCommand = ctx.extensions?.getCommand ? ctx.extensions.getCommand(commandName) : null;
@@ -94,7 +95,21 @@ export async function routeSlashCommand(input: string, ctx: ChatContext): Promis
     }
     if (extCommand) {
       try {
-        const result = await extCommand.handler(restParts.join(' '), ctx.buildExtensionContext());
+        const EXTENSION_HANDLER_TIMEOUT_MS = 30_000;
+        const result = await Promise.race([
+          extCommand.handler(restParts.join(' '), ctx.buildExtensionContext()),
+          new Promise<never>((_, reject) =>
+            setTimeout(
+              () =>
+                reject(
+                  new Error(
+                    `Extension command "${commandName}" timed out after ${EXTENSION_HANDLER_TIMEOUT_MS}ms`,
+                  ),
+                ),
+              EXTENSION_HANDLER_TIMEOUT_MS,
+            ),
+          ),
+        ]);
         if (typeof result === 'string') {
           if (!isNonEmptyString(result)) {
             return { handled: true, needsPrompt: true };

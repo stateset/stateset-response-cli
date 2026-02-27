@@ -8,6 +8,23 @@ import {
 
 const SENSITIVE_KEY_RE = /(secret|token|authorization|api[-_]?key|password|admin)/i;
 
+export function truncate(text: string, maxLength: number, suffix = '...'): string {
+  if (text.length <= maxLength) return text;
+  return text.slice(0, maxLength - suffix.length) + suffix;
+}
+
+/**
+ * Strip ANSI escape sequences from untrusted strings to prevent terminal injection.
+ * Covers standard CSI sequences, OSC (title/hyperlink), and 7/8-bit C1 controls.
+ */
+/* eslint-disable no-control-regex, no-useless-escape */
+const ANSI_ESCAPE_RE =
+  /[\x1B\x9B][\[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><~]|[\x1B]\].*?(?:\x07|\x1B\\)/g;
+/* eslint-enable no-control-regex, no-useless-escape */
+function stripAnsi(text: string): string {
+  return text.replace(ANSI_ESCAPE_RE, '');
+}
+
 function redactValue(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(redactValue);
@@ -30,8 +47,9 @@ export function formatToolCall(name: string, args: Record<string, unknown>): str
         Object.entries(args)
           .map(([k, v]) => {
             const safeValue = SENSITIVE_KEY_RE.test(k) ? '[redacted]' : redactValue(v);
-            const val = typeof safeValue === 'string' ? safeValue : JSON.stringify(safeValue);
-            const display = val.length > 80 ? val.slice(0, 77) + '...' : val;
+            const raw = typeof safeValue === 'string' ? safeValue : JSON.stringify(safeValue);
+            const val = stripAnsi(raw);
+            const display = truncate(val, 80);
             return `${chalk.gray(k)}=${chalk.white(display)}`;
           })
           .join(' ')
@@ -41,7 +59,10 @@ export function formatToolCall(name: string, args: Record<string, unknown>): str
 
 export function formatToolResult(result: string): string {
   const maxLen = 2000;
-  const display = result.length > maxLen ? result.slice(0, maxLen) + '\n... (truncated)' : result;
+  // Strip ANSI escapes from tool output to prevent terminal injection from
+  // compromised integrations or crafted API responses.
+  const safe = stripAnsi(result);
+  const display = truncate(safe, maxLen, '\n... (truncated)');
   return chalk.gray(display);
 }
 

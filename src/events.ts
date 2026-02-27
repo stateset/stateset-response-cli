@@ -371,6 +371,7 @@ export class EventsRunner {
 
       logger.info(`Restarting events watcher: ${this.eventsDir}`);
       this.startWatcher();
+      this.scanExisting();
     }, WATCHER_RESTART_DELAY_MS);
   }
 
@@ -448,12 +449,18 @@ export class EventsRunner {
       return;
     }
 
-    for (const filename of files) {
-      void this.handleFile(filename).catch((err) => {
-        const msg = getErrorMessage(err);
-        logger.error(`Failed to process event file ${filename}: ${msg}`);
-      });
-    }
+    // Process files serially to avoid spawning too many concurrent agent connections
+    void (async () => {
+      for (const filename of files) {
+        if (!this.running) break;
+        try {
+          await this.handleFile(filename);
+        } catch (err) {
+          const msg = getErrorMessage(err);
+          logger.error(`Failed to process event file ${filename}: ${msg}`);
+        }
+      }
+    })();
   }
 
   private handleFileChange(filename: string): void {
@@ -821,7 +828,7 @@ function logEventResult(entry: {
   };
   const line = JSON.stringify(payload);
   try {
-    appendFileSync(logPath, line + '\n', 'utf-8');
+    appendFileSync(logPath, line + '\n', { encoding: 'utf-8', mode: 0o600 });
   } catch {
     // ignore logging failures
   }

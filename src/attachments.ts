@@ -81,8 +81,10 @@ function resolveAttachmentPath(
   if (canResolvePath) {
     const maybeReal = safeRealpath(requestedPath);
     if (!maybeReal) {
-      warnings.push(`Attachment path could not be verified: ${rawPath}`);
-      return { filePath: requestedPath, warnings };
+      // Reject unresolvable paths entirely — they could be dangling symlinks
+      // or files outside the boundary. Never fall back to unresolved paths.
+      warnings.push(`Attachment rejected (path could not be resolved): ${rawPath}`);
+      return { filePath: '', warnings };
     }
     candidatePath = maybeReal;
   }
@@ -90,7 +92,7 @@ function resolveAttachmentPath(
   const rel = path.relative(cwdForCheck, candidatePath);
   if (rel.startsWith('..') || path.isAbsolute(rel)) {
     warnings.push(`Attachment outside working directory: ${rawPath}`);
-    return { filePath: requestedPath, warnings };
+    return { filePath: '', warnings };
   }
 
   return { filePath: candidatePath, warnings };
@@ -131,7 +133,7 @@ export function buildUserContent(
     }
 
     const { filePath, warnings: pathWarnings } = resolveAttachmentPath(trimmedPath, resolvedCwd);
-    if (pathWarnings.length > 0) {
+    if (pathWarnings.length > 0 || !filePath) {
       warnings.push(...pathWarnings);
       continue;
     }

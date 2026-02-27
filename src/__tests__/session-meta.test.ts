@@ -8,6 +8,7 @@ const {
   mockReaddirSync,
   mockStatSync,
   mockUnlinkSync,
+  mockRenameSync,
 } = vi.hoisted(() => ({
   mockExistsSync: vi.fn((_path?: any) => false as boolean),
   mockReadFileSync: vi.fn((_path?: any, _opts?: any) => '' as any),
@@ -16,6 +17,7 @@ const {
   mockReaddirSync: vi.fn((_path?: any, _opts?: any) => [] as any[]),
   mockStatSync: vi.fn((_path?: any) => ({}) as any),
   mockUnlinkSync: vi.fn((_path?: any) => undefined as any),
+  mockRenameSync: vi.fn((_oldPath?: any, _newPath?: any) => undefined as any),
 }));
 
 vi.mock('node:fs', () => ({
@@ -27,6 +29,7 @@ vi.mock('node:fs', () => ({
     readdirSync: mockReaddirSync,
     statSync: mockStatSync,
     unlinkSync: mockUnlinkSync,
+    renameSync: mockRenameSync,
   },
 }));
 
@@ -90,11 +93,16 @@ describe('writeSessionMeta', () => {
     vi.clearAllMocks();
   });
 
-  it('writes JSON-stringified meta to meta.json', () => {
+  it('writes JSON-stringified meta to meta.json atomically', () => {
     writeSessionMeta('/tmp/test-sessions/sess-1', { tags: ['vip'] });
+    // Atomic write: writeFileSync to temp file, then renameSync to target
     expect(mockWriteFileSync).toHaveBeenCalledTimes(1);
+    expect(mockRenameSync).toHaveBeenCalledTimes(1);
     const written = mockWriteFileSync.mock.calls[0][1] as string;
     expect(JSON.parse(written)).toEqual({ tags: ['vip'] });
+    // Verify rename target is meta.json
+    const renameTarget = mockRenameSync.mock.calls[0][1] as string;
+    expect(renameTarget).toBe('/tmp/test-sessions/sess-1/meta.json');
   });
 });
 

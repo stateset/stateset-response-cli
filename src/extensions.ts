@@ -231,6 +231,7 @@ export class ExtensionManager {
   private toolResultHookNames = new Set<string>();
   private extensions: ExtensionInfo[] = [];
   private diagnostics: ExtensionDiagnostic[] = [];
+  private static readonly MAX_RUNTIME_DIAGNOSTICS = 200;
   private runtimeDiagnostics: ExtensionDiagnostic[] = [];
   private policyOverrides: Record<string, string> = {};
   private extensionTrust: ExtensionTrustPolicy = {
@@ -394,7 +395,23 @@ export class ExtensionManager {
             });
           }
         } else {
-          await register(api);
+          // Enforce a timeout on extension registration to prevent hangs from
+          // malicious or buggy extensions.
+          const EXTENSION_REGISTER_TIMEOUT_MS = 10_000;
+          await Promise.race([
+            register(api),
+            new Promise<never>((_, reject) =>
+              setTimeout(
+                () =>
+                  reject(
+                    new Error(
+                      `Extension register() timed out after ${EXTENSION_REGISTER_TIMEOUT_MS}ms`,
+                    ),
+                  ),
+                EXTENSION_REGISTER_TIMEOUT_MS,
+              ),
+            ),
+          ]);
         }
       } catch (err) {
         this.diagnostics.push({
@@ -433,6 +450,16 @@ export class ExtensionManager {
 
   listDiagnostics(): ExtensionDiagnostic[] {
     return [...this.diagnostics, ...this.runtimeDiagnostics];
+  }
+
+  private appendRuntimeDiagnostic(diagnostic: ExtensionDiagnostic): void {
+    if (this.runtimeDiagnostics.length >= ExtensionManager.MAX_RUNTIME_DIAGNOSTICS) {
+      this.runtimeDiagnostics.splice(
+        0,
+        this.runtimeDiagnostics.length - ExtensionManager.MAX_RUNTIME_DIAGNOSTICS + 1,
+      );
+    }
+    this.runtimeDiagnostics.push(diagnostic);
   }
 
   getPolicyOverrides(): Record<string, string> {
@@ -478,7 +505,7 @@ export class ExtensionManager {
           currentArgs = decision.args;
         }
       } catch (err) {
-        this.runtimeDiagnostics.push({
+        this.appendRuntimeDiagnostic({
           source: hook.source,
           message: `Tool hook "${hook.name}" failed: ${getErrorMessage(err)}`,
         });
@@ -499,7 +526,7 @@ export class ExtensionManager {
       try {
         await hook.handler(result, ctx);
       } catch (err) {
-        this.runtimeDiagnostics.push({
+        this.appendRuntimeDiagnostic({
           source: hook.source,
           message: `Tool result hook "${hook.name}" failed: ${getErrorMessage(err)}`,
         });

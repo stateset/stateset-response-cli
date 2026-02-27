@@ -60,7 +60,11 @@ export function getToolAuditPath(sessionId: string): string {
 export function appendToolAudit(sessionId: string, entry: ToolAuditEntry): void {
   const filePath = getToolAuditPath(sessionId);
   ensureDirExists(filePath);
-  fs.appendFileSync(filePath, JSON.stringify(entry) + '\n', 'utf-8');
+  try {
+    fs.appendFileSync(filePath, JSON.stringify(entry) + '\n', { encoding: 'utf-8', mode: 0o600 });
+  } catch {
+    // Non-fatal: audit persistence failure shouldn't crash the CLI
+  }
 }
 
 export function readToolAudit(sessionId: string): ToolAuditEntry[] {
@@ -87,7 +91,11 @@ export function getPromptHistoryPath(): string {
 export function appendPromptHistory(entry: PromptHistoryEntry): void {
   const filePath = getPromptHistoryPath();
   ensureDirExists(filePath);
-  fs.appendFileSync(filePath, JSON.stringify(entry) + '\n', 'utf-8');
+  try {
+    fs.appendFileSync(filePath, JSON.stringify(entry) + '\n', { encoding: 'utf-8', mode: 0o600 });
+  } catch {
+    // Non-fatal: prompt history persistence failure shouldn't crash the CLI
+  }
 }
 
 export function readPromptHistory(limit = 20): PromptHistoryEntry[] {

@@ -12,6 +12,9 @@ function containsPiiValue(value: string): boolean {
 }
 
 export function redactPii(value: unknown): unknown {
+  if (typeof value === 'string') {
+    return containsPiiValue(value) ? '[redacted]' : value;
+  }
   if (Array.isArray(value)) {
     return value.map(redactPii);
   }
@@ -20,8 +23,6 @@ export function redactPii(value: unknown): unknown {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(obj)) {
       if (PII_KEY_RE.test(k)) {
-        out[k] = '[redacted]';
-      } else if (typeof v === 'string' && containsPiiValue(v)) {
         out[k] = '[redacted]';
       } else {
         out[k] = redactPii(v);

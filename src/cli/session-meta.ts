@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import {
   sanitizeSessionId,
@@ -44,7 +45,20 @@ export function readSessionMeta(sessionDir: string): SessionMeta {
 export function writeSessionMeta(sessionDir: string, meta: SessionMeta): void {
   const metaPath = path.join(sessionDir, 'meta.json');
   ensureDirExists(metaPath);
-  fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf-8');
+  const data = JSON.stringify(meta, null, 2);
+  const tmpPath = metaPath + `.tmp-${crypto.randomBytes(4).toString('hex')}`;
+  try {
+    fs.writeFileSync(tmpPath, data, { encoding: 'utf-8', mode: 0o600 });
+    fs.renameSync(tmpPath, metaPath);
+  } catch {
+    // Clean up temp file on failure, fall back to direct write
+    try {
+      fs.unlinkSync(tmpPath);
+    } catch {
+      /* best effort */
+    }
+    fs.writeFileSync(metaPath, data, 'utf-8');
+  }
 }
 
 export function listSessionSummaries(options?: { includeArchived?: boolean }): SessionSummary[] {

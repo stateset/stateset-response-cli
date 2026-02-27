@@ -270,6 +270,7 @@ export async function startChatSession(
     } finally {
       clearTimeout(forceExitTimer);
       process.off('SIGTERM', shutdown);
+      process.off('SIGINT', onSigint);
       rl.close();
     }
   };
@@ -298,6 +299,10 @@ export async function startChatSession(
   let permissionStore = readPermissionStore();
 
   const switchSession = (nextSessionId: string) => {
+    if (processing) {
+      console.log(formatWarning('Cannot switch sessions while a request is in progress.'));
+      return;
+    }
     sessionId = sanitizeSessionId(nextSessionId || 'default');
     sessionStore = new SessionStore(sessionId);
     metrics.increment('sessions.switched');
@@ -402,7 +407,7 @@ export async function startChatSession(
   };
 
   // Handle Ctrl+C: cancel current request or show prompt
-  process.on('SIGINT', () => {
+  const onSigint = () => {
     if (processing) {
       agent.abort();
       processing = false;
@@ -421,7 +426,8 @@ export async function startChatSession(
         process.removeListener('SIGINT', onSecondSigint);
       }, SIGINT_GRACE_MS);
     }
-  });
+  };
+  process.on('SIGINT', onSigint);
 
   rl.prompt();
 
@@ -621,20 +627,25 @@ export async function startChatSession(
                 };
               } else {
                 rl.pause();
-                const { choice } = await inquirer.prompt([
-                  {
-                    type: 'list',
-                    name: 'choice',
-                    message: `Extension hook "${decision.hookName}" denied tool "${name}".`,
-                    choices: [
-                      { name: 'Allow once', value: 'allow_once' },
-                      { name: 'Always allow', value: 'allow_always' },
-                      { name: 'Deny once', value: 'deny_once' },
-                      { name: 'Always deny', value: 'deny_always' },
-                    ],
-                  },
-                ]);
-                rl.resume();
+                let choice: string;
+                try {
+                  const answer = await inquirer.prompt([
+                    {
+                      type: 'list',
+                      name: 'choice',
+                      message: `Extension hook "${decision.hookName}" denied tool "${name}".`,
+                      choices: [
+                        { name: 'Allow once', value: 'allow_once' },
+                        { name: 'Always allow', value: 'allow_always' },
+                        { name: 'Deny once', value: 'deny_once' },
+                        { name: 'Always deny', value: 'deny_always' },
+                      ],
+                    },
+                  ]);
+                  choice = answer.choice;
+                } finally {
+                  rl.resume();
+                }
 
                 if (choice === 'allow_once') {
                   decision = { action: 'allow', args };

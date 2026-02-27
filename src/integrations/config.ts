@@ -126,6 +126,12 @@ function normalizeApiBaseUrl(value: string, envName: string): string {
   if (!/^https?:\/\//i.test(normalized)) {
     throw new Error(`API base URL must include http(s) protocol. Check ${envName}.`);
   }
+  // Validate as a proper URL to prevent SSRF via malformed values.
+  try {
+    new URL(normalized);
+  } catch {
+    throw new Error(`Invalid URL for ${envName}: "${normalized}".`);
+  }
   return normalized;
 }
 
@@ -697,6 +703,12 @@ function normalizeZendeskSubdomain(input: string): string {
   value = value.split('/')[0];
   if (!value) {
     throw new Error('Zendesk subdomain is required. Set ZENDESK_SUBDOMAIN.');
+  }
+  // Reject subdomains containing characters that could enable URL injection.
+  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(value)) {
+    throw new Error(
+      `Invalid Zendesk subdomain: "${value}". Must contain only letters, numbers, and hyphens.`,
+    );
   }
   return value;
 }

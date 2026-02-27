@@ -21,11 +21,12 @@ const MCP_CONNECT_TIMEOUT_MS = 30_000;
 const MCP_DISCONNECT_TIMEOUT_MS = 5_000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
   return Promise.race([
-    promise,
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms),
-    ),
+    promise.finally(() => clearTimeout(timer)),
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    }),
   ]);
 }
 
@@ -391,7 +392,12 @@ export class StateSetAgent {
       });
       this.transport = null;
       this.tools = [];
-      await transport.close().catch(() => {});
+      await transport.close().catch((closeErr: unknown) => {
+        // Log transport close failure for diagnostics but don't mask the original error.
+        if (closeErr instanceof Error) {
+          metrics.increment('mcp.transport.closeErrors');
+        }
+      });
       throw error;
     }
   }
@@ -440,9 +446,9 @@ export class StateSetAgent {
           throw new Error('Request cancelled');
         }
         throw err;
+      } finally {
+        this.abortController = null;
       }
-
-      this.abortController = null;
 
       // Add assistant response to history
       this.addMessage({ role: 'assistant', content: finalMessage.content });

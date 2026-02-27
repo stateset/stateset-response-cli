@@ -32,8 +32,13 @@ beforeEach(() => {
 
 describe('getAnthropicApiKey', () => {
   it('prefers trimmed ANTHROPIC_API_KEY env var', () => {
-    process.env.ANTHROPIC_API_KEY = '  sk-ant-env  ';
-    expect(getAnthropicApiKey()).toBe('sk-ant-env');
+    process.env.ANTHROPIC_API_KEY = '  sk-ant-api03-test-key-1234567890  ';
+    expect(getAnthropicApiKey()).toBe('sk-ant-api03-test-key-1234567890');
+  });
+
+  it('rejects ANTHROPIC_API_KEY with invalid format', () => {
+    process.env.ANTHROPIC_API_KEY = 'not-a-valid-key';
+    expect(() => getAnthropicApiKey()).toThrow('does not look like a valid Anthropic key');
   });
 
   it('falls back to trimmed config key when env var is not set', () => {

@@ -29,6 +29,7 @@ interface SenderSession {
   processing: boolean;
   queue: Array<{ text: string; jid: string; messageId: string }>;
   connectPromise?: Promise<void>;
+  droppedMessages?: number;
 }
 
 export interface GatewayOptions {
@@ -49,6 +50,7 @@ const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const MAX_WHATSAPP_LENGTH = 4000;
 const MAX_SESSIONS = 400;
 const MAX_SESSION_QUEUE = 128;
+const MIN_CHUNK_RATIO = 0.3;
 const SENT_MESSAGE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const AGENT_MARKER = '[agent]';
 const AGENT_MARKER_LOWER = AGENT_MARKER.toLowerCase();
@@ -119,6 +121,7 @@ export class WhatsAppGateway {
     }
     await Promise.all(disconnects);
     this.sessions.clear();
+    this.sentMessageIds.clear();
 
     // Close socket
     if (this.sock) {
@@ -345,8 +348,9 @@ export class WhatsAppGateway {
       return;
     }
     if (session.queue.length >= MAX_SESSION_QUEUE) {
-      this.log.debug(
-        `Dropping message for ${jidToPhone(jid)}: session queue full (${MAX_SESSION_QUEUE}).`,
+      session.droppedMessages = (session.droppedMessages ?? 0) + 1;
+      this.log.warn(
+        `Dropping message for ${jidToPhone(jid)}: session queue full (${MAX_SESSION_QUEUE}). Total dropped: ${session.droppedMessages}`,
       );
       this.sendText(
         jid,
@@ -547,6 +551,7 @@ export class WhatsAppGateway {
     }
     try {
       await session.connectPromise;
+      session.connectPromise = undefined;
     } catch (err) {
       session.connectPromise = undefined;
       throw err;
@@ -568,6 +573,7 @@ export class WhatsAppGateway {
 
   private startCleanupTimer(): void {
     this.cleanupTimer = setInterval(() => this.cleanupSessions(), CLEANUP_INTERVAL_MS);
+    this.cleanupTimer.unref();
   }
 
   private stopCleanupTimer(): void {
@@ -739,7 +745,7 @@ export function chunkMessage(text: string, maxLength: number = MAX_WHATSAPP_LENG
 
     // Try to split at paragraph boundary
     const paraBreak = remaining.lastIndexOf('\n\n', maxLength);
-    if (paraBreak > maxLength * 0.3) {
+    if (paraBreak > maxLength * MIN_CHUNK_RATIO) {
       splitIndex = paraBreak;
     }
 
@@ -747,7 +753,7 @@ export function chunkMessage(text: string, maxLength: number = MAX_WHATSAPP_LENG
     if (splitIndex === -1) {
       const slice = remaining.slice(0, maxLength);
       const sentenceMatch = slice.match(/.*[.!?]\s/s);
-      if (sentenceMatch && sentenceMatch[0].length > maxLength * 0.3) {
+      if (sentenceMatch && sentenceMatch[0].length > maxLength * MIN_CHUNK_RATIO) {
         splitIndex = sentenceMatch[0].length;
       }
     }
@@ -755,7 +761,7 @@ export function chunkMessage(text: string, maxLength: number = MAX_WHATSAPP_LENG
     // Try to split at line boundary
     if (splitIndex === -1) {
       const lineBreak = remaining.lastIndexOf('\n', maxLength);
-      if (lineBreak > maxLength * 0.3) {
+      if (lineBreak > maxLength * MIN_CHUNK_RATIO) {
         splitIndex = lineBreak;
       }
     }
@@ -763,7 +769,7 @@ export function chunkMessage(text: string, maxLength: number = MAX_WHATSAPP_LENG
     // Try to split at word boundary
     if (splitIndex === -1) {
       const wordBreak = remaining.lastIndexOf(' ', maxLength);
-      if (wordBreak > maxLength * 0.3) {
+      if (wordBreak > maxLength * MIN_CHUNK_RATIO) {
         splitIndex = wordBreak;
       }
     }

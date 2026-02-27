@@ -22,7 +22,7 @@ export function readPermissionStore(): PermissionStore {
 export function writePermissionStore(store: PermissionStore): void {
   const filePath = getPermissionStorePath();
   ensureDirExists(filePath);
-  fs.writeFileSync(filePath, JSON.stringify(store, null, 2), 'utf-8');
+  fs.writeFileSync(filePath, JSON.stringify(store, null, 2), { encoding: 'utf-8', mode: 0o600 });
 }
 
 export function getPolicyOverridesPath(cwd: string): string {
@@ -67,7 +67,7 @@ export function readPolicyOverridesDetailed(cwd: string): {
 export function writePolicyOverrides(cwd: string, data: PermissionStore): void {
   const pathToWrite = getPolicyOverridesPath(cwd);
   ensureDirExists(pathToWrite);
-  fs.writeFileSync(pathToWrite, JSON.stringify(data, null, 2), 'utf-8');
+  fs.writeFileSync(pathToWrite, JSON.stringify(data, null, 2), { encoding: 'utf-8', mode: 0o600 });
 }
 
 export function readPolicyFile(pathInput: string): PermissionStore {

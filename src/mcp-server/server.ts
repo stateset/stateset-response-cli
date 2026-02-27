@@ -1,4 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { createRequire } from 'node:module';
 import { logger } from '../lib/logger.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { createGraphQLClient, type GraphQLAuth } from './graphql-client.js';
@@ -162,7 +163,14 @@ const INTEGRATIONS: IntegrationEntry[] = [
 
 function resolveMcpServerVersion(): string {
   const npmVersion = String(process.env.npm_package_version || '').trim();
-  return npmVersion || '1.3.10';
+  if (npmVersion) return npmVersion;
+  try {
+    const esmRequire = createRequire(import.meta.url);
+    const pkg = esmRequire('../../package.json') as { version?: string };
+    return pkg.version ?? '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
 }
 
 export function createServer(): McpServer {
@@ -175,10 +183,27 @@ export function createServer(): McpServer {
     );
   }
 
+  const endpoint = orgConfig.graphqlEndpoint?.trim();
+  if (!endpoint) {
+    throw new Error(
+      `Organization "${orgId}" has no GraphQL endpoint configured. Run "response auth login" to set up your organization.`,
+    );
+  }
+  try {
+    const parsed = new URL(endpoint);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      throw new Error('unsupported protocol');
+    }
+  } catch {
+    throw new Error(
+      `Organization "${orgId}" has an invalid GraphQL endpoint: "${endpoint}". Expected a valid HTTP(S) URL.`,
+    );
+  }
+
   const auth: GraphQLAuth = cliToken
     ? { type: 'cli_token', token: cliToken }
     : { type: 'admin_secret', adminSecret: adminSecret! };
-  const graphqlClient = createGraphQLClient(orgConfig.graphqlEndpoint, auth, orgId);
+  const graphqlClient = createGraphQLClient(endpoint, auth, orgId);
 
   const server = new McpServer(
     { name: 'stateset-response', version: resolveMcpServerVersion() },

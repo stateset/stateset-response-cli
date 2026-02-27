@@ -385,7 +385,7 @@ describe('buildUserContent - cwd path restriction', () => {
     const result = buildUserContent('Check', [filePath], { cwd });
 
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]).toContain('could not be verified');
+    expect(result.warnings[0]).toContain('rejected');
     expect(result.warnings[0]).toContain(filePath);
     const textBlock = result.content[0] as any;
     expect(textBlock.text).toBe('Check');

@@ -54,7 +54,9 @@ function isTransientError(error: unknown): boolean {
 }
 
 function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  // Add ±25% jitter to prevent thundering-herd on shared backends.
+  const jitter = ms * 0.25 * (Math.random() * 2 - 1);
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms + jitter)));
 }
 
 export function createGraphQLClient(
@@ -129,10 +131,14 @@ export async function executeQuery<T = Record<string, unknown>>(
   }
 
   const gqlError = lastError as {
-    response?: { errors?: Array<{ message: string }> };
+    response?: { errors?: Array<{ message: string }>; status?: number };
     message?: string;
   };
-  const message =
-    gqlError?.response?.errors?.[0]?.message || gqlError?.message || 'Unknown GraphQL error';
-  throw new Error(message);
+  const gqlMessages = gqlError?.response?.errors?.map((e) => e.message).filter(Boolean);
+  const status = gqlError?.response?.status;
+  const detail = gqlMessages?.length
+    ? gqlMessages.join('; ')
+    : gqlError?.message || 'Unknown GraphQL error';
+  const prefix = status ? `GraphQL ${status}` : 'GraphQL error';
+  throw new Error(`${prefix}: ${detail}`);
 }

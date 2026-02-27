@@ -1,13 +1,22 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const { mockExistsSync, mockReadFileSync, mockWriteFileSync, mockAppendFileSync, mockMkdirSync } =
-  vi.hoisted(() => ({
-    mockExistsSync: vi.fn((_path?: any) => false as boolean),
-    mockReadFileSync: vi.fn((_path?: any, _opts?: any) => '' as any),
-    mockWriteFileSync: vi.fn((_path?: any, _data?: any) => undefined as any),
-    mockAppendFileSync: vi.fn((_path?: any, _data?: any) => undefined as any),
-    mockMkdirSync: vi.fn((_path?: any, _opts?: any) => undefined as any),
-  }));
+const {
+  mockExistsSync,
+  mockReadFileSync,
+  mockWriteFileSync,
+  mockAppendFileSync,
+  mockMkdirSync,
+  mockRenameSync,
+  mockUnlinkSync,
+} = vi.hoisted(() => ({
+  mockExistsSync: vi.fn((_path?: any) => false as boolean),
+  mockReadFileSync: vi.fn((_path?: any, _opts?: any) => '' as any),
+  mockWriteFileSync: vi.fn((_path?: any, _data?: any) => undefined as any),
+  mockAppendFileSync: vi.fn((_path?: any, _data?: any) => undefined as any),
+  mockMkdirSync: vi.fn((_path?: any, _opts?: any) => undefined as any),
+  mockRenameSync: vi.fn((_oldPath?: any, _newPath?: any) => undefined as any),
+  mockUnlinkSync: vi.fn((_path?: any) => undefined as any),
+}));
 
 const { mockReadTextFile, mockReadJsonFile } = vi.hoisted(() => ({
   mockReadTextFile: vi.fn((_path?: any, _opts?: any) => '' as any),
@@ -21,6 +30,8 @@ vi.mock('node:fs', () => ({
     writeFileSync: mockWriteFileSync,
     appendFileSync: mockAppendFileSync,
     mkdirSync: mockMkdirSync,
+    renameSync: mockRenameSync,
+    unlinkSync: mockUnlinkSync,
   },
 }));
 
@@ -207,7 +218,9 @@ describe('SessionStore', () => {
       const store = new SessionStore('sess-1');
       mockExistsSync.mockReturnValue(true);
       store.clear();
+      // Atomic clear: writes to temp file then renames for each file
       expect(mockWriteFileSync).toHaveBeenCalledTimes(2);
+      expect(mockRenameSync).toHaveBeenCalledTimes(2);
     });
 
     it('does nothing when files do not exist', () => {

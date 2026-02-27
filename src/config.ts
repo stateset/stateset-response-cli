@@ -300,10 +300,26 @@ export function getRuntimeContext(): RuntimeContext {
   return { orgId, orgConfig, anthropicApiKey };
 }
 
+/**
+ * Basic format check for Anthropic API keys.
+ * Rejects obviously invalid values without being overly strict.
+ */
+function isPlausibleApiKey(key: string): boolean {
+  return key.startsWith('sk-ant-') && key.length >= 20;
+}
+
 /** Returns the Anthropic API key from ANTHROPIC_API_KEY env var, falling back to config. */
 export function getAnthropicApiKey(): string {
   const envKey = process.env.ANTHROPIC_API_KEY?.trim();
-  if (envKey) return envKey;
+  if (envKey) {
+    if (!isPlausibleApiKey(envKey)) {
+      throw new ConfigurationError(
+        'ANTHROPIC_API_KEY does not look like a valid Anthropic key (expected "sk-ant-..." prefix). ' +
+          'Check that you copied the full key from https://console.anthropic.com.',
+      );
+    }
+    return envKey;
+  }
 
   if (configExists()) {
     const cfg = loadConfig();
@@ -311,7 +327,7 @@ export function getAnthropicApiKey(): string {
     if (trimmed) return trimmed;
   }
 
-  throw new Error(
+  throw new ConfigurationError(
     'No Anthropic API key found. Set ANTHROPIC_API_KEY env var or run "response auth login".',
   );
 }

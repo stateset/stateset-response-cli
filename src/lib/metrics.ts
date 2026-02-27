@@ -46,9 +46,46 @@ function percentile(sorted: number[], p: number): number {
   return sorted[Math.max(0, index)];
 }
 
+/**
+ * Fixed-size circular buffer for O(1) append with automatic eviction.
+ * Replaces naive array + shift() which is O(n) per eviction.
+ */
+class CircularBuffer {
+  private buffer: number[];
+  private head = 0;
+  private count = 0;
+  private readonly capacity: number;
+
+  constructor(capacity: number) {
+    this.capacity = capacity;
+    this.buffer = new Array(capacity);
+  }
+
+  push(value: number): void {
+    this.buffer[this.head] = value;
+    this.head = (this.head + 1) % this.capacity;
+    if (this.count < this.capacity) {
+      this.count++;
+    }
+  }
+
+  toArray(): number[] {
+    if (this.count === 0) return [];
+    if (this.count < this.capacity) {
+      return this.buffer.slice(0, this.count);
+    }
+    // Buffer is full: elements wrap around
+    return [...this.buffer.slice(this.head), ...this.buffer.slice(0, this.head)];
+  }
+
+  get length(): number {
+    return this.count;
+  }
+}
+
 export class MetricsCollector {
   private counters = new Map<string, number>();
-  private histograms = new Map<string, number[]>();
+  private histograms = new Map<string, CircularBuffer>();
   private gauges = new Map<string, number>();
   private tokenUsage: TokenUsageSummary = {
     inputTokens: 0,
@@ -63,15 +100,12 @@ export class MetricsCollector {
   }
 
   histogram(name: string, value: number): void {
-    let samples = this.histograms.get(name);
-    if (!samples) {
-      samples = [];
-      this.histograms.set(name, samples);
+    let buf = this.histograms.get(name);
+    if (!buf) {
+      buf = new CircularBuffer(MAX_HISTOGRAM_SAMPLES);
+      this.histograms.set(name, buf);
     }
-    if (samples.length >= MAX_HISTOGRAM_SAMPLES) {
-      samples.shift();
-    }
-    samples.push(value);
+    buf.push(value);
   }
 
   gauge(name: string, value: number): void {
@@ -120,8 +154,8 @@ export class MetricsCollector {
     }
 
     const histogramSummaries: MetricsSnapshot['histogramSummaries'] = {};
-    for (const [k, samples] of this.histograms) {
-      const sorted = [...samples].sort((a, b) => a - b);
+    for (const [k, buf] of this.histograms) {
+      const sorted = buf.toArray().sort((a, b) => a - b);
       histogramSummaries[k] = {
         count: sorted.length,
         p50: percentile(sorted, 50),
@@ -141,8 +175,8 @@ export class MetricsCollector {
     for (const name of toolNames) {
       const calls = this.counters.get(`tool.calls.${name}`) ?? 0;
       const errors = this.counters.get(`tool.errors.${name}`) ?? 0;
-      const samples = this.histograms.get(`tool.duration.${name}`);
-      const sorted = samples ? [...samples].sort((a, b) => a - b) : [];
+      const buf = this.histograms.get(`tool.duration.${name}`);
+      const sorted = buf ? buf.toArray().sort((a, b) => a - b) : [];
       toolBreakdown.push({
         name,
         calls,

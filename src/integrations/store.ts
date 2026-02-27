@@ -139,9 +139,7 @@ export function decryptStore(store: IntegrationsStore): IntegrationsStore {
   const integrations: Record<string, IntegrationEntry> = {};
   for (const [id, entry] of Object.entries(store.integrations || {})) {
     if (!entry) continue;
-    if (id in store.integrations) {
-      integrations[id] = decryptEntry(id as IntegrationId, entry);
-    }
+    integrations[id] = decryptEntry(id as IntegrationId, entry);
   }
   return { version: store.version || STORE_VERSION, integrations };
 }

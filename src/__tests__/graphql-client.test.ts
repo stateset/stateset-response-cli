@@ -70,11 +70,14 @@ describe('executeQuery', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
+    // Pin Math.random to 0.5 so jitter is deterministic (0.5*2-1=0 → zero jitter)
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
     mockClient = { request: vi.fn() };
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   it('executes query successfully', async () => {

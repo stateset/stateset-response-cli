@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import type Anthropic from '@anthropic-ai/sdk';
 import { readJsonFile, readTextFile, MAX_TEXT_FILE_SIZE_BYTES } from './utils/file-read.js';
 import { getErrorMessage } from './lib/errors.js';
@@ -95,10 +96,15 @@ function readSafeMeta(filePath: string): unknown {
   }
 }
 
+const MAX_SESSION_WARNINGS = 500;
+
 function warnSessionIssue(action: string, targetPath: string, error: unknown): void {
   const message = getErrorMessage(error);
   const warningKey = `${action}:${targetPath}:${message}`;
   if (seenSessionWarnings.has(warningKey)) return;
+  if (seenSessionWarnings.size >= MAX_SESSION_WARNINGS) {
+    seenSessionWarnings.clear();
+  }
   seenSessionWarnings.add(warningKey);
   console.warn(`[stateset] ${action} failed for ${targetPath}: ${message}`);
 }
@@ -217,11 +223,24 @@ export class SessionStore {
   }
 
   clear(): void {
-    if (fs.existsSync(this.contextPath)) {
-      fs.writeFileSync(this.contextPath, '', 'utf-8');
-    }
-    if (fs.existsSync(this.logPath)) {
-      fs.writeFileSync(this.logPath, '', 'utf-8');
+    // Atomic clear: write empty file to a temp path then rename, preventing
+    // partial writes from corrupting the file if the process is interrupted.
+    for (const filePath of [this.contextPath, this.logPath]) {
+      if (fs.existsSync(filePath)) {
+        const tmpPath = filePath + `.tmp-${crypto.randomBytes(4).toString('hex')}`;
+        try {
+          fs.writeFileSync(tmpPath, '', { encoding: 'utf-8', mode: 0o600 });
+          fs.renameSync(tmpPath, filePath);
+        } catch {
+          // Clean up temp file on failure, fall back to direct write
+          try {
+            fs.unlinkSync(tmpPath);
+          } catch {
+            /* best effort */
+          }
+          fs.writeFileSync(filePath, '', 'utf-8');
+        }
+      }
     }
   }
 }

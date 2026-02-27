@@ -6,6 +6,12 @@ import { getStateSetDir } from './session.js';
 import { getSkill, loadContextFiles, loadSystemPromptFiles } from './resources.js';
 
 /**
+ * Hard cap on total system prompt size in characters.
+ * ~200K chars ≈ ~50K tokens, well within Claude's context but prevents runaway prompts.
+ */
+const MAX_SYSTEM_PROMPT_CHARS = 200_000;
+
+/**
  * Inputs for system prompt assembly: session identity, optional persistent
  * memory, working directory for context files, and active skill names.
  */
@@ -65,7 +71,10 @@ export function buildSystemPrompt(context: PromptContext): string {
   const activeSkills = context.activeSkills || [];
   if (activeSkills.length > 0) {
     const skillBlocks: string[] = [];
+    const seenSkills = new Set<string>();
     for (const skillName of activeSkills) {
+      if (seenSkills.has(skillName)) continue;
+      seenSkills.add(skillName);
       const skill = getSkill(skillName, cwd);
       if (!skill) continue;
       const header = `### ${skill.name}${skill.displayPath ? ` (${skill.displayPath})` : ''}`;
@@ -85,5 +94,13 @@ export function buildSystemPrompt(context: PromptContext): string {
     sections.push(appendText.trim());
   }
 
-  return sections.join('\n\n') + '\n';
+  let prompt = sections.join('\n\n') + '\n';
+
+  // Truncate if prompt exceeds the safety cap to prevent token limit issues.
+  if (prompt.length > MAX_SYSTEM_PROMPT_CHARS) {
+    prompt =
+      prompt.slice(0, MAX_SYSTEM_PROMPT_CHARS) + '\n\n[System prompt truncated due to size.]';
+  }
+
+  return prompt;
 }
