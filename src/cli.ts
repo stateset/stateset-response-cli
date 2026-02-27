@@ -23,9 +23,9 @@ import { installGlobalErrorHandlers, getErrorMessage } from './lib/errors.js';
 import { exportOrg, importOrg, type ImportResult } from './export-import.js';
 import { EventsRunner, validateEventsPrereqs } from './events.js';
 import { assertNodeVersion } from './cli/utils.js';
-import { registerAuthCommands } from './cli/auth.js';
-import { registerIntegrationsCommands } from './cli/commands-integrations.js';
-import { registerDoctorCommand } from './cli/commands-doctor.js';
+import { registerAuthCommands, runAuthLogin, type AuthLoginOptions } from './cli/auth.js';
+import { registerIntegrationsCommands, runIntegrationsSetup } from './cli/commands-integrations.js';
+import { registerDoctorCommand, runDoctorChecks } from './cli/commands-doctor.js';
 import { registerShortcutTopLevelCommands } from './cli/commands-shortcuts.js';
 import { startChatSession } from './cli/chat-action.js';
 
@@ -45,6 +45,149 @@ registerAuthCommands(program);
 registerIntegrationsCommands(program);
 registerDoctorCommand(program);
 registerShortcutTopLevelCommands(program);
+
+interface InitCommandOptions extends AuthLoginOptions {
+  model?: string;
+  session?: string;
+  apply?: boolean;
+  redact?: boolean;
+  usage?: boolean;
+  verbose?: boolean;
+  integrations?: boolean;
+  chat?: boolean;
+  fromEnv?: boolean;
+  integration?: string;
+}
+
+program
+  .command('init')
+  .description('Guided first-run setup (auth, diagnostics, integrations, chat)')
+  .option('--model <model>', `Model to use (${getModelAliasText('list')} or full model ID)`)
+  .option('--session <name>', 'Session name for chat', 'default')
+  .option('--apply', 'Allow write operations for integration tools')
+  .option('--redact', 'Redact customer emails in integration outputs')
+  .option('--usage', 'Show token usage summaries')
+  .option('--verbose', 'Enable debug logging')
+  .option('--no-integrations', 'Skip integrations setup')
+  .option('--no-chat', 'Skip launching chat after setup')
+  .option('--from-env', 'During integration setup, prefill values from environment variables')
+  .option('--integration <id>', 'Configure one integration during setup')
+  .option('--device', 'Use browser/device code authentication')
+  .option('--manual', 'Use manual admin-secret authentication')
+  .option('--instance-url <url>', 'StateSet ResponseCX instance URL')
+  .option('--org-id <id>', 'Organization ID (manual mode)')
+  .option('--org-name <name>', 'Organization name (manual mode)')
+  .option('--graphql-endpoint <url>', 'GraphQL endpoint (manual mode)')
+  .option('--admin-secret <secret>', 'Hasura admin secret (manual mode)')
+  .option('--anthropic-api-key <key>', 'Anthropic API key to store in config')
+  .option('--non-interactive', 'Fail instead of prompting for missing values')
+  .option('--no-open-browser', 'Do not attempt to open the device verification URL')
+  .action(async (options: InitCommandOptions) => {
+    if (!configExists()) {
+      console.log(chalk.gray('  No existing config found. Starting authentication setup.'));
+      try {
+        await runAuthLogin({
+          device: options.device,
+          manual: options.manual,
+          instanceUrl: options.instanceUrl,
+          orgId: options.orgId,
+          orgName: options.orgName,
+          graphqlEndpoint: options.graphqlEndpoint,
+          adminSecret: options.adminSecret,
+          anthropicApiKey: options.anthropicApiKey,
+          nonInteractive: options.nonInteractive,
+          openBrowser: options.openBrowser,
+        });
+      } catch (e: unknown) {
+        console.error(formatError(getErrorMessage(e)));
+        process.exitCode = 1;
+        return;
+      }
+    } else {
+      console.log(chalk.gray('  Credentials already configured. Skipping auth.'));
+    }
+
+    console.log('');
+    console.log(chalk.bold('  Running diagnostics'));
+    const checks = await runDoctorChecks();
+    const statusIcon: Record<string, string> = {
+      pass: chalk.green('[PASS]'),
+      warn: chalk.yellow('[WARN]'),
+      fail: chalk.red('[FAIL]'),
+    };
+    for (const check of checks) {
+      const icon = statusIcon[check.status] || '[?]';
+      console.log(`  ${icon} ${check.message}`);
+    }
+    const failedChecks = checks.filter((check) => check.status === 'fail');
+    console.log('');
+
+    if (options.integrations !== false && !options.nonInteractive) {
+      const answer = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'configureIntegrations',
+          message: 'Configure integrations now?',
+          default: false,
+        },
+      ]);
+      if (answer.configureIntegrations) {
+        try {
+          await runIntegrationsSetup(process.cwd(), {
+            target: options.integration,
+            fromEnv: Boolean(options.fromEnv),
+          });
+        } catch (e: unknown) {
+          console.error(formatError(getErrorMessage(e)));
+          process.exitCode = 1;
+          return;
+        }
+      }
+    } else if (options.integrations !== false && options.nonInteractive) {
+      console.log(chalk.gray('  Skipping interactive integrations setup in non-interactive mode.'));
+      console.log(
+        chalk.gray(
+          '  Run "response integrations setup --from-env --validate-only" after exporting integration env vars.',
+        ),
+      );
+      console.log('');
+    }
+
+    if (options.chat === false) {
+      return;
+    }
+
+    if (failedChecks.length > 0) {
+      if (options.nonInteractive) {
+        console.log(chalk.red('  Diagnostics reported failures; refusing to start chat.'));
+        process.exitCode = 1;
+        return;
+      }
+      const answer = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'continueToChat',
+          message: 'Diagnostics reported failures. Start chat anyway?',
+          default: false,
+        },
+      ]);
+      if (!answer.continueToChat) {
+        return;
+      }
+    }
+
+    await startChatSession(
+      {
+        model: options.model,
+        session: options.session,
+        apply: options.apply,
+        redact: options.redact,
+        usage: options.usage,
+        verbose: options.verbose,
+      },
+      { version: pkg.version },
+    );
+  });
 
 // Config commands
 const configCmd = program.command('config').description('Manage CLI configuration');

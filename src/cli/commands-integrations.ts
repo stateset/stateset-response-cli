@@ -49,6 +49,13 @@ interface IntegrationSnapshot {
   health: HealthStatus;
 }
 
+export interface IntegrationsSetupOptions {
+  target?: string;
+  fromEnv?: boolean;
+  validateOnly?: boolean;
+  scope?: IntegrationStoreScope;
+}
+
 const SOURCE_ORDER: FieldSource[] = ['env', 'store', 'default'];
 const RATE_LIMIT_MARKERS = ['429', 'rate limit', 'too many requests', 'retry-after'];
 const MAX_LOG_ROWS = 200;
@@ -475,49 +482,79 @@ export function printIntegrationLogs(cwd: string, integrationId?: string, last =
   console.log(formatTable(rows, ['time', 'integration', 'session', 'tool', 'status', 'duration']));
 }
 
-export async function runIntegrationsSetup(cwd: string): Promise<void> {
+export async function runIntegrationsSetup(
+  cwd: string,
+  options: IntegrationsSetupOptions = {},
+): Promise<void> {
   const { scope: existingScope } = loadIntegrationsStore(cwd);
-  const { scope } = await inquirer.prompt([
-    {
-      type: 'list',
-      name: 'scope',
-      message: 'Where should integration settings be saved?',
-      choices: [
-        { name: 'Global (~/.stateset/integrations.json)', value: 'global' },
-        { name: 'Project (.stateset/integrations.json)', value: 'local' },
-      ],
-      default: existingScope ?? 'global',
-    },
-  ]);
 
-  const { store } = loadIntegrationsStoreForScope(cwd, scope as IntegrationStoreScope);
+  let scope: IntegrationStoreScope;
+  if (options.scope) {
+    scope = options.scope;
+  } else if (options.validateOnly) {
+    scope = existingScope ?? 'global';
+  } else {
+    const scopeAnswer = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'scope',
+        message: 'Where should integration settings be saved?',
+        choices: [
+          { name: 'Global (~/.stateset/integrations.json)', value: 'global' },
+          { name: 'Project (.stateset/integrations.json)', value: 'local' },
+        ],
+        default: existingScope ?? 'global',
+      },
+    ]);
+    scope = scopeAnswer.scope as IntegrationStoreScope;
+  }
+
+  const { store } = loadIntegrationsStoreForScope(cwd, scope);
   const definitions = listIntegrations();
-  const defaults = definitions
+  const normalizedTarget = (options.target || '').trim().toLowerCase();
+  const targetDefinitions = normalizedTarget
+    ? definitions.filter(
+        (def) =>
+          def.id.toLowerCase() === normalizedTarget || def.label.toLowerCase() === normalizedTarget,
+      )
+    : definitions;
+
+  if (normalizedTarget && targetDefinitions.length === 0) {
+    throw new Error(`Integration not found: ${options.target}`);
+  }
+
+  const defaults = targetDefinitions
     .filter((def) => store.integrations[def.id]?.enabled)
     .map((def) => def.id);
 
-  const { selected } = await inquirer.prompt([
-    {
-      type: 'checkbox',
-      name: 'selected',
-      message: 'Select integrations to configure',
-      pageSize: Math.min(12, definitions.length),
-      choices: definitions.map((def) => ({
-        name: `${def.label} — ${def.description}`,
-        value: def.id,
-        checked: defaults.includes(def.id),
-      })),
-    },
-  ]);
-
-  const selectedIds = (selected as IntegrationId[]) ?? [];
+  let selectedIds: IntegrationId[] = [];
+  if (normalizedTarget) {
+    selectedIds = targetDefinitions.map((def) => def.id);
+  } else if (options.validateOnly) {
+    selectedIds = targetDefinitions.map((def) => def.id);
+  } else {
+    const answer = await inquirer.prompt([
+      {
+        type: 'checkbox',
+        name: 'selected',
+        message: 'Select integrations to configure',
+        pageSize: Math.min(12, targetDefinitions.length),
+        choices: targetDefinitions.map((def) => ({
+          name: `${def.label} — ${def.description}`,
+          value: def.id,
+          checked: defaults.includes(def.id),
+        })),
+      },
+    ]);
+    selectedIds = (answer.selected as IntegrationId[]) ?? [];
+  }
   const selectedSet = new Set(selectedIds);
 
-  const disableCandidates = definitions
+  const disableCandidates = targetDefinitions
     .filter((def) => store.integrations[def.id] && !selectedSet.has(def.id))
     .map((def) => def.id);
   let disableOthers = false;
-  if (disableCandidates.length > 0) {
+  if (!options.validateOnly && disableCandidates.length > 0) {
     const response = await inquirer.prompt([
       {
         type: 'confirm',
@@ -529,10 +566,17 @@ export async function runIntegrationsSetup(cwd: string): Promise<void> {
     disableOthers = Boolean(response.disable);
   }
 
-  for (const def of definitions) {
+  const validationRows: Array<{
+    integration: string;
+    required: string;
+    missing: string;
+    status: string;
+  }> = [];
+
+  for (const def of targetDefinitions) {
     const existing = store.integrations[def.id]?.config ?? {};
     if (!selectedSet.has(def.id)) {
-      if (disableOthers && store.integrations[def.id]) {
+      if (!options.validateOnly && disableOthers && store.integrations[def.id]) {
         store.integrations[def.id] = {
           ...store.integrations[def.id],
           enabled: false,
@@ -543,9 +587,36 @@ export async function runIntegrationsSetup(cwd: string): Promise<void> {
     }
 
     const nextConfig: Record<string, string> = { ...existing };
+    const missingRequired: string[] = [];
+
     for (const field of def.fields) {
+      const envValue = (readFirstEnvValue(field.envVars) || '').trim();
       const existingValue = existing[field.key];
       const defaultValue = existingValue || field.defaultValue || '';
+      const required = field.required !== false;
+
+      if (options.fromEnv && envValue) {
+        nextConfig[field.key] = envValue;
+        continue;
+      }
+
+      const hasRequiredCoverage = Boolean(envValue || existingValue || defaultValue);
+      if (required && hasRequiredCoverage) {
+        if (existingValue) {
+          nextConfig[field.key] = existingValue;
+        } else if (defaultValue) {
+          nextConfig[field.key] = defaultValue;
+        }
+        continue;
+      }
+
+      if (options.validateOnly) {
+        if (required && !hasRequiredCoverage) {
+          missingRequired.push(field.key);
+        }
+        continue;
+      }
+
       const isSecret = Boolean(field.secret);
       const envHint = field.envVars[0] ? ` (${field.envVars[0]})` : '';
       const promptLabel = `${def.label}: ${field.label}${envHint}`;
@@ -559,6 +630,7 @@ export async function runIntegrationsSetup(cwd: string): Promise<void> {
         validate: (value: string) => {
           const trimmed = String(value ?? '').trim();
           if (trimmed) return true;
+          if (envValue) return true;
           if (existingValue) return true;
           if (field.defaultValue) return true;
           if (field.required === false) return true;
@@ -572,9 +644,22 @@ export async function runIntegrationsSetup(cwd: string): Promise<void> {
         nextConfig[field.key] = raw;
       } else if (!raw && existingValue) {
         nextConfig[field.key] = existingValue;
+      } else if (!raw && envValue && options.fromEnv) {
+        nextConfig[field.key] = envValue;
       } else if (!raw && field.defaultValue && !nextConfig[field.key]) {
         nextConfig[field.key] = field.defaultValue;
       }
+    }
+
+    if (options.validateOnly) {
+      const requiredCount = def.fields.filter((field) => field.required !== false).length;
+      validationRows.push({
+        integration: def.label,
+        required: String(requiredCount),
+        missing: missingRequired.length > 0 ? missingRequired.join(',') : '-',
+        status: missingRequired.length > 0 ? 'missing' : 'ok',
+      });
+      continue;
     }
 
     store.integrations[def.id] = {
@@ -584,9 +669,25 @@ export async function runIntegrationsSetup(cwd: string): Promise<void> {
     };
   }
 
-  const filePath = saveIntegrationsStore(cwd, scope as IntegrationStoreScope, store);
+  if (options.validateOnly) {
+    const hasMissing = validationRows.some((row) => row.status !== 'ok');
+    console.log(formatSuccess('Integration validation'));
+    console.log(formatTable(validationRows, ['integration', 'required', 'missing', 'status']));
+    if (hasMissing) {
+      console.log(
+        formatWarning(
+          'Some integrations are missing required values. Re-run setup with --from-env or provide values interactively.',
+        ),
+      );
+    } else {
+      console.log(chalk.gray('  All selected integrations have required fields configured.'));
+    }
+    return;
+  }
+
+  const filePath = saveIntegrationsStore(cwd, scope, store);
   console.log(formatSuccess(`Saved integrations to ${filePath}`));
-  const enabled = definitions
+  const enabled = targetDefinitions
     .filter((def) => store.integrations[def.id]?.enabled)
     .map((def) => def.label);
   console.log(chalk.gray(`  Enabled: ${enabled.length ? enabled.join(', ') : 'none'}`));
@@ -608,9 +709,29 @@ export function registerIntegrationsCommands(program: Command): void {
   integrations
     .command('setup')
     .description('Interactive integration configuration wizard')
-    .action(async () => {
-      await runIntegrationsSetup(process.cwd());
-    });
+    .argument('[integration]', 'Integration id or label (optional)')
+    .option('--from-env', 'Prefill values from environment variables when available')
+    .option('--validate-only', 'Validate required fields without writing config')
+    .option('--scope <scope>', 'Config scope: global or local')
+    .action(
+      async (
+        integration: string | undefined,
+        opts: { fromEnv?: boolean; validateOnly?: boolean; scope?: string },
+      ) => {
+        const requestedScope = opts.scope?.trim().toLowerCase();
+        if (requestedScope && requestedScope !== 'global' && requestedScope !== 'local') {
+          console.log(formatWarning('Scope must be "global" or "local".'));
+          process.exitCode = 1;
+          return;
+        }
+        await runIntegrationsSetup(process.cwd(), {
+          target: integration,
+          fromEnv: Boolean(opts.fromEnv),
+          validateOnly: Boolean(opts.validateOnly),
+          scope: requestedScope as IntegrationStoreScope | undefined,
+        });
+      },
+    );
 
   integrations
     .command('edit')

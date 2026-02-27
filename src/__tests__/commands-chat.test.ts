@@ -178,6 +178,7 @@ describe('handleChatCommand', () => {
     const ctx = createMockCtx();
 
     expect(await handleChatCommand('/help   ', ctx)).toEqual({ handled: true });
+    expect(await handleChatCommand('/commands', ctx)).toEqual({ handled: true });
     expect(await handleChatCommand('/clear\t', ctx)).toEqual({ handled: true });
     expect(await handleChatCommand('/history\n', ctx)).toEqual({ handled: true });
     expect(await handleChatCommand('/skills  ', ctx)).toEqual({ handled: true });

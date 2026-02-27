@@ -172,7 +172,7 @@ export function printWelcome(orgId: string, version?: string, model?: string): v
   console.log('');
   console.log(chalk.gray('  Quick start:'));
   console.log(chalk.gray('    Just type a message to chat with your AI agent.'));
-  console.log(chalk.gray('    Use /commands for platform operations, or ask in natural language.'));
+  console.log(chalk.gray('    Use /help for command reference, or ask in natural language.'));
   console.log('');
   console.log(chalk.gray('  Essential commands:'));
   console.log(chalk.cyan('    /help       ') + chalk.gray('Full command reference'));

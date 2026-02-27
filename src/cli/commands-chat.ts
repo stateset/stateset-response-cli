@@ -113,7 +113,7 @@ export async function handleChatCommand(input: string, ctx: ChatContext): Promis
   }
 
   // /help — show help
-  if (hasCommand(input, '/help')) {
+  if (hasCommand(input, '/help') || hasCommand(input, '/commands')) {
     printHelp();
     ctx.rl.prompt();
     return { handled: true };

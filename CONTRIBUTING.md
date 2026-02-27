@@ -4,15 +4,15 @@
 
 1. `npm ci`
 2. `npm run build`
-3. `npm run check`
+3. `npm run check:quick`
 
-Node.js `18+` is required.
+Node.js `18+` is required. Use `.nvmrc` / `.node-version` to align your local runtime.
 
 ## Workflow
 
 1. Create a feature branch from `master`.
 2. Make focused changes with tests.
-3. Run `npm run check` locally before opening a PR.
+3. Run `npm run check:quick` while iterating, then `npm run check` before opening a PR.
 4. Open a PR with:
    - problem statement
    - solution summary

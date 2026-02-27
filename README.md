@@ -3,7 +3,7 @@
 AI-powered CLI for managing the [StateSet ResponseCX](https://response.cx) platform. Chat with an AI agent that can manage your agents, rules, skills, knowledge base, channels, messages, and more — all from the terminal.
 
 Includes optional WhatsApp and Slack gateways for connecting your agent to messaging platforms.
-Current version: `1.7.1`.
+Current version: `1.7.3`.
 
 ## Features
 
@@ -35,9 +35,15 @@ npm run build
 
 ## Quick Start
 
+For a shorter onboarding path, see [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md).
+
 ```bash
-# Authenticate with your StateSet organization
+# Guided onboarding (recommended)
+response init
+
+# Or run setup manually
 response auth login
+response doctor
 
 # Start an interactive chat session
 response chat
@@ -54,11 +60,28 @@ response auth login
 ```
 
 Follow the prompts to authenticate via your browser. The CLI will receive a scoped token automatically.
+The CLI attempts to open your browser automatically (disable with `--no-open-browser`).
 
 **Manual Setup**
 
 During `response auth login`, you can provide your GraphQL endpoint and admin secret directly.
 You can choose either the browser/device flow or manual setup during login.
+
+**Non-interactive auth (CI/scripts)**
+
+```bash
+# Device flow without prompts
+response auth login --device --instance-url https://response.cx --non-interactive
+
+# Manual auth without prompts
+response auth login \
+  --manual \
+  --org-id acme \
+  --org-name "Acme" \
+  --graphql-endpoint https://response.cx/v1/graphql \
+  --admin-secret "$STATESET_ADMIN_SECRET" \
+  --non-interactive
+```
 
 Credentials are stored in `~/.stateset/config.json` with restricted file permissions (600).
 
@@ -120,7 +143,7 @@ Use `/help` for the full list. Highlights below.
 - `/archive [name]` Archive a session
 - `/unarchive [name]` Unarchive a session
 - `/tag list|add|remove <tag> [session]` Manage session tags
-- `/search <text> [all] [role=...] [since=YYYY-MM-DD] [until=YYYY-MM-DD] [regex=/.../] [limit=50]` Search transcripts
+- `/search <text> [all] [role=...] [since=YYYY-MM-DD] [until=YYYY-MM-DD] [regex=/.../] [limit=100]` Search transcripts
 - `/rename <new-id>` Rename the current session
 - `/delete [name]` Delete a session
 
@@ -346,6 +369,12 @@ response integrations status
 
 # Interactive setup wizard
 response integrations setup
+
+# Configure a single integration
+response integrations setup shopify
+
+# Use env vars to prefill + validate only
+response integrations setup --from-env --validate-only
 
 # Show config file path
 response integrations edit

@@ -1,6 +1,6 @@
 {
   "name": "stateset-response-cli",
-  "version": "1.7.2",
+  "version": "1.7.3",
   "description": "CLI tool for managing the StateSet Response platform via AI agent",
   "license": "MIT",
   "type": "module",
@@ -19,6 +19,7 @@
     "dist/**/*.js",
     "!dist/__tests__/**",
     "README.md",
+    "docs/GETTING_STARTED.md",
     "LICENSE",
     "SECURITY.md",
     "CONTRIBUTING.md",
@@ -40,7 +41,9 @@
     "format": "prettier --write 'src/**/*.ts'",
     "format:check": "prettier --check 'src/**/*.ts'",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm run lint && npm run format:check && npm run test:coverage && npm run test:coverage:core",
+    "readme:check": "node scripts/check-readme-sync.mjs",
+    "check:quick": "npm run readme:check && npm run typecheck && npm run lint && npm run format:check && npm test",
+    "check": "npm run readme:check && npm run typecheck && npm run lint && npm run format:check && npm run test:coverage && npm run test:coverage:core",
     "lint-staged": "node --require ./scripts/node-compat.cjs ./node_modules/lint-staged/bin/lint-staged.js",
     "prepare": "husky"
   },

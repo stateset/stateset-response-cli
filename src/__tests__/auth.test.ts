@@ -43,6 +43,7 @@ describe('auth command', () => {
     mockConfigExists.mockReturnValue(false);
     mockSaveConfig.mockClear();
     mockPrompt.mockReset();
+    process.exitCode = undefined;
   });
 
   afterEach(() => {
@@ -79,15 +80,42 @@ describe('auth command', () => {
     });
   });
 
-  it('throws on unknown authentication method', async () => {
+  it('prints an error for unknown authentication method', async () => {
     mockPrompt.mockResolvedValueOnce({ loginMethod: 'telepathy' });
     mockPrompt.mockResolvedValueOnce({ anthropicApiKey: '  sk-ant-test  ' });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     const program = new Command();
     registerAuthCommands(program);
 
-    await expect(program.parseAsync(['node', 'response', 'auth', 'login'])).rejects.toThrow(
-      'Unknown authentication method selected.',
-    );
+    await program.parseAsync(['node', 'response', 'auth', 'login']);
+
+    expect(
+      errSpy.mock.calls.some(
+        ([line]) =>
+          typeof line === 'string' && line.includes('Unknown authentication method selected.'),
+      ),
+    ).toBe(true);
+    expect(process.exitCode).toBe(1);
+    errSpy.mockRestore();
+  });
+
+  it('requires an explicit login method in non-interactive mode', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const program = new Command();
+    registerAuthCommands(program);
+
+    await program.parseAsync(['node', 'response', 'auth', 'login', '--non-interactive']);
+
+    expect(
+      errSpy.mock.calls.some(
+        ([line]) =>
+          typeof line === 'string' &&
+          line.includes('In non-interactive mode, pass either --device or --manual.'),
+      ),
+    ).toBe(true);
+    expect(process.exitCode).toBe(1);
+    errSpy.mockRestore();
   });
 });

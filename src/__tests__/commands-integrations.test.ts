@@ -291,4 +291,69 @@ describe('commands-integrations', () => {
       }),
     );
   });
+
+  it('supports validation-only mode without writing config', async () => {
+    mockedLoadIntegrationsStore.mockReturnValue({
+      scope: 'global',
+      path: '/tmp/.stateset/integrations.json',
+      store: { version: 1, integrations: {} },
+    } as any);
+    mockedLoadIntegrationsStoreForScope.mockReturnValue({
+      path: '/tmp/.stateset/integrations.json',
+      store: { version: 1, integrations: {} },
+    } as any);
+
+    await runIntegrationsSetup('/tmp/project', { validateOnly: true });
+
+    expect(mockedSaveIntegrationsStore).not.toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledWith('SUCCESS:Integration validation');
+    expect(mockedFormatTable).toHaveBeenCalledWith(
+      [
+        { integration: 'Shopify', required: '1', missing: 'apiKey', status: 'missing' },
+        { integration: 'ShipHero', required: '1', missing: 'token', status: 'missing' },
+      ],
+      ['integration', 'required', 'missing', 'status'],
+    );
+  });
+
+  it('supports from-env setup and skips prompting for covered required fields', async () => {
+    const store = { version: 1, integrations: {} };
+    mockedLoadIntegrationsStore.mockReturnValue({
+      scope: 'global',
+      path: '/tmp/.stateset/integrations.json',
+      store,
+    } as any);
+    mockedLoadIntegrationsStoreForScope.mockReturnValue({
+      path: '/tmp/project/.stateset/integrations.json',
+      store,
+    } as any);
+    mockedReadFirstEnvValue.mockImplementation((envVars: string[]) =>
+      envVars[0] === 'SHOPIFY_API_KEY' ? 'env-shop-key' : '',
+    );
+    mockedInquirer.prompt
+      .mockResolvedValueOnce({ scope: 'local' })
+      .mockResolvedValueOnce({ baseUrl: '' });
+    mockedSaveIntegrationsStore.mockReturnValue('/tmp/project/.stateset/integrations.json');
+
+    await runIntegrationsSetup('/tmp/project', { fromEnv: true, target: 'shopify' });
+
+    expect(mockedSaveIntegrationsStore).toHaveBeenCalledWith(
+      '/tmp/project',
+      'local',
+      expect.objectContaining({
+        integrations: expect.objectContaining({
+          shopify: expect.objectContaining({
+            enabled: true,
+            config: { apiKey: 'env-shop-key' },
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('throws when targeted integration is not found', async () => {
+    await expect(
+      runIntegrationsSetup('/tmp/project', { target: 'missing', validateOnly: true }),
+    ).rejects.toThrow('Integration not found: missing');
+  });
 });

@@ -94,6 +94,7 @@ export function registerAllCommands(): void {
   // ── Core ──────────────────────────────────────────────────────────
   registerCommand({
     name: '/help',
+    aliases: ['/commands'],
     usage: '/help',
     description: 'Show this help message',
     category: 'core',
@@ -220,7 +221,7 @@ export function registerAllCommands(): void {
   });
   registerCommand({
     name: '/integrations setup',
-    usage: '/integrations setup',
+    usage: '/integrations setup [integration]',
     description: 'Run integration setup wizard',
     category: 'integrations',
     helpOnly: true,
