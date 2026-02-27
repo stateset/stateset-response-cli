@@ -1,41 +1,41 @@
-# StateSet ResponseCLI Release Notes (v1.3.5)
+# StateSet ResponseCLI Release Notes (v1.7.1)
 
 ## Overview
 
-StateSet ResponseCLI `v1.3.5` is a major architecture and quality release. The CLI internals have been modularized, a declarative command registry now powers help and tab completion, and 31 previously-failing tests have been fixed.
+StateSet ResponseCLI `v1.7.1` focuses on production readiness: stronger quality gates, real integration diagnostics (not placeholders), enforced analytics date filtering in summary mode, and refreshed security/process documentation.
 
-## What's new in v1.3.5
+## Highlights
 
-### Architecture overhaul
-- Slash command handlers split from a monolithic 5,000-line file into 11 focused modules under `cli/shortcuts/`.
-- New declarative command registry (`cli/command-registry.ts`) — 70+ commands self-register with metadata, driving auto-generated `/help` output and tab completion.
-- MCP server integration logic consolidated from 10 copy-paste try-catch blocks into a single declarative registry loop.
+### Quality and CI
+- Pre-commit now enforces lint-staged + TypeScript typecheck.
+- Coverage is enforced in two layers:
+  - Full test suite: minimum 75% for lines/branches/functions/statements.
+  - Core deterministic modules: strict 100% for lines/branches/functions/statements.
+- CI runs both coverage gates.
 
-### Key features
-- **Tab completion** for all slash commands (press Tab to autocomplete).
-- **Richer session switching** — `/resume` and session switch now display message count, last activity, and tags.
-- **Updated model aliases** to the Claude 4.6 family (`claude-sonnet-4-6`, `claude-haiku-4-5-20251001`, `claude-opus-4-6-20250514`).
-- **Redesigned welcome screen** — concise essential-commands view replaces the previous 70-line wall of text.
+### Integrations observability
+- `response integrations health` now reports:
+  - readiness status (`ready`, `degraded`, `disabled`, etc.)
+  - required-field coverage
+  - config source resolution (`env`, `store`, `default`)
+  - URL validation status
+- `response integrations limits` now reports telemetry from tool-audit history:
+  - call count
+  - error count
+  - observed rate-limit events
+  - last seen/last rate-limit timestamps
+- `response integrations logs` now returns real recent integration tool events with session and duration context.
 
-### Stability & fixes
-- Fixed 31 failing tests across 12 test files (mock ordering, vi.mock hoisting, syntax errors, assertion mismatches).
-- Fixed syntax error in MCP helpers module (extra parenthesis in spread expression).
-- Gateway orchestrator now gracefully handles missing optional dependencies (Slack/WhatsApp).
-- Corrected `resolveSafeOutputPath` error handling in export, policy, and session commands.
-- Simplified agent loop termination condition (removed redundant check).
+### Analytics filtering
+- `response stats` and `response analytics` now apply date filters in summary mode where timestamped data is available.
+- Help text no longer claims `--from`/`--to` are "not yet enforced."
 
-## Integration support (10 total)
-
-1. Shopify
-2. Gorgias
-3. Recharge
-4. Klaviyo
-5. Loop Returns
-6. ShipStation
-7. ShipHero
-8. ShipFusion
-9. ShipHawk
-10. Zendesk
+### Documentation and governance
+- README version and quality-check docs now match shipped behavior.
+- Added:
+  - `SECURITY.md`
+  - `CONTRIBUTING.md`
+  - `SUPPORT.md`
 
 ## CLI entry points
 
@@ -43,10 +43,3 @@ StateSet ResponseCLI `v1.3.5` is a major architecture and quality release. The C
 - `response-whatsapp`
 - `response-slack`
 - `response-gateway`
-
-## Platform tool domains (MCP-powered)
-
-- Agents, Rules, Skills, Attributes, Examples, Evaluations, Datasets, Functions
-- Responses, Knowledge Base, Channels, Messages, Settings, Organizations
-- Integration tool groups for Shopify, Gorgias, Recharge, Klaviyo, Loop, ShipStation, ShipHero, ShipFusion, ShipHawk, Zendesk
-- Event scheduling and export/session management support

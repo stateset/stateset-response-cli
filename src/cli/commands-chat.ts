@@ -205,8 +205,35 @@ export async function handleChatCommand(input: string, ctx: ChatContext): Promis
       return { handled: true };
     }
     if (action === 'logs') {
-      const integration = tokens[1] && tokens[1] !== '--last' ? tokens[1] : undefined;
-      printIntegrationLogs(process.cwd(), integration);
+      let integration: string | undefined;
+      let last: number | undefined;
+      const args = tokens.slice(1);
+      for (let i = 0; i < args.length; i++) {
+        const token = args[i];
+        if (!token) continue;
+        if (token === '--last') {
+          const next = args[i + 1];
+          if (next && !next.startsWith('--')) {
+            const parsed = Number.parseInt(next, 10);
+            if (Number.isFinite(parsed) && parsed > 0) {
+              last = parsed;
+            }
+            i += 1;
+          }
+          continue;
+        }
+        if (token.startsWith('--last=')) {
+          const parsed = Number.parseInt(token.slice('--last='.length), 10);
+          if (Number.isFinite(parsed) && parsed > 0) {
+            last = parsed;
+          }
+          continue;
+        }
+        if (!token.startsWith('--') && !integration) {
+          integration = token;
+        }
+      }
+      printIntegrationLogs(process.cwd(), integration, last);
       console.log('');
       ctx.rl.prompt();
       return { handled: true };

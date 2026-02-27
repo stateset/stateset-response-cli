@@ -16,6 +16,29 @@ import {
   formatTable,
 } from './utils.js';
 
+const ANALYTICS_PAGE_LIMIT = 500;
+const ANALYTICS_MAX_PAGES = 20;
+
+async function fetchPaginatedAnalytics(
+  runner: ShortcutRunner,
+  toolName: 'list_channels' | 'list_responses',
+): Promise<{ rows: unknown[]; truncated: boolean }> {
+  const rows: unknown[] = [];
+  for (let page = 0; page < ANALYTICS_MAX_PAGES; page++) {
+    const offset = page * ANALYTICS_PAGE_LIMIT;
+    const result = await runner.callTool<unknown[]>(toolName, {
+      limit: ANALYTICS_PAGE_LIMIT,
+      offset,
+    });
+    const batch = Array.isArray(result.payload) ? result.payload : [];
+    rows.push(...batch);
+    if (batch.length < ANALYTICS_PAGE_LIMIT) {
+      return { rows, truncated: false };
+    }
+  }
+  return { rows, truncated: true };
+}
+
 export async function runStatusCommand(
   runner: ShortcutRunner,
   logger: ShortcutLogger,
@@ -113,31 +136,54 @@ export async function runAnalyticsCommand(
   const dateSupported = dateRange.from !== undefined || dateRange.to !== undefined;
 
   if (action === 'summary' || action === 'stats') {
-    const [agentsResult, rulesResult, channelCountResult, responseCountResult, messageCountResult] =
-      await Promise.all([
-        runner.callTool('list_agents', { limit: 1000 }),
-        runner.callTool('list_rules', { limit: 1000 }),
-        runner.callTool('get_channel_count', {}),
-        runner.callTool('get_response_count', {}),
-        runner.callTool('get_message_count', {}),
-      ]);
+    const [agentsResult, rulesResult, messageCountResult] = await Promise.all([
+      runner.callTool('list_agents', { limit: 1000 }),
+      runner.callTool('list_rules', { limit: 1000 }),
+      runner.callTool('get_message_count', {}),
+    ]);
     const agentCount = Array.isArray(agentsResult.payload) ? agentsResult.payload.length : 0;
     const ruleCount = Array.isArray(rulesResult.payload) ? rulesResult.payload.length : 0;
-    const channelCount = extractAggregateCount(
-      channelCountResult.payload,
-      'channel_thread_aggregate',
-    );
-    const responseCount = extractAggregateCount(responseCountResult.payload, 'responses_aggregate');
     const messageCount = extractAggregateCount(messageCountResult.payload, 'message_aggregate');
+    let channelCount = 0;
+    let responseCount = 0;
+    let truncated = false;
+
+    if (!dateSupported) {
+      const [channelCountResult, responseCountResult] = await Promise.all([
+        runner.callTool('get_channel_count', {}),
+        runner.callTool('get_response_count', {}),
+      ]);
+      channelCount = extractAggregateCount(channelCountResult.payload, 'channel_thread_aggregate');
+      responseCount = extractAggregateCount(responseCountResult.payload, 'responses_aggregate');
+    } else {
+      const [channelsData, responsesData] = await Promise.all([
+        fetchPaginatedAnalytics(runner, 'list_channels'),
+        fetchPaginatedAnalytics(runner, 'list_responses'),
+      ]);
+      channelCount = channelsData.rows.filter((item) =>
+        isInDateRange(asStringRecord(item).created_at, dateRange.from, dateRange.to),
+      ).length;
+      responseCount = responsesData.rows.filter((item) =>
+        isInDateRange(asStringRecord(item).created_date, dateRange.from, dateRange.to),
+      ).length;
+      truncated = channelsData.truncated || responsesData.truncated;
+    }
+
     const rows: AnalyticsRows[] = [
       { metric: 'Agents', value: String(agentCount) },
       { metric: 'Rules', value: String(ruleCount) },
       { metric: 'Channels', value: String(channelCount) },
       { metric: 'Responses', value: String(responseCount) },
-      { metric: 'Messages', value: String(messageCount) },
+      {
+        metric: 'Messages',
+        value: dateSupported ? `${messageCount} (all-time)` : String(messageCount),
+      },
     ];
     if (dateSupported) {
-      rows.push({ metric: 'Date range filtering', value: 'summary metrics are aggregate-only' });
+      rows.push({
+        metric: 'Date range filtering',
+        value: truncated ? 'applied (sampled up to 10k records per metric)' : 'applied',
+      });
     }
     if (json) {
       logger.output(JSON.stringify({ analytics: rows }, null, 2));

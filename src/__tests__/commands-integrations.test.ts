@@ -1,9 +1,11 @@
+import fs from 'node:fs';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import inquirer from 'inquirer';
 import {
   getIntegrationEnvStatus,
   printIntegrationHealth,
   printIntegrationLimits,
+  printIntegrationLogs,
   printIntegrationStatus,
   runIntegrationsSetup,
 } from '../cli/commands-integrations.js';
@@ -13,6 +15,8 @@ import {
   loadIntegrationsStoreForScope,
   saveIntegrationsStore,
 } from '../integrations/store.js';
+import { readToolAudit } from '../cli/audit.js';
+import { getSessionsDir } from '../session.js';
 import { readFirstEnvValue } from '../cli/utils.js';
 import { formatTable } from '../utils/display.js';
 
@@ -32,6 +36,14 @@ vi.mock('../integrations/store.js', () => ({
   saveIntegrationsStore: vi.fn(),
 }));
 
+vi.mock('../cli/audit.js', () => ({
+  readToolAudit: vi.fn(),
+}));
+
+vi.mock('../session.js', () => ({
+  getSessionsDir: vi.fn(() => '/tmp/.stateset/sessions'),
+}));
+
 vi.mock('../cli/utils.js', () => ({
   readFirstEnvValue: vi.fn(),
 }));
@@ -47,6 +59,8 @@ const mockedListIntegrations = vi.mocked(listIntegrations);
 const mockedLoadIntegrationsStore = vi.mocked(loadIntegrationsStore);
 const mockedLoadIntegrationsStoreForScope = vi.mocked(loadIntegrationsStoreForScope);
 const mockedSaveIntegrationsStore = vi.mocked(saveIntegrationsStore);
+const mockedReadToolAudit = vi.mocked(readToolAudit);
+const mockedGetSessionsDir = vi.mocked(getSessionsDir);
 const mockedReadFirstEnvValue = vi.mocked(readFirstEnvValue);
 const mockedFormatTable = vi.mocked(formatTable);
 
@@ -55,7 +69,10 @@ const INTEGRATIONS = [
     id: 'shopify',
     label: 'Shopify',
     description: 'Shopify integration',
-    fields: [{ key: 'apiKey', label: 'API key', envVars: ['SHOPIFY_API_KEY'], required: true }],
+    fields: [
+      { key: 'apiKey', label: 'API key', envVars: ['SHOPIFY_API_KEY'], required: true },
+      { key: 'baseUrl', label: 'Base URL', envVars: ['SHOPIFY_BASE_URL'], required: false },
+    ],
   },
   {
     id: 'shiphero',
@@ -66,11 +83,16 @@ const INTEGRATIONS = [
 ];
 
 describe('commands-integrations', () => {
-  let consoleSpy: ReturnType<typeof vi.spyOn>;
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let existsSpy: any;
+  let readdirSpy: any;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    existsSpy = vi.spyOn(fs, 'existsSync').mockReturnValue(false);
+    readdirSpy = vi.spyOn(fs, 'readdirSync').mockReturnValue([]);
+
     mockedListIntegrations.mockReturnValue(INTEGRATIONS as any);
     mockedReadFirstEnvValue.mockReturnValue('');
     mockedLoadIntegrationsStore.mockReturnValue({
@@ -78,10 +100,14 @@ describe('commands-integrations', () => {
       path: '/tmp/.stateset/integrations.json',
       store: { version: 1, integrations: {} },
     } as any);
+    mockedGetSessionsDir.mockReturnValue('/tmp/.stateset/sessions');
+    mockedReadToolAudit.mockReturnValue([]);
   });
 
   afterEach(() => {
-    consoleSpy.mockRestore();
+    logSpy.mockRestore();
+    existsSpy.mockRestore();
+    readdirSpy.mockRestore();
   });
 
   it('reports partial env coverage when only some required vars are set', () => {
@@ -119,13 +145,13 @@ describe('commands-integrations', () => {
 
     expect(mockedFormatTable).toHaveBeenCalledWith(
       [
-        { integration: 'Shopify', env: '-', config: 'set (global)' },
+        { integration: 'Shopify', env: '-', config: 'configured (global)' },
         { integration: 'ShipHero', env: '-', config: 'disabled (global)' },
       ],
       ['integration', 'env', 'config'],
     );
     expect(
-      consoleSpy.mock.calls.some(
+      logSpy.mock.calls.some(
         ([line]) =>
           typeof line === 'string' &&
           line.includes('Config file: /tmp/.stateset/integrations.json'),
@@ -135,10 +161,38 @@ describe('commands-integrations', () => {
 
   it('prints warning when health target integration is missing', () => {
     printIntegrationHealth('/tmp/project', 'does-not-exist');
-    expect(consoleSpy).toHaveBeenCalledWith('WARN:Integration not found: does-not-exist');
+    expect(logSpy).toHaveBeenCalledWith('WARN:Integration not found: does-not-exist');
   });
 
-  it('maps configured integrations to placeholder limits status', () => {
+  it('prints detailed health diagnostics with required coverage', () => {
+    mockedLoadIntegrationsStore.mockReturnValue({
+      scope: 'local',
+      path: '/tmp/project/.stateset/integrations.json',
+      store: {
+        version: 1,
+        integrations: {
+          shopify: { enabled: true, config: { apiKey: 'secret', baseUrl: 'https://api.example' } },
+        },
+      },
+    } as any);
+
+    printIntegrationHealth('/tmp/project', 'shopify', true);
+
+    expect(mockedFormatTable).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          integration: 'Shopify',
+          health: 'ready',
+          required: '1/1',
+          source: 'store',
+          config: 'configured',
+        }),
+      ],
+      expect.arrayContaining(['integration', 'health', 'required', 'source', 'urlStatus']),
+    );
+  });
+
+  it('summarizes limits from audit telemetry', () => {
     mockedLoadIntegrationsStore.mockReturnValue({
       scope: 'local',
       path: '/tmp/project/.stateset/integrations.json',
@@ -150,11 +204,51 @@ describe('commands-integrations', () => {
       },
     } as any);
 
+    existsSpy.mockReturnValue(true);
+    readdirSpy.mockReturnValue([
+      {
+        name: 'session-a',
+        isDirectory: () => true,
+      },
+    ] as any);
+    mockedReadToolAudit.mockReturnValue([
+      {
+        ts: '2026-02-27T10:00:00.000Z',
+        type: 'tool_call',
+        session: 'session-a',
+        name: 'shopify_list_orders',
+      },
+      {
+        ts: '2026-02-27T10:01:00.000Z',
+        type: 'tool_result',
+        session: 'session-a',
+        name: 'shopify_list_orders',
+        isError: true,
+        reason: 'HTTP 429 rate limit',
+      },
+    ] as any);
+
     printIntegrationLimits('/tmp/project', 'shopify');
+
     expect(mockedFormatTable).toHaveBeenCalledWith(
-      [{ integration: 'Shopify', id: 'shopify', status: 'limits not wired', env: '-' }],
-      ['integration', 'status', 'env'],
+      [
+        {
+          integration: 'Shopify',
+          id: 'shopify',
+          calls: '1',
+          errors: '1',
+          rateLimited: '1',
+          lastRateLimit: '2026-02-27T10:01:00.000Z',
+          lastSeen: '2026-02-27T10:01:00.000Z',
+        },
+      ],
+      ['integration', 'calls', 'errors', 'rateLimited', 'lastRateLimit', 'lastSeen'],
     );
+  });
+
+  it('warns when logs are requested but no audit events exist', () => {
+    printIntegrationLogs('/tmp/project', 'shopify', 5);
+    expect(logSpy).toHaveBeenCalledWith('WARN:No integration audit events found.');
   });
 
   it('saves selected integrations and disables deselected existing entries', async () => {
@@ -179,7 +273,8 @@ describe('commands-integrations', () => {
       .mockResolvedValueOnce({ scope: 'local' })
       .mockResolvedValueOnce({ selected: ['shopify'] })
       .mockResolvedValueOnce({ disable: true })
-      .mockResolvedValueOnce({ apiKey: 'new-key' });
+      .mockResolvedValueOnce({ apiKey: 'new-key' })
+      .mockResolvedValueOnce({ baseUrl: '' });
     mockedSaveIntegrationsStore.mockReturnValue('/tmp/project/.stateset/integrations.json');
 
     await runIntegrationsSetup('/tmp/project');

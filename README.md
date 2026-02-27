@@ -3,7 +3,7 @@
 AI-powered CLI for managing the [StateSet ResponseCX](https://response.cx) platform. Chat with an AI agent that can manage your agents, rules, skills, knowledge base, channels, messages, and more — all from the terminal.
 
 Includes optional WhatsApp and Slack gateways for connecting your agent to messaging platforms.
-Current version: `1.7.0`.
+Current version: `1.7.1`.
 
 ## Features
 
@@ -733,7 +733,7 @@ npm run test:watch
 # Run tests with coverage
 npm run test:coverage
 
-# Full quality check (typecheck + lint + format + test:coverage:core)
+# Full quality check (typecheck + lint + format + full coverage + strict core coverage)
 npm run check
 
 # Lint & format
@@ -741,7 +741,7 @@ npm run lint
 npm run format
 ```
 
-**Testing:** 81 test files, 1510+ tests (vitest). Core coverage targets: 75% statements, 75% branches, 75% functions, 75% lines.
+**Testing:** 85 test files, 1500+ tests (vitest). Full-suite coverage gate: 75% lines/branches/functions/statements. Core module coverage gate: 100% lines/branches/functions/statements.
 
 **CI:** GitHub Actions matrix across Node 18, 20, and 22. Release workflow publishes to npm with provenance on GitHub Release creation.
 

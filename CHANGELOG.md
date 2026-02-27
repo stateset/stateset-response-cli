@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.7.1 - 2026-02-27
+
+### Quality Gates
+- Hardened pre-commit checks to run lint-staged and strict TypeScript typechecking.
+- Split coverage into two enforced profiles:
+  - Full-suite coverage gate at 75% (lines/branches/functions/statements).
+  - Deterministic core-module gate at 100%.
+- CI checks now enforce both coverage profiles.
+
+### Integrations Diagnostics
+- Replaced placeholder output in `response integrations health`, `limits`, and `logs`.
+- Health now reports required-field coverage, resolved configuration source (env/store/default), URL validation, and readiness status.
+- Limits now reports observed calls, errors, and rate-limit events from tool-audit telemetry.
+- Logs now surfaces recent integration tool activity with session, status, and duration metadata.
+
+### Analytics
+- Enforced `--from/--to` date filtering in analytics summary paths where timestamped data is available.
+- Removed stale “not yet enforced” text from analytics/stats option help.
+
+### Documentation & Repo Hygiene
+- Updated README version and development quality-gate documentation to match runtime behavior.
+- Added `SECURITY.md`, `CONTRIBUTING.md`, and `SUPPORT.md`.
+- Refreshed release notes alignment with current 1.7.x release line.
+
 ## 1.3.5 - 2026-02-21
 
 ### Architecture

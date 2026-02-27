@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { Command } from 'commander';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
@@ -10,10 +11,267 @@ import {
   loadIntegrationsStore,
   loadIntegrationsStoreForScope,
   saveIntegrationsStore,
+  type IntegrationEntry,
   type IntegrationStoreScope,
 } from '../integrations/store.js';
+import { getSessionsDir } from '../session.js';
 import { formatSuccess, formatWarning, formatTable } from '../utils/display.js';
+import { readToolAudit } from './audit.js';
+import type { ToolAuditEntry } from './types.js';
 import { readFirstEnvValue } from './utils.js';
+
+type FieldSource = 'env' | 'store' | 'default' | 'none';
+type HealthStatus = 'ready' | 'degraded' | 'disabled' | 'not-configured' | 'invalid-config';
+type ConfigStatus = 'configured' | 'disabled' | 'empty' | 'not configured';
+
+interface ResolvedField {
+  key: string;
+  required: boolean;
+  source: FieldSource;
+  hasValue: boolean;
+  value?: string;
+}
+
+interface IntegrationSnapshot {
+  id: IntegrationId;
+  label: string;
+  envStatus: string;
+  configStatus: ConfigStatus;
+  scope: string;
+  configKeys: number;
+  requiredTotal: number;
+  requiredSatisfied: number;
+  missingRequired: string[];
+  source: string;
+  updatedAt: string;
+  url: string;
+  urlStatus: 'ok' | 'invalid' | 'n/a';
+  health: HealthStatus;
+}
+
+const SOURCE_ORDER: FieldSource[] = ['env', 'store', 'default'];
+const RATE_LIMIT_MARKERS = ['429', 'rate limit', 'too many requests', 'retry-after'];
+const MAX_LOG_ROWS = 200;
+
+const TOOL_PREFIX_BY_INTEGRATION: Record<IntegrationId, string> = {
+  shopify: 'shopify_',
+  gorgias: 'gorgias_',
+  recharge: 'recharge_',
+  skio: 'skio_',
+  stayai: 'stayai_',
+  amazon: 'amazon_',
+  dhl: 'dhl_',
+  globale: 'globale_',
+  fedex: 'fedex_',
+  klaviyo: 'klaviyo_',
+  loop: 'loop_',
+  shipstation: 'shipstation_',
+  shiphero: 'shiphero_',
+  shipfusion: 'shipfusion_',
+  shiphawk: 'shiphawk_',
+  zendesk: 'zendesk_',
+};
+
+function normalizeConfigStatus(entry: IntegrationEntry | undefined): ConfigStatus {
+  if (!entry) return 'not configured';
+  if (entry.enabled === false) return 'disabled';
+  if (entry.config && Object.keys(entry.config).length > 0) return 'configured';
+  return 'empty';
+}
+
+function resolveField(
+  def: IntegrationDefinition,
+  entry: IntegrationEntry | undefined,
+): ResolvedField[] {
+  return def.fields.map((field) => {
+    const envValue = (readFirstEnvValue(field.envVars) || '').trim();
+    if (envValue) {
+      return {
+        key: field.key,
+        required: field.required !== false,
+        source: 'env',
+        hasValue: true,
+        value: envValue,
+      };
+    }
+
+    const storeValue = (entry?.config?.[field.key] || '').trim();
+    if (storeValue) {
+      return {
+        key: field.key,
+        required: field.required !== false,
+        source: 'store',
+        hasValue: true,
+        value: storeValue,
+      };
+    }
+
+    const defaultValue = (field.defaultValue || '').trim();
+    if (defaultValue) {
+      return {
+        key: field.key,
+        required: field.required !== false,
+        source: 'default',
+        hasValue: true,
+        value: defaultValue,
+      };
+    }
+
+    return {
+      key: field.key,
+      required: field.required !== false,
+      source: 'none',
+      hasValue: false,
+    };
+  });
+}
+
+function summarizeSources(fields: ResolvedField[]): string {
+  const active = new Set<FieldSource>();
+  for (const field of fields) {
+    if (field.source !== 'none') {
+      active.add(field.source);
+    }
+  }
+  if (active.size === 0) return 'none';
+  const parts = SOURCE_ORDER.filter((source) => active.has(source));
+  return parts.join('+');
+}
+
+function validateUrl(raw: string | undefined): { value: string; status: 'ok' | 'invalid' | 'n/a' } {
+  const value = (raw || '').trim();
+  if (!value) {
+    return { value: '-', status: 'n/a' };
+  }
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return { value, status: 'ok' };
+    }
+  } catch {
+    return { value, status: 'invalid' };
+  }
+  return { value, status: 'invalid' };
+}
+
+function deriveHealthStatus(
+  configStatus: ConfigStatus,
+  requiredTotal: number,
+  requiredSatisfied: number,
+  urlStatus: 'ok' | 'invalid' | 'n/a',
+  source: string,
+): HealthStatus {
+  if (configStatus === 'disabled') return 'disabled';
+  if (urlStatus === 'invalid') return 'invalid-config';
+  if (requiredTotal > 0 && requiredSatisfied === requiredTotal) return 'ready';
+  if (source === 'none' && configStatus === 'not configured') return 'not-configured';
+  return 'degraded';
+}
+
+function resolveIntegrationIdFromTool(toolName: string): IntegrationId | null {
+  const lower = toolName.toLowerCase();
+  const entries = Object.entries(TOOL_PREFIX_BY_INTEGRATION) as Array<[IntegrationId, string]>;
+  for (const [id, prefix] of entries) {
+    if (lower.startsWith(prefix)) {
+      return id;
+    }
+  }
+  return null;
+}
+
+function isRateLimited(entry: ToolAuditEntry): boolean {
+  if (!entry.isError) return false;
+  const haystack = `${entry.reason || ''} ${entry.resultExcerpt || ''}`.toLowerCase();
+  return RATE_LIMIT_MARKERS.some((marker) => haystack.includes(marker));
+}
+
+function toTimestamp(value: string | undefined): number {
+  if (!value) return 0;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatTimestamp(value: string | undefined): string {
+  if (!value) return '-';
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) return value;
+  return new Date(parsed).toISOString();
+}
+
+function loadIntegrationSnapshots(cwd: string, integrationId?: string): IntegrationSnapshot[] {
+  const lowerTarget = (integrationId || '').trim().toLowerCase();
+  const definitions = listIntegrations().filter((def) => {
+    if (!lowerTarget) return true;
+    return def.id.toLowerCase() === lowerTarget || def.label.toLowerCase() === lowerTarget;
+  });
+  const { scope, store } = loadIntegrationsStore(cwd);
+
+  return definitions.map((def) => {
+    const entry = store.integrations[def.id];
+    const fields = resolveField(def, entry);
+    const required = fields.filter((field) => field.required);
+    const requiredSatisfied = required.filter((field) => field.hasValue).length;
+    const missingRequired = required.filter((field) => !field.hasValue).map((field) => field.key);
+    const source = summarizeSources(fields);
+    const configStatus = normalizeConfigStatus(entry);
+    const configKeys = entry?.config ? Object.keys(entry.config).length : 0;
+    const updatedAt = entry?.updatedAt || '-';
+
+    const urlField = fields.find((field) => /baseurl|endpoint|host/i.test(field.key));
+    const { value: url, status: urlStatus } = validateUrl(urlField?.value);
+    const health = deriveHealthStatus(
+      configStatus,
+      required.length,
+      requiredSatisfied,
+      urlStatus,
+      source,
+    );
+
+    return {
+      id: def.id,
+      label: def.label,
+      envStatus: getIntegrationEnvStatus(def).status,
+      configStatus,
+      scope: scope || 'none',
+      configKeys,
+      requiredTotal: required.length,
+      requiredSatisfied,
+      missingRequired,
+      source,
+      updatedAt,
+      url,
+      urlStatus,
+      health,
+    };
+  });
+}
+
+function loadIntegrationAuditEntries(): Array<ToolAuditEntry & { integrationId: IntegrationId }> {
+  const sessionsDir = getSessionsDir();
+  if (!fs.existsSync(sessionsDir)) {
+    return [];
+  }
+
+  const allEntries: Array<ToolAuditEntry & { integrationId: IntegrationId }> = [];
+  let sessions: fs.Dirent[] = [];
+  try {
+    sessions = fs.readdirSync(sessionsDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  for (const session of sessions) {
+    if (!session.isDirectory()) continue;
+    const auditEntries = readToolAudit(session.name);
+    for (const entry of auditEntries) {
+      const integrationId = resolveIntegrationIdFromTool(entry.name);
+      if (!integrationId) continue;
+      allEntries.push({ ...entry, integrationId });
+    }
+  }
+
+  return allEntries;
+}
 
 export function getIntegrationEnvStatus(def: IntegrationDefinition): {
   status: string;
@@ -30,24 +288,17 @@ export function getIntegrationEnvStatus(def: IntegrationDefinition): {
 }
 
 export function printIntegrationStatus(cwd: string): void {
-  const integrations = listIntegrations();
-  const { scope, path: storePath, store } = loadIntegrationsStore(cwd);
-  const rows = integrations.map((def) => {
-    const envStatus = getIntegrationEnvStatus(def).status;
-    const entry = store.integrations[def.id];
-    let configStatus = '-';
-    if (entry) {
-      if (entry.enabled === false) configStatus = 'disabled';
-      else if (entry.config && Object.keys(entry.config).length > 0) configStatus = 'set';
-      else configStatus = 'empty';
-    }
-    if (configStatus !== '-' && scope) {
-      configStatus = `${configStatus} (${scope})`;
-    }
+  const snapshots = loadIntegrationSnapshots(cwd);
+  const { path: storePath } = loadIntegrationsStore(cwd);
+  const rows = snapshots.map((snapshot) => {
+    const config =
+      snapshot.configStatus === 'not configured'
+        ? '-'
+        : `${snapshot.configStatus} (${snapshot.scope})`;
     return {
-      integration: def.label,
-      env: envStatus,
-      config: configStatus,
+      integration: snapshot.label,
+      env: snapshot.envStatus,
+      config,
     };
   });
 
@@ -61,94 +312,156 @@ export function printIntegrationStatus(cwd: string): void {
   console.log(chalk.gray('  Tip: run "response integrations setup" to configure.'));
 }
 
-function buildIntegrationRows(cwd: string, integrationId?: string): Array<Record<string, string>> {
-  const lowerTarget = (integrationId || '').trim().toLowerCase();
-  const integrations = listIntegrations();
-  const { scope, store } = loadIntegrationsStore(cwd);
-
-  const rows: Array<Record<string, string>> = [];
-  const matched = integrations.filter((def) => {
-    if (!lowerTarget) return true;
-    return def.id.toLowerCase() === lowerTarget || def.label.toLowerCase() === lowerTarget;
-  });
-
-  for (const def of matched) {
-    const entry = store.integrations[def.id];
-    const envStatus = getIntegrationEnvStatus(def);
-    const configKeys = entry?.config ? Object.keys(entry.config).length : 0;
-    const status = entry
-      ? entry.enabled === false
-        ? 'disabled'
-        : configKeys > 0
-          ? 'configured'
-          : 'empty'
-      : 'not configured';
-    const row: Record<string, string> = {
-      integration: def.label,
-      id: def.id,
-      env: envStatus.status,
-      config: status,
-      scope: scope || 'local',
-    };
-    row.configKeys = String(configKeys);
-    rows.push(row);
-  }
-
-  return rows;
-}
-
 export function printIntegrationHealth(
   cwd: string,
   integrationId?: string,
   detailed = false,
 ): void {
-  const rows = buildIntegrationRows(cwd, integrationId);
-  if (rows.length === 0) {
+  const snapshots = loadIntegrationSnapshots(cwd, integrationId);
+  if (snapshots.length === 0) {
     console.log(formatWarning(`Integration not found: ${integrationId}`));
     return;
   }
+
+  const rows = snapshots.map((snapshot) => {
+    const baseRow: Record<string, string> = {
+      integration: snapshot.label,
+      health: snapshot.health,
+      required: `${snapshot.requiredSatisfied}/${snapshot.requiredTotal}`,
+      source: snapshot.source,
+    };
+    if (!detailed) {
+      return baseRow;
+    }
+    return {
+      ...baseRow,
+      id: snapshot.id,
+      env: snapshot.envStatus,
+      config: snapshot.configStatus,
+      missing: snapshot.missingRequired.length ? snapshot.missingRequired.join(',') : '-',
+      configKeys: String(snapshot.configKeys),
+      scope: snapshot.scope,
+      url: snapshot.url,
+      urlStatus: snapshot.urlStatus,
+      updatedAt: snapshot.updatedAt,
+    };
+  });
+
   const columns = detailed
-    ? ['integration', 'id', 'env', 'config', 'configKeys', 'scope']
-    : ['integration', 'env', 'config'];
+    ? [
+        'integration',
+        'id',
+        'health',
+        'required',
+        'missing',
+        'source',
+        'env',
+        'config',
+        'configKeys',
+        'scope',
+        'url',
+        'urlStatus',
+        'updatedAt',
+      ]
+    : ['integration', 'health', 'required', 'source'];
   console.log(formatSuccess('Integration health'));
   console.log(formatTable(rows, columns));
   if (detailed) {
     console.log(
-      chalk.gray('  Health checks are configured by the integration endpoint availability.'),
+      chalk.gray(
+        '  Health combines required-field coverage, source resolution, and URL validation.',
+      ),
     );
   }
 }
 
 export function printIntegrationLimits(cwd: string, integrationId?: string): void {
-  const rows = buildIntegrationRows(cwd, integrationId);
-  if (rows.length === 0) {
+  const snapshots = loadIntegrationSnapshots(cwd, integrationId);
+  if (snapshots.length === 0) {
     console.log(formatWarning(`Integration not found: ${integrationId}`));
     return;
   }
-  const limitsRows = rows.map((row) => ({
-    integration: row.integration,
-    id: row.id,
-    status: row.config === 'configured' ? 'limits not wired' : row.config,
-    env: row.env,
-  }));
+  const auditEntries = loadIntegrationAuditEntries();
+  const limitsRows = snapshots.map((snapshot) => {
+    const rows = auditEntries.filter((entry) => entry.integrationId === snapshot.id);
+    const callCount = rows.filter((entry) => entry.type === 'tool_call').length;
+    const errorCount = rows.filter((entry) => entry.type === 'tool_result' && entry.isError).length;
+    const rateLimited = rows.filter(
+      (entry) => entry.type === 'tool_result' && isRateLimited(entry),
+    );
+    const lastRateLimit = rateLimited.sort((a, b) => toTimestamp(b.ts) - toTimestamp(a.ts))[0];
+    const lastSeen = rows.sort((a, b) => toTimestamp(b.ts) - toTimestamp(a.ts))[0];
+    return {
+      integration: snapshot.label,
+      id: snapshot.id,
+      calls: String(callCount),
+      errors: String(errorCount),
+      rateLimited: String(rateLimited.length),
+      lastRateLimit: formatTimestamp(lastRateLimit?.ts),
+      lastSeen: formatTimestamp(lastSeen?.ts),
+    };
+  });
   console.log(formatSuccess('Integration limits'));
-  console.log(formatTable(limitsRows, ['integration', 'status', 'env']));
+  console.log(
+    formatTable(limitsRows, [
+      'integration',
+      'calls',
+      'errors',
+      'rateLimited',
+      'lastRateLimit',
+      'lastSeen',
+    ]),
+  );
+  if (auditEntries.length === 0) {
+    console.log(
+      chalk.gray('  No audit history found. Enable tool audit to populate rate-limit telemetry.'),
+    );
+  }
 }
 
-export function printIntegrationLogs(cwd: string, integrationId?: string): void {
-  const rows = buildIntegrationRows(cwd, integrationId);
-  if (rows.length === 0) {
+export function printIntegrationLogs(cwd: string, integrationId?: string, last = 20): void {
+  const snapshots = loadIntegrationSnapshots(cwd, integrationId);
+  if (snapshots.length === 0) {
     console.log(formatWarning(`Integration not found: ${integrationId}`));
     return;
   }
-  const logRows = rows.map((row) => ({
-    integration: row.integration,
-    id: row.id,
-    status: row.config === 'configured' ? 'local logs unavailable' : 'not configured',
+
+  const auditEntries = loadIntegrationAuditEntries();
+  const snapshotById = new Map(snapshots.map((snapshot) => [snapshot.id, snapshot]));
+  const filtered = auditEntries.filter((entry) => snapshotById.has(entry.integrationId));
+  if (filtered.length === 0) {
+    console.log(formatWarning('No integration audit events found.'));
+    console.log(chalk.gray('  Enable tool audit with "/audit on" or STATESET_TOOL_AUDIT=true.'));
+    return;
+  }
+
+  const limit = Number.isFinite(last) && last > 0 ? Math.min(Math.floor(last), MAX_LOG_ROWS) : 20;
+  const recent = filtered.sort((a, b) => toTimestamp(b.ts) - toTimestamp(a.ts)).slice(0, limit);
+
+  if (integrationId) {
+    const rows = recent.map((entry) => ({
+      time: formatTimestamp(entry.ts),
+      session: entry.session || '-',
+      tool: entry.name,
+      type: entry.type,
+      status: entry.isError ? 'error' : 'ok',
+      duration: entry.durationMs ? `${entry.durationMs}ms` : '-',
+    }));
+    console.log(formatSuccess(`Integration logs (${rows.length} events)`));
+    console.log(formatTable(rows, ['time', 'session', 'tool', 'type', 'status', 'duration']));
+    return;
+  }
+
+  const rows = recent.map((entry) => ({
+    time: formatTimestamp(entry.ts),
+    integration: snapshotById.get(entry.integrationId)?.label || entry.integrationId,
+    session: entry.session || '-',
+    tool: entry.name,
+    status: entry.isError ? 'error' : 'ok',
+    duration: entry.durationMs ? `${entry.durationMs}ms` : '-',
   }));
-  console.log(formatSuccess('Integration logs'));
-  console.log(formatTable(logRows, ['integration', 'status']));
-  console.log(chalk.gray('  No transport logs are persisted by default.'));
+  console.log(formatSuccess(`Integration logs (${rows.length} events)`));
+  console.log(formatTable(rows, ['time', 'integration', 'session', 'tool', 'status', 'duration']));
 }
 
 export async function runIntegrationsSetup(cwd: string): Promise<void> {
@@ -306,7 +619,7 @@ export function registerIntegrationsCommands(program: Command): void {
     .command('health')
     .description('Show integration health and connectivity')
     .argument('[integration]', 'Integration id (optional)')
-    .option('--detailed', 'Include extra placeholders')
+    .option('--detailed', 'Include resolved field diagnostics')
     .action((integration: string | undefined, opts: { detailed?: boolean }) => {
       printIntegrationHealth(process.cwd(), integration, Boolean(opts.detailed));
     });
@@ -325,12 +638,7 @@ export function registerIntegrationsCommands(program: Command): void {
     .argument('[integration]', 'Integration id (optional)')
     .option('--last <n>', 'Number of recent log rows')
     .action((integration: string | undefined, opts: { last?: string }) => {
-      printIntegrationLogs(process.cwd(), integration);
-      if (opts.last) {
-        const count = Number.parseInt(opts.last, 10);
-        if (Number.isFinite(count) && count > 0) {
-          console.log(chalk.gray(`  Requested rows: ${count}`));
-        }
-      }
+      const count = opts.last ? Number.parseInt(opts.last, 10) : undefined;
+      printIntegrationLogs(process.cwd(), integration, count);
     });
 }

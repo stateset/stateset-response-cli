@@ -20,6 +20,9 @@
     "!dist/__tests__/**",
     "README.md",
     "LICENSE",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "SUPPORT.md",
     "CHANGELOG.md",
     "RELEASE_NOTES.md"
   ],

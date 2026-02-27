@@ -737,6 +737,56 @@ describe('runAnalyticsCommand', () => {
 
     expect(runner.callTool).toHaveBeenCalledWith('list_responses', expect.any(Object));
   });
+
+  it('applies date range filtering in summary mode for channels and responses', async () => {
+    const runner = {
+      callTool: vi.fn(async (tool: string) => {
+        if (tool === 'list_agents') {
+          return { payload: [{ id: 'agent-1' }] };
+        }
+        if (tool === 'list_rules') {
+          return { payload: [{ id: 'rule-1' }] };
+        }
+        if (tool === 'get_message_count') {
+          return { payload: { message_aggregate: { aggregate: { count: 10 } } } };
+        }
+        if (tool === 'list_channels') {
+          return {
+            payload: [
+              { created_at: '2026-02-15T10:00:00.000Z' },
+              { created_at: '2026-01-10T10:00:00.000Z' },
+            ],
+          };
+        }
+        if (tool === 'list_responses') {
+          return {
+            payload: [
+              { created_date: '2026-02-20T09:00:00.000Z' },
+              { created_date: '2026-01-05T09:00:00.000Z' },
+            ],
+          };
+        }
+        return { payload: [] };
+      }),
+    } as unknown as ShortcutRunner;
+    const logger = createMockLogger();
+
+    await runAnalyticsCommand(
+      ['summary', '--from', '2026-02-01', '--to', '2026-02-28'],
+      runner,
+      logger,
+      true,
+    );
+
+    const payload = JSON.parse(String(logger.output.mock.calls[0]?.[0] || '{}')) as {
+      analytics: Array<{ metric: string; value: string }>;
+    };
+    const metrics = new Map(payload.analytics.map((entry) => [entry.metric, entry.value]));
+    expect(metrics.get('Channels')).toBe('1');
+    expect(metrics.get('Responses')).toBe('1');
+    expect(metrics.get('Messages')).toBe('10 (all-time)');
+    expect(metrics.get('Date range filtering')).toBe('applied');
+  });
 });
 
 // ---- Rules ------------------------------------------------------------------

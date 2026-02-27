@@ -489,8 +489,8 @@ export function registerShortcutTopLevelCommands(program: Command): void {
     .argument('[args...]', 'Stats command: summary|agents|conversations|responses')
     .option('--period <duration>', 'Filter window (supports 7d, 30d, 90d, etc.)')
     .option('--since <date>', 'Alias for --from (supports 7d, 2026-01-01, etc.)')
-    .option('--from <date>', 'Filter start date (not yet enforced)')
-    .option('--to <date>', 'Filter end date (not yet enforced)')
+    .option('--from <date>', 'Filter start date (supports 7d, 2026-01-01, etc.)')
+    .option('--to <date>', 'Filter end date')
     .option('--json', 'Output as JSON')
     .action(
       async (
@@ -591,8 +591,8 @@ export function registerShortcutTopLevelCommands(program: Command): void {
     .argument('[args...]', 'analytics command: summary|agents|conversations|responses [options]')
     .option('--period <duration>', 'Filter window (supports 7d, 30d, 90d, etc.)')
     .option('--since <date>', 'Alias for --from (supports 7d, 2026-01-01, etc.)')
-    .option('--from <date>', 'Filter start date (not yet enforced)')
-    .option('--to <date>', 'Filter end date (not yet enforced)')
+    .option('--from <date>', 'Filter start date (supports 7d, 2026-01-01, etc.)')
+    .option('--to <date>', 'Filter end date')
     .option('--json', 'Output as JSON')
     .action(
       async (
