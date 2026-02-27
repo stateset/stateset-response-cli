@@ -11,7 +11,7 @@ if (typeof globalRef.crypto?.getRandomValues !== 'function') {
 /**
  * Core unit-coverage profile:
  * - Enforces a strict 100% gate for deterministic core modules
- * - Keeps interactive/runtime-heavy entrypoints in broader coverage profiles
+ * - Complements (does not replace) full-suite coverage in `vitest.config.ts`
  */
 export default defineConfig({
   test: {
