@@ -10,9 +10,8 @@ if (typeof globalRef.crypto?.getRandomValues !== 'function') {
 
 /**
  * Core unit-coverage profile:
- * - Tracks business/core logic with enforced thresholds
- * - Excludes highly interactive or external-service runtime entrypoints
- *   that are better validated via integration/e2e flows
+ * - Enforces a strict 100% gate for deterministic core modules
+ * - Keeps interactive/runtime-heavy entrypoints in broader coverage profiles
  */
 export default defineConfig({
   test: {
@@ -26,7 +25,22 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'lcov', 'html'],
       reportsDirectory: './coverage',
-      include: ['src/**/*.ts'],
+      include: [
+        'src/memory.ts',
+        'src/lib/circuit-breaker.ts',
+        'src/cli/arg-utils.ts',
+        'src/cli/shortcuts/types.ts',
+        'src/integrations/format.ts',
+        'src/integrations/limit.ts',
+        'src/integrations/loop.ts',
+        'src/integrations/redact.ts',
+        'src/integrations/registry.ts',
+        'src/integrations/shipfusion.ts',
+        'src/integrations/shiphawk.ts',
+        'src/integrations/shipstation.ts',
+        'src/integrations/shopify.ts',
+        'src/integrations/zendesk.ts',
+      ],
       exclude: [
         'node_modules',
         'dist',
@@ -47,10 +61,10 @@ export default defineConfig({
         'src/integrations/shopify-refund-ops.ts',
       ],
       thresholds: {
-        lines: 75,
-        branches: 75,
-        functions: 75,
-        statements: 75,
+        lines: 100,
+        branches: 100,
+        functions: 100,
+        statements: 100,
       },
     },
   },

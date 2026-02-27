@@ -29,7 +29,7 @@
     "start": "node dist/cli.js",
     "test": "node --require ./scripts/node-compat.cjs ./node_modules/vitest/vitest.mjs run",
     "test:watch": "node --require ./scripts/node-compat.cjs ./node_modules/vitest/vitest.mjs",
-    "test:coverage": "node --require ./scripts/node-compat.cjs ./node_modules/vitest/vitest.mjs run --coverage",
+    "test:coverage": "node --require ./scripts/node-compat.cjs ./node_modules/vitest/vitest.mjs run --coverage --config vitest.coverage-core.config.ts",
     "test:coverage:core": "node --require ./scripts/node-compat.cjs ./node_modules/vitest/vitest.mjs run --coverage --config vitest.coverage-core.config.ts",
     "test:ci": "node --require ./scripts/node-compat.cjs ./node_modules/vitest/vitest.mjs run --coverage --reporter=junit --outputFile=test-results.xml",
     "lint": "node --require ./scripts/node-compat.cjs ./node_modules/eslint/bin/eslint.js src/",
