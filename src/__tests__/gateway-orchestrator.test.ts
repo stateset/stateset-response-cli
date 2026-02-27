@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../config.js', () => ({
-  getRuntimeContext: vi.fn(() => ({
+  validateRuntimeConfig: vi.fn(() => ({
     orgId: 'test-org',
     orgConfig: {},
     anthropicApiKey: 'key',
@@ -16,7 +16,7 @@ vi.mock('../config.js', () => ({
 }));
 
 import { Orchestrator } from '../gateway/orchestrator.js';
-import { getRuntimeContext, resolveModelOrThrow } from '../config.js';
+import { validateRuntimeConfig, resolveModelOrThrow } from '../config.js';
 
 interface TestGateway {
   name: string;
@@ -50,7 +50,7 @@ describe('Orchestrator', () => {
     await expect(orchestrator.start()).rejects.toThrow(
       'No channels enabled. Remove --no-slack and/or --no-whatsapp to run at least one channel.',
     );
-    expect(vi.mocked(getRuntimeContext)).not.toHaveBeenCalled();
+    expect(vi.mocked(validateRuntimeConfig)).not.toHaveBeenCalled();
   });
 
   it('starts enabled channels in parallel and reports skipped reasons', async () => {

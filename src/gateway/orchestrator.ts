@@ -8,7 +8,7 @@
 import {
   resolveModelOrThrow,
   getConfiguredModel,
-  getRuntimeContext,
+  validateRuntimeConfig,
   type ModelId,
 } from '../config.js';
 import { logger } from '../lib/logger.js';
@@ -92,8 +92,8 @@ export class Orchestrator {
       ? resolveModelOrThrow(this.options.model, 'valid')
       : getConfiguredModel();
 
-    // Validate shared prerequisites
-    getRuntimeContext();
+    // Validate shared prerequisites (org, credentials, endpoint, API key)
+    validateRuntimeConfig();
 
     const results: Array<{ name: string; status: 'ok' | 'skipped' | 'error'; reason?: string }> =
       [];

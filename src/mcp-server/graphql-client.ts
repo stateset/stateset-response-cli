@@ -1,4 +1,5 @@
 import { GraphQLClient } from 'graphql-request';
+import { getCircuitBreaker, CircuitOpenError } from '../lib/circuit-breaker.js';
 
 export type GraphQLAuth =
   | { type: 'admin_secret'; adminSecret: string }
@@ -94,51 +95,60 @@ export async function executeQuery<T = Record<string, unknown>>(
 ): Promise<T> {
   const rawTimeout = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const timeoutMs = Number.isFinite(rawTimeout) && rawTimeout > 0 ? rawTimeout : DEFAULT_TIMEOUT_MS;
-  let lastError: unknown;
 
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      // Create abort controller for timeout
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  // Extract endpoint from client for circuit breaker keying
+  const endpoint = (client as unknown as { url?: string }).url ?? 'graphql';
+  const breaker = getCircuitBreaker(`graphql:${endpoint}`);
 
+  return breaker.execute(async () => {
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        const result = await client.request<T>({
-          document: query,
-          variables,
-          signal: controller.signal,
-        });
-        return result;
-      } finally {
-        clearTimeout(timeoutId);
-      }
-    } catch (error: unknown) {
-      lastError = error;
+        // Create abort controller for timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-      // Check if it was a timeout
-      const isTimeout =
-        error instanceof Error &&
-        (error.name === 'AbortError' || error.message.includes('timed out'));
+        try {
+          const result = await client.request<T>({
+            document: query,
+            variables,
+            signal: controller.signal,
+          });
+          return result;
+        } finally {
+          clearTimeout(timeoutId);
+        }
+      } catch (error: unknown) {
+        lastError = error;
 
-      if (attempt < MAX_RETRIES && (isTimeout || isTransientError(error))) {
-        const retryAfter = getRetryAfterMs(error);
-        const backoff = retryAfter ?? BASE_DELAY_MS * Math.pow(2, attempt);
-        await delay(backoff);
-        continue;
+        // Check if it was a timeout
+        const isTimeout =
+          error instanceof Error &&
+          (error.name === 'AbortError' || error.message.includes('timed out'));
+
+        if (attempt < MAX_RETRIES && (isTimeout || isTransientError(error))) {
+          const retryAfter = getRetryAfterMs(error);
+          const backoff = retryAfter ?? BASE_DELAY_MS * Math.pow(2, attempt);
+          await delay(backoff);
+          continue;
+        }
+        break;
       }
-      break;
     }
-  }
 
-  const gqlError = lastError as {
-    response?: { errors?: Array<{ message: string }>; status?: number };
-    message?: string;
-  };
-  const gqlMessages = gqlError?.response?.errors?.map((e) => e.message).filter(Boolean);
-  const status = gqlError?.response?.status;
-  const detail = gqlMessages?.length
-    ? gqlMessages.join('; ')
-    : gqlError?.message || 'Unknown GraphQL error';
-  const prefix = status ? `GraphQL ${status}` : 'GraphQL error';
-  throw new Error(`${prefix}: ${detail}`);
+    const gqlError = lastError as {
+      response?: { errors?: Array<{ message: string }>; status?: number };
+      message?: string;
+    };
+    const gqlMessages = gqlError?.response?.errors?.map((e) => e.message).filter(Boolean);
+    const status = gqlError?.response?.status;
+    const detail = gqlMessages?.length
+      ? gqlMessages.join('; ')
+      : gqlError?.message || 'Unknown GraphQL error';
+    const prefix = status ? `GraphQL ${status}` : 'GraphQL error';
+    throw new Error(`${prefix}: ${detail}`);
+  });
 }
+
+export { CircuitOpenError };

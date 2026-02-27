@@ -1,5 +1,5 @@
 vi.mock('../config.js', () => ({
-  getCurrentOrg: vi.fn(),
+  validateRuntimeConfig: vi.fn(),
 }));
 
 vi.mock('./graphql-client.js', () => ({
@@ -11,9 +11,10 @@ vi.mock('../lib/logger.js', () => ({
 }));
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { getCurrentOrg } from '../config.js';
+import { validateRuntimeConfig } from '../config.js';
+import { ConfigurationError } from '../lib/errors.js';
 
-const mockedGetCurrentOrg = vi.mocked(getCurrentOrg);
+const mockedValidate = vi.mocked(validateRuntimeConfig);
 
 // Dynamically import after mocks are set up
 async function importCreateServer() {
@@ -26,41 +27,33 @@ describe('createServer validation', () => {
     vi.resetModules();
   });
 
-  it('throws when credentials are missing', async () => {
-    mockedGetCurrentOrg.mockReturnValue({
-      orgId: 'test-org',
-      config: {
-        name: 'Test',
-        graphqlEndpoint: 'https://api.example.com/v1/graphql',
-      },
+  it('throws when validateRuntimeConfig rejects missing credentials', async () => {
+    mockedValidate.mockImplementation(() => {
+      throw new ConfigurationError(
+        'Organization "test-org" is missing credentials. Run "response auth login" to set up your credentials.',
+      );
     });
 
     const createServer = await importCreateServer();
     expect(() => createServer()).toThrow('missing credentials');
   });
 
-  it('throws when graphqlEndpoint is empty', async () => {
-    mockedGetCurrentOrg.mockReturnValue({
-      orgId: 'test-org',
-      config: {
-        name: 'Test',
-        graphqlEndpoint: '',
-        cliToken: 'some-token',
-      },
+  it('throws when validateRuntimeConfig rejects empty endpoint', async () => {
+    mockedValidate.mockImplementation(() => {
+      throw new ConfigurationError(
+        'Organization "test-org" has no GraphQL endpoint configured. Run "response auth login" to set up your organization.',
+      );
     });
 
     const createServer = await importCreateServer();
     expect(() => createServer()).toThrow('no GraphQL endpoint configured');
   });
 
-  it('throws when graphqlEndpoint is not a valid URL', async () => {
-    mockedGetCurrentOrg.mockReturnValue({
-      orgId: 'test-org',
-      config: {
-        name: 'Test',
-        graphqlEndpoint: 'not-a-url',
-        cliToken: 'some-token',
-      },
+  it('throws when validateRuntimeConfig rejects invalid endpoint URL', async () => {
+    mockedValidate.mockImplementation(() => {
+      throw new ConfigurationError(
+        'Organization "test-org" has an invalid GraphQL endpoint: "not-a-url". Expected a valid HTTP(S) URL.',
+      );
     });
 
     const createServer = await importCreateServer();

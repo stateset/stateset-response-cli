@@ -116,6 +116,27 @@ function parseBooleanEnv(value: string | null | undefined): boolean {
   return v === '1' || v === 'true' || v === 'yes' || v === 'y' || v === 'on';
 }
 
+/**
+ * Load a stored integration config and validate that all required fields are present.
+ * Returns null if no config is stored. Throws if stored but missing required fields.
+ */
+function loadStoredConfig(
+  id: IntegrationId,
+  requiredFields: string[],
+  label: string,
+): Record<string, string | undefined> | null {
+  const stored = getIntegrationConfigFromStore(id);
+  if (!stored) return null;
+  for (const field of requiredFields) {
+    if (!stored[field]) {
+      throw new Error(
+        `Missing ${label} ${field} in integrations config. Run "response integrations setup".`,
+      );
+    }
+  }
+  return stored;
+}
+
 function normalizeApiBaseUrl(value: string, envName: string): string {
   const normalized = String(value || '')
     .trim()
@@ -194,26 +215,12 @@ export function getShopifyConfigFromEnv(): ShopifyConfig | null {
     return { shop, accessToken, apiVersion };
   }
 
-  const stored = getIntegrationConfigFromStore('shopify');
+  const stored = loadStoredConfig('shopify', ['shop', 'accessToken'], 'Shopify');
   if (!stored) return null;
-  const storedShop = stored.shop;
-  const storedToken = stored.accessToken;
-  const storedVersion = stored.apiVersion || apiVersion;
-  if (!storedShop) {
-    throw new Error(
-      'Missing Shopify shop domain in integrations config. Run "response integrations setup".',
-    );
-  }
-  if (!storedToken) {
-    throw new Error(
-      'Missing Shopify access token in integrations config. Run "response integrations setup".',
-    );
-  }
-
   return {
-    shop: normalizeShopDomain(storedShop),
-    accessToken: validateAccessToken(storedToken),
-    apiVersion: storedVersion,
+    shop: normalizeShopDomain(stored.shop!),
+    accessToken: validateAccessToken(stored.accessToken!),
+    apiVersion: stored.apiVersion || apiVersion,
   };
 }
 
@@ -242,31 +249,12 @@ export function getGorgiasConfigFromEnv(): GorgiasConfig | null {
     };
   }
 
-  const stored = getIntegrationConfigFromStore('gorgias');
+  const stored = loadStoredConfig('gorgias', ['domain', 'apiKey', 'email'], 'Gorgias');
   if (!stored) return null;
-  const storedDomain = stored.domain;
-  const storedKey = stored.apiKey;
-  const storedEmail = stored.email;
-  if (!storedDomain) {
-    throw new Error(
-      'Missing Gorgias domain in integrations config. Run "response integrations setup".',
-    );
-  }
-  if (!storedKey) {
-    throw new Error(
-      'Missing Gorgias API key in integrations config. Run "response integrations setup".',
-    );
-  }
-  if (!storedEmail) {
-    throw new Error(
-      'Missing Gorgias email in integrations config. Run "response integrations setup".',
-    );
-  }
-
   return {
-    domain: normalizeGorgiasDomain(storedDomain),
-    apiKey: storedKey,
-    email: storedEmail,
+    domain: normalizeGorgiasDomain(stored.domain!),
+    apiKey: stored.apiKey!,
+    email: stored.email!,
   };
 }
 
@@ -298,16 +286,12 @@ export function getRechargeConfigFromEnv(): RechargeConfig | null {
     return { accessToken, apiVersion };
   }
 
-  const stored = getIntegrationConfigFromStore('recharge');
+  const stored = loadStoredConfig('recharge', ['accessToken'], 'Recharge');
   if (!stored) return null;
-  const storedToken = stored.accessToken;
-  if (!storedToken) {
-    throw new Error(
-      'Missing Recharge access token in integrations config. Run "response integrations setup".',
-    );
-  }
-  const storedVersion = stored.apiVersion || apiVersion;
-  return { accessToken: validateRechargeToken(storedToken), apiVersion: storedVersion };
+  return {
+    accessToken: validateRechargeToken(stored.accessToken!),
+    apiVersion: stored.apiVersion || apiVersion,
+  };
 }
 
 export function getSkioConfigFromEnv(): SkioConfig | null {
@@ -326,16 +310,10 @@ export function getSkioConfigFromEnv(): SkioConfig | null {
     };
   }
 
-  const stored = getIntegrationConfigFromStore('skio');
+  const stored = loadStoredConfig('skio', ['apiKey'], 'Skio');
   if (!stored) return null;
-  const storedKey = stored.apiKey;
-  if (!storedKey) {
-    throw new Error(
-      'Missing Skio API key in integrations config. Run "response integrations setup".',
-    );
-  }
   return {
-    apiKey: validateGenericKey(storedKey, 'Skio API key', 'SKIO_API_KEY'),
+    apiKey: validateGenericKey(stored.apiKey!, 'Skio API key', 'SKIO_API_KEY'),
     baseUrl: normalizeApiBaseUrl(stored.baseUrl || defaultBaseUrl, 'SKIO_BASE_URL'),
     apiVersion: stored.apiVersion || apiVersion,
   };
@@ -365,16 +343,10 @@ export function getStayAiConfigFromEnv(): StayAiConfig | null {
     };
   }
 
-  const stored = getIntegrationConfigFromStore('stayai');
+  const stored = loadStoredConfig('stayai', ['apiKey'], 'Stay.ai');
   if (!stored) return null;
-  const storedKey = stored.apiKey;
-  if (!storedKey) {
-    throw new Error(
-      'Missing Stay.ai API key in integrations config. Run "response integrations setup".',
-    );
-  }
   return {
-    apiKey: validateGenericKey(storedKey, 'Stay.ai API key', 'STAYAI_API_KEY'),
+    apiKey: validateGenericKey(stored.apiKey!, 'Stay.ai API key', 'STAYAI_API_KEY'),
     baseUrl: normalizeApiBaseUrl(stored.baseUrl || defaultBaseUrl, 'STAYAI_BASE_URL'),
     apiVersion: stored.apiVersion || apiVersion,
   };
@@ -465,59 +437,38 @@ export function getAmazonConfigFromEnv(): AmazonConfig | null {
     };
   }
 
-  const stored = getIntegrationConfigFromStore('amazon');
+  const stored = loadStoredConfig(
+    'amazon',
+    ['lwaClientId', 'lwaClientSecret', 'lwaRefreshToken', 'awsAccessKeyId', 'awsSecretAccessKey'],
+    'Amazon',
+  );
   if (!stored) return null;
-  if (!stored.lwaClientId) {
-    throw new Error(
-      'Missing Amazon LWA client ID in integrations config. Run "response integrations setup".',
-    );
-  }
-  if (!stored.lwaClientSecret) {
-    throw new Error(
-      'Missing Amazon LWA client secret in integrations config. Run "response integrations setup".',
-    );
-  }
-  if (!stored.lwaRefreshToken) {
-    throw new Error(
-      'Missing Amazon LWA refresh token in integrations config. Run "response integrations setup".',
-    );
-  }
-  if (!stored.awsAccessKeyId) {
-    throw new Error(
-      'Missing Amazon AWS access key ID in integrations config. Run "response integrations setup".',
-    );
-  }
-  if (!stored.awsSecretAccessKey) {
-    throw new Error(
-      'Missing Amazon AWS secret access key in integrations config. Run "response integrations setup".',
-    );
-  }
 
   const storedRegion = stored.awsRegion || awsRegion;
   const storedEndpoint = stored.endpoint || defaultAmazonEndpointForRegion(storedRegion);
   return {
     lwaClientId: validateGenericKey(
-      stored.lwaClientId,
+      stored.lwaClientId!,
       'Amazon LWA client ID',
       'AMAZON_LWA_CLIENT_ID',
     ),
     lwaClientSecret: validateGenericKey(
-      stored.lwaClientSecret,
+      stored.lwaClientSecret!,
       'Amazon LWA client secret',
       'AMAZON_LWA_CLIENT_SECRET',
     ),
     lwaRefreshToken: validateGenericKey(
-      stored.lwaRefreshToken,
+      stored.lwaRefreshToken!,
       'Amazon LWA refresh token',
       'AMAZON_LWA_REFRESH_TOKEN',
     ),
     awsAccessKeyId: validateGenericKey(
-      stored.awsAccessKeyId,
+      stored.awsAccessKeyId!,
       'Amazon AWS access key ID',
       'AMAZON_AWS_ACCESS_KEY_ID',
     ),
     awsSecretAccessKey: validateGenericKey(
-      stored.awsSecretAccessKey,
+      stored.awsSecretAccessKey!,
       'Amazon AWS secret access key',
       'AMAZON_AWS_SECRET_ACCESS_KEY',
     ),
@@ -551,15 +502,10 @@ export function getDhlConfigFromEnv(): DhlConfig | null {
     };
   }
 
-  const stored = getIntegrationConfigFromStore('dhl');
+  const stored = loadStoredConfig('dhl', ['apiKey'], 'DHL');
   if (!stored) return null;
-  if (!stored.apiKey) {
-    throw new Error(
-      'Missing DHL API key in integrations config. Run "response integrations setup".',
-    );
-  }
   return {
-    apiKey: validateGenericKey(stored.apiKey, 'DHL API key', 'DHL_API_KEY'),
+    apiKey: validateGenericKey(stored.apiKey!, 'DHL API key', 'DHL_API_KEY'),
     accessToken: stored.accessToken || undefined,
     accountNumber: stored.accountNumber || undefined,
     baseUrl: normalizeApiBaseUrl(stored.baseUrl || defaultBaseUrl, 'DHL_BASE_URL'),
@@ -605,25 +551,15 @@ export function getGlobalEConfigFromEnv(): GlobalEConfig | null {
     };
   }
 
-  const stored = getIntegrationConfigFromStore('globale');
+  const stored = loadStoredConfig('globale', ['merchantId', 'apiKey'], 'Global-e');
   if (!stored) return null;
-  if (!stored.merchantId) {
-    throw new Error(
-      'Missing Global-e merchant ID in integrations config. Run "response integrations setup".',
-    );
-  }
-  if (!stored.apiKey) {
-    throw new Error(
-      'Missing Global-e API key in integrations config. Run "response integrations setup".',
-    );
-  }
   return {
     merchantId: validateGenericKey(
-      stored.merchantId,
+      stored.merchantId!,
       'Global-e merchant ID',
       'GLOBALE_MERCHANT_ID',
     ),
-    apiKey: validateGenericKey(stored.apiKey, 'Global-e API key', 'GLOBALE_API_KEY'),
+    apiKey: validateGenericKey(stored.apiKey!, 'Global-e API key', 'GLOBALE_API_KEY'),
     channel: stored.channel || undefined,
     baseUrl: normalizeApiBaseUrl(stored.baseUrl || defaultBaseUrl, 'GLOBALE_BASE_URL'),
   };
@@ -655,22 +591,12 @@ export function getFedExConfigFromEnv(): FedExConfig | null {
     };
   }
 
-  const stored = getIntegrationConfigFromStore('fedex');
+  const stored = loadStoredConfig('fedex', ['clientId', 'clientSecret'], 'FedEx');
   if (!stored) return null;
-  if (!stored.clientId) {
-    throw new Error(
-      'Missing FedEx client ID in integrations config. Run "response integrations setup".',
-    );
-  }
-  if (!stored.clientSecret) {
-    throw new Error(
-      'Missing FedEx client secret in integrations config. Run "response integrations setup".',
-    );
-  }
   return {
-    clientId: validateGenericKey(stored.clientId, 'FedEx client ID', 'FEDEX_CLIENT_ID'),
+    clientId: validateGenericKey(stored.clientId!, 'FedEx client ID', 'FEDEX_CLIENT_ID'),
     clientSecret: validateGenericKey(
-      stored.clientSecret,
+      stored.clientSecret!,
       'FedEx client secret',
       'FEDEX_CLIENT_SECRET',
     ),
@@ -730,34 +656,20 @@ export function getKlaviyoConfigFromEnv(): KlaviyoConfig | null {
     return { apiKey, revision };
   }
 
-  const stored = getIntegrationConfigFromStore('klaviyo');
+  const stored = loadStoredConfig('klaviyo', ['apiKey'], 'Klaviyo');
   if (!stored) return null;
-  const storedKey = stored.apiKey;
-  if (!storedKey) {
-    throw new Error(
-      'Missing Klaviyo API key in integrations config. Run "response integrations setup".',
-    );
-  }
-  const storedRevision = stored.revision || revision;
-  return { apiKey: validateKlaviyoKey(storedKey), revision: storedRevision };
+  return { apiKey: validateKlaviyoKey(stored.apiKey!), revision: stored.revision || revision };
 }
 
 export function getLoopConfigFromEnv(): LoopConfig | null {
   const rawKey = readFirstEnvVar(['LOOP_API_KEY', 'STATESET_LOOP_API_KEY']);
   if (rawKey) {
-    const apiKey = validateGenericKey(rawKey, 'Loop API key', 'LOOP_API_KEY');
-    return { apiKey };
+    return { apiKey: validateGenericKey(rawKey, 'Loop API key', 'LOOP_API_KEY') };
   }
 
-  const stored = getIntegrationConfigFromStore('loop');
+  const stored = loadStoredConfig('loop', ['apiKey'], 'Loop');
   if (!stored) return null;
-  const storedKey = stored.apiKey;
-  if (!storedKey) {
-    throw new Error(
-      'Missing Loop API key in integrations config. Run "response integrations setup".',
-    );
-  }
-  return { apiKey: validateGenericKey(storedKey, 'Loop API key', 'LOOP_API_KEY') };
+  return { apiKey: validateGenericKey(stored.apiKey!, 'Loop API key', 'LOOP_API_KEY') };
 }
 
 export function getShipStationConfigFromEnv(): ShipStationConfig | null {
@@ -772,47 +684,34 @@ export function getShipStationConfigFromEnv(): ShipStationConfig | null {
     };
   }
 
-  const stored = getIntegrationConfigFromStore('shipstation');
+  const stored = loadStoredConfig('shipstation', ['apiKey', 'apiSecret'], 'ShipStation');
   if (!stored) return null;
-  const storedKey = stored.apiKey;
-  const storedSecret = stored.apiSecret;
-  if (!storedKey) {
-    throw new Error(
-      'Missing ShipStation API key in integrations config. Run "response integrations setup".',
-    );
-  }
-  if (!storedSecret) {
-    throw new Error(
-      'Missing ShipStation API secret in integrations config. Run "response integrations setup".',
-    );
-  }
   return {
-    apiKey: validateGenericKey(storedKey, 'ShipStation API key', 'SHIPSTATION_API_KEY'),
-    apiSecret: validateGenericKey(storedSecret, 'ShipStation API secret', 'SHIPSTATION_API_SECRET'),
+    apiKey: validateGenericKey(stored.apiKey!, 'ShipStation API key', 'SHIPSTATION_API_KEY'),
+    apiSecret: validateGenericKey(
+      stored.apiSecret!,
+      'ShipStation API secret',
+      'SHIPSTATION_API_SECRET',
+    ),
   };
 }
 
 export function getShipHeroConfigFromEnv(): ShipHeroConfig | null {
   const rawToken = readFirstEnvVar(['SHIPHERO_ACCESS_TOKEN', 'STATESET_SHIPHERO_ACCESS_TOKEN']);
   if (rawToken) {
-    const accessToken = validateGenericKey(
-      rawToken,
-      'ShipHero access token',
-      'SHIPHERO_ACCESS_TOKEN',
-    );
-    return { accessToken };
+    return {
+      accessToken: validateGenericKey(rawToken, 'ShipHero access token', 'SHIPHERO_ACCESS_TOKEN'),
+    };
   }
 
-  const stored = getIntegrationConfigFromStore('shiphero');
+  const stored = loadStoredConfig('shiphero', ['accessToken'], 'ShipHero');
   if (!stored) return null;
-  const storedToken = stored.accessToken;
-  if (!storedToken) {
-    throw new Error(
-      'Missing ShipHero access token in integrations config. Run "response integrations setup".',
-    );
-  }
   return {
-    accessToken: validateGenericKey(storedToken, 'ShipHero access token', 'SHIPHERO_ACCESS_TOKEN'),
+    accessToken: validateGenericKey(
+      stored.accessToken!,
+      'ShipHero access token',
+      'SHIPHERO_ACCESS_TOKEN',
+    ),
   };
 }
 
@@ -828,42 +727,23 @@ export function getShipFusionConfigFromEnv(): ShipFusionConfig | null {
     };
   }
 
-  const stored = getIntegrationConfigFromStore('shipfusion');
+  const stored = loadStoredConfig('shipfusion', ['apiKey', 'clientId'], 'ShipFusion');
   if (!stored) return null;
-  const storedKey = stored.apiKey;
-  const storedClientId = stored.clientId;
-  if (!storedKey) {
-    throw new Error(
-      'Missing ShipFusion API key in integrations config. Run "response integrations setup".',
-    );
-  }
-  if (!storedClientId) {
-    throw new Error(
-      'Missing ShipFusion client ID in integrations config. Run "response integrations setup".',
-    );
-  }
   return {
-    apiKey: validateGenericKey(storedKey, 'ShipFusion API key', 'SHIPFUSION_API_KEY'),
-    clientId: validateGenericKey(storedClientId, 'ShipFusion client ID', 'SHIPFUSION_CLIENT_ID'),
+    apiKey: validateGenericKey(stored.apiKey!, 'ShipFusion API key', 'SHIPFUSION_API_KEY'),
+    clientId: validateGenericKey(stored.clientId!, 'ShipFusion client ID', 'SHIPFUSION_CLIENT_ID'),
   };
 }
 
 export function getShipHawkConfigFromEnv(): ShipHawkConfig | null {
   const rawKey = readFirstEnvVar(['SHIPHAWK_API_KEY', 'STATESET_SHIPHAWK_API_KEY']);
   if (rawKey) {
-    const apiKey = validateGenericKey(rawKey, 'ShipHawk API key', 'SHIPHAWK_API_KEY');
-    return { apiKey };
+    return { apiKey: validateGenericKey(rawKey, 'ShipHawk API key', 'SHIPHAWK_API_KEY') };
   }
 
-  const stored = getIntegrationConfigFromStore('shiphawk');
+  const stored = loadStoredConfig('shiphawk', ['apiKey'], 'ShipHawk');
   if (!stored) return null;
-  const storedKey = stored.apiKey;
-  if (!storedKey) {
-    throw new Error(
-      'Missing ShipHawk API key in integrations config. Run "response integrations setup".',
-    );
-  }
-  return { apiKey: validateGenericKey(storedKey, 'ShipHawk API key', 'SHIPHAWK_API_KEY') };
+  return { apiKey: validateGenericKey(stored.apiKey!, 'ShipHawk API key', 'SHIPHAWK_API_KEY') };
 }
 
 export function getZendeskConfigFromEnv(): ZendeskConfig | null {
@@ -883,30 +763,12 @@ export function getZendeskConfigFromEnv(): ZendeskConfig | null {
     };
   }
 
-  const stored = getIntegrationConfigFromStore('zendesk');
+  const stored = loadStoredConfig('zendesk', ['subdomain', 'email', 'apiToken'], 'Zendesk');
   if (!stored) return null;
-  const storedSubdomain = stored.subdomain;
-  const storedEmail = stored.email;
-  const storedToken = stored.apiToken;
-  if (!storedSubdomain) {
-    throw new Error(
-      'Missing Zendesk subdomain in integrations config. Run "response integrations setup".',
-    );
-  }
-  if (!storedEmail) {
-    throw new Error(
-      'Missing Zendesk email in integrations config. Run "response integrations setup".',
-    );
-  }
-  if (!storedToken) {
-    throw new Error(
-      'Missing Zendesk API token in integrations config. Run "response integrations setup".',
-    );
-  }
   return {
-    subdomain: normalizeZendeskSubdomain(storedSubdomain),
-    email: storedEmail,
-    apiToken: validateGenericKey(storedToken, 'Zendesk API token', 'ZENDESK_API_TOKEN'),
+    subdomain: normalizeZendeskSubdomain(stored.subdomain!),
+    email: stored.email!,
+    apiToken: validateGenericKey(stored.apiToken!, 'Zendesk API token', 'ZENDESK_API_TOKEN'),
   };
 }
 

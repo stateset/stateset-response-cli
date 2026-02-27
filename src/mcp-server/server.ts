@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import { logger } from '../lib/logger.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { createGraphQLClient, type GraphQLAuth } from './graphql-client.js';
-import { getCurrentOrg } from '../config.js';
+import { validateRuntimeConfig } from '../config.js';
 import {
   getAmazonConfigFromEnv,
   getDhlConfigFromEnv,
@@ -174,36 +174,14 @@ function resolveMcpServerVersion(): string {
 }
 
 export function createServer(): McpServer {
-  const { orgId, config: orgConfig } = getCurrentOrg();
+  const { orgId, orgConfig } = validateRuntimeConfig();
   const cliToken = orgConfig.cliToken?.trim();
   const adminSecret = orgConfig.adminSecret?.trim();
-  if (!cliToken && !adminSecret) {
-    throw new Error(
-      `Organization "${orgId}" has missing credentials. Run "response auth login" to authenticate.`,
-    );
-  }
-
-  const endpoint = orgConfig.graphqlEndpoint?.trim();
-  if (!endpoint) {
-    throw new Error(
-      `Organization "${orgId}" has no GraphQL endpoint configured. Run "response auth login" to set up your organization.`,
-    );
-  }
-  try {
-    const parsed = new URL(endpoint);
-    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-      throw new Error('unsupported protocol');
-    }
-  } catch {
-    throw new Error(
-      `Organization "${orgId}" has an invalid GraphQL endpoint: "${endpoint}". Expected a valid HTTP(S) URL.`,
-    );
-  }
 
   const auth: GraphQLAuth = cliToken
     ? { type: 'cli_token', token: cliToken }
     : { type: 'admin_secret', adminSecret: adminSecret! };
-  const graphqlClient = createGraphQLClient(endpoint, auth, orgId);
+  const graphqlClient = createGraphQLClient(orgConfig.graphqlEndpoint, auth, orgId);
 
   const server = new McpServer(
     { name: 'stateset-response', version: resolveMcpServerVersion() },

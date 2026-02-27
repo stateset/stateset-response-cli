@@ -312,6 +312,30 @@ describe('throwOnHttpError', () => {
       'ShipHero API error (404): not found',
     );
   });
+
+  it('throws AuthenticationError for status 401', () => {
+    expect(() => throwOnHttpError(401, 'unauthorized', 'Slack')).toThrow(
+      'Slack API error (401): unauthorized',
+    );
+  });
+
+  it('throws AuthorizationError for status 403', () => {
+    expect(() => throwOnHttpError(403, 'forbidden', 'Gorgias')).toThrow(
+      'Gorgias API error (403): forbidden',
+    );
+  });
+
+  it('throws RateLimitError for status 429', () => {
+    expect(() => throwOnHttpError(429, 'too many requests', 'Klaviyo')).toThrow(
+      'Klaviyo API error (429): too many requests',
+    );
+  });
+
+  it('throws StateSetError for unrecognized 4xx status', () => {
+    expect(() => throwOnHttpError(418, "I'm a teapot", 'Test')).toThrow(
+      "Test API error (418): I'm a teapot",
+    );
+  });
 });
 
 describe('applyQueryParams', () => {

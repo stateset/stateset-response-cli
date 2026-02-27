@@ -301,6 +301,35 @@ export function getRuntimeContext(): RuntimeContext {
 }
 
 /**
+ * Eagerly validate the full runtime config (org, credentials, endpoint, API key).
+ * Call this at startup to surface all config problems immediately rather than
+ * discovering them lazily during the first API call.
+ */
+export function validateRuntimeConfig(): RuntimeContext {
+  const ctx = getRuntimeContext();
+
+  // Validate GraphQL endpoint URL
+  const endpoint = ctx.orgConfig.graphqlEndpoint?.trim();
+  if (!endpoint) {
+    throw new ConfigurationError(
+      `Organization "${ctx.orgId}" has no GraphQL endpoint configured. Run "response auth login" to set up your organization.`,
+    );
+  }
+  try {
+    const parsed = new URL(endpoint);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      throw new Error('unsupported protocol');
+    }
+  } catch {
+    throw new ConfigurationError(
+      `Organization "${ctx.orgId}" has an invalid GraphQL endpoint: "${endpoint}". Expected a valid HTTP(S) URL.`,
+    );
+  }
+
+  return ctx;
+}
+
+/**
  * Basic format check for Anthropic API keys.
  * Rejects obviously invalid values without being overly strict.
  */

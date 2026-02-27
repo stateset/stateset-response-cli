@@ -19,6 +19,7 @@ import {
   getModelAliasText,
   MODEL_ALIASES,
   getRuntimeContext,
+  validateRuntimeConfig,
   getAnthropicApiKey,
 } from '../config.js';
 
@@ -86,6 +87,86 @@ describe('getRuntimeContext', () => {
     expect(context.orgConfig.name).toBe('Primary Org');
     expect(context.orgConfig.graphqlEndpoint).toBe('https://api.example.com');
     expect(context.anthropicApiKey).toBe('sk-anthropic');
+  });
+});
+
+describe('validateRuntimeConfig', () => {
+  it('returns context when config is valid', () => {
+    mockedFs.existsSync.mockReturnValue(true);
+    mockedFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        currentOrg: 'org-1',
+        organizations: {
+          'org-1': {
+            name: 'Org',
+            graphqlEndpoint: 'https://api.example.com/v1/graphql',
+            adminSecret: 'admin',
+          },
+        },
+        anthropicApiKey: 'sk-ant-valid-key-1234567890',
+      }),
+    );
+
+    const ctx = validateRuntimeConfig();
+    expect(ctx.orgId).toBe('org-1');
+    expect(ctx.orgConfig.graphqlEndpoint).toBe('https://api.example.com/v1/graphql');
+  });
+
+  it('throws when graphqlEndpoint is whitespace-only', () => {
+    mockedFs.existsSync.mockReturnValue(true);
+    mockedFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        currentOrg: 'org-1',
+        organizations: {
+          'org-1': {
+            name: 'Org',
+            graphqlEndpoint: '   ',
+            adminSecret: 'admin',
+          },
+        },
+        anthropicApiKey: 'sk-ant-valid-key-1234567890',
+      }),
+    );
+
+    expect(() => validateRuntimeConfig()).toThrow('no GraphQL endpoint configured');
+  });
+
+  it('throws when graphqlEndpoint is not a valid URL', () => {
+    mockedFs.existsSync.mockReturnValue(true);
+    mockedFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        currentOrg: 'org-1',
+        organizations: {
+          'org-1': {
+            name: 'Org',
+            graphqlEndpoint: 'not-a-url',
+            adminSecret: 'admin',
+          },
+        },
+        anthropicApiKey: 'sk-ant-valid-key-1234567890',
+      }),
+    );
+
+    expect(() => validateRuntimeConfig()).toThrow('invalid GraphQL endpoint');
+  });
+
+  it('throws when graphqlEndpoint uses unsupported protocol', () => {
+    mockedFs.existsSync.mockReturnValue(true);
+    mockedFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        currentOrg: 'org-1',
+        organizations: {
+          'org-1': {
+            name: 'Org',
+            graphqlEndpoint: 'ftp://api.example.com/v1/graphql',
+            adminSecret: 'admin',
+          },
+        },
+        anthropicApiKey: 'sk-ant-valid-key-1234567890',
+      }),
+    );
+
+    expect(() => validateRuntimeConfig()).toThrow('invalid GraphQL endpoint');
   });
 });
 

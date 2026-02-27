@@ -14,7 +14,7 @@ import {
   resolveModelOrThrow,
   formatUnknownModelError,
   getConfiguredModel,
-  getRuntimeContext,
+  validateRuntimeConfig,
   type ModelId,
 } from '../config.js';
 import { logger } from '../lib/logger.js';
@@ -114,7 +114,7 @@ export class SlackGateway {
   // -------------------------------------------------------------------------
 
   async start(): Promise<void> {
-    const runtime = getRuntimeContext();
+    const runtime = validateRuntimeConfig();
     this.orgId = runtime.orgId;
     this.anthropicApiKey = runtime.anthropicApiKey;
 
@@ -194,6 +194,23 @@ export class SlackGateway {
     }
 
     this.log.info('Gateway stopped.');
+  }
+
+  /** Returns a snapshot of gateway health for observability. */
+  getHealth(): {
+    running: boolean;
+    connected: boolean;
+    activeSessions: number;
+    model: string;
+    orgId: string;
+  } {
+    return {
+      running: this.running,
+      connected: this.app !== null,
+      activeSessions: this.sessions.size,
+      model: this.model,
+      orgId: this.orgId,
+    };
   }
 
   // -------------------------------------------------------------------------

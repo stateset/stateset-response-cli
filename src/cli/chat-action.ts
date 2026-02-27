@@ -3,7 +3,7 @@ import ora from 'ora';
 import * as readline from 'node:readline';
 import {
   configExists,
-  getRuntimeContext,
+  validateRuntimeConfig,
   getConfiguredModel,
   resolveModelOrThrow,
   type ModelId,
@@ -171,7 +171,7 @@ export async function startChatSession(
   let allowApply = false;
   let redactEmails = false;
   try {
-    const runtime = getRuntimeContext();
+    const runtime = validateRuntimeConfig();
     orgId = runtime.orgId;
     apiKey = runtime.anthropicApiKey;
   } catch (e: unknown) {

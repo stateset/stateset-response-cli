@@ -10,6 +10,7 @@ import {
   TimeoutError,
 } from '../lib/errors.js';
 import { MAX_TEXT_FILE_SIZE_BYTES } from '../utils/file-read.js';
+import { getCircuitBreaker } from '../lib/circuit-breaker.js';
 
 export interface RequestOptions {
   method?: string;
@@ -138,56 +139,66 @@ export async function requestJsonWithRetry(
   options: RequestOptions = {},
   { maxRetries = DEFAULT_MAX_RETRIES }: { maxRetries?: number } = {},
 ): Promise<HttpJsonResponse> {
-  let attempt = 0;
-  let backoffMs = INITIAL_BACKOFF_MS;
+  let hostname: string;
+  try {
+    hostname = new URL(url).hostname;
+  } catch {
+    hostname = 'unknown';
+  }
+  const breaker = getCircuitBreaker(`http:${hostname}`);
 
-  while (attempt < maxRetries) {
-    attempt++;
+  return breaker.execute(async () => {
+    let attempt = 0;
+    let backoffMs = INITIAL_BACKOFF_MS;
 
-    let res: HttpJsonResponse;
-    try {
-      res = await requestJson(url, options);
-    } catch (error) {
-      if (attempt < maxRetries) {
-        const waitMs = backoffMs + Math.random() * BACKOFF_JITTER_MS;
+    while (attempt < maxRetries) {
+      attempt++;
+
+      let res: HttpJsonResponse;
+      try {
+        res = await requestJson(url, options);
+      } catch (error) {
+        if (attempt < maxRetries) {
+          const waitMs = backoffMs + Math.random() * BACKOFF_JITTER_MS;
+          await new Promise((resolve) => setTimeout(resolve, waitMs));
+          backoffMs = Math.min(backoffMs * BACKOFF_MULTIPLIER, MAX_BACKOFF_MS);
+          continue;
+        }
+        throw error;
+      }
+
+      const retryAfterRaw = res.headers.get('retry-after');
+      let retryAfterMs = NaN;
+      if (retryAfterRaw) {
+        const numeric = Number(retryAfterRaw);
+        if (Number.isFinite(numeric)) {
+          retryAfterMs = numeric * 1000;
+        } else {
+          const dateMs = Date.parse(retryAfterRaw);
+          if (Number.isFinite(dateMs)) {
+            retryAfterMs = Math.max(0, dateMs - Date.now());
+          }
+        }
+        if (Number.isFinite(retryAfterMs)) {
+          retryAfterMs = Math.min(retryAfterMs, MAX_RETRY_AFTER_MS);
+        }
+      }
+
+      const shouldRetry = res.status === 429 || (res.status >= 500 && res.status < 600);
+      if (shouldRetry && attempt < maxRetries) {
+        const waitMs = Number.isFinite(retryAfterMs)
+          ? retryAfterMs
+          : backoffMs + Math.random() * BACKOFF_JITTER_MS;
         await new Promise((resolve) => setTimeout(resolve, waitMs));
         backoffMs = Math.min(backoffMs * BACKOFF_MULTIPLIER, MAX_BACKOFF_MS);
         continue;
       }
-      throw error;
+
+      return res;
     }
 
-    const retryAfterRaw = res.headers.get('retry-after');
-    let retryAfterMs = NaN;
-    if (retryAfterRaw) {
-      const numeric = Number(retryAfterRaw);
-      if (Number.isFinite(numeric)) {
-        retryAfterMs = numeric * 1000;
-      } else {
-        const dateMs = Date.parse(retryAfterRaw);
-        if (Number.isFinite(dateMs)) {
-          retryAfterMs = Math.max(0, dateMs - Date.now());
-        }
-      }
-      if (Number.isFinite(retryAfterMs)) {
-        retryAfterMs = Math.min(retryAfterMs, MAX_RETRY_AFTER_MS);
-      }
-    }
-
-    const shouldRetry = res.status === 429 || (res.status >= 500 && res.status < 600);
-    if (shouldRetry && attempt < maxRetries) {
-      const waitMs = Number.isFinite(retryAfterMs)
-        ? retryAfterMs
-        : backoffMs + Math.random() * BACKOFF_JITTER_MS;
-      await new Promise((resolve) => setTimeout(resolve, waitMs));
-      backoffMs = Math.min(backoffMs * BACKOFF_MULTIPLIER, MAX_BACKOFF_MS);
-      continue;
-    }
-
-    return res;
-  }
-
-  throw new NetworkError('requestJsonWithRetry: exceeded maxRetries');
+    throw new NetworkError('requestJsonWithRetry: exceeded maxRetries');
+  });
 }
 
 /**

@@ -13,7 +13,7 @@ import {
   resolveModelOrThrow,
   formatUnknownModelError,
   getConfiguredModel,
-  getRuntimeContext,
+  validateRuntimeConfig,
   type ModelId,
 } from '../config.js';
 import { logger } from '../lib/logger.js';
@@ -101,7 +101,7 @@ export class WhatsAppGateway {
   // -------------------------------------------------------------------------
 
   async start(): Promise<void> {
-    const runtime = getRuntimeContext();
+    const runtime = validateRuntimeConfig();
     this.orgId = runtime.orgId;
     this.anthropicApiKey = runtime.anthropicApiKey;
 
@@ -134,6 +134,27 @@ export class WhatsAppGateway {
     }
 
     this.log.info('Gateway stopped.');
+  }
+
+  /** Returns a snapshot of gateway health for observability. */
+  getHealth(): {
+    running: boolean;
+    connected: boolean;
+    connecting: boolean;
+    reconnectAttempts: number;
+    activeSessions: number;
+    model: string;
+    orgId: string;
+  } {
+    return {
+      running: this.running,
+      connected: this.sock?.ws?.readyState === 1,
+      connecting: this.connecting,
+      reconnectAttempts: this.reconnectAttempts,
+      activeSessions: this.sessions.size,
+      model: this.model,
+      orgId: this.orgId,
+    };
   }
 
   // -------------------------------------------------------------------------
