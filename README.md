@@ -5,6 +5,17 @@ AI-powered CLI for managing the [StateSet ResponseCX](https://response.cx) platf
 Includes optional WhatsApp and Slack gateways for connecting your agent to messaging platforms.
 Current version: `1.7.0`.
 
+## Features
+
+- **100+ MCP tools** across 16 integrations — Shopify, Gorgias, Recharge, Klaviyo, Loop, ShipStation, ShipHero, ShipFusion, ShipHawk, Zendesk, Skio, Stay.ai, Amazon SP-API, DHL, FedEx, Global-e
+- **WhatsApp and Slack gateways** with a multi-channel orchestrator for running both simultaneously
+- **Interactive chat** with session management, memory, file attachments, and prompt templates
+- **Extension system** with trust policies, tool hooks, and hash verification
+- **Event-driven automation** — immediate, one-shot, and periodic (cron) agent runs
+- **Shortcut commands** for direct CLI operations (deploy, backup, monitor, snapshot, diff, etc.)
+- **Circuit breaker** and retry with exponential backoff + jitter for HTTP/GraphQL resilience
+- **Security hardened** — AES-256-GCM credential encryption, SSRF prevention, ANSI escape sanitization, path traversal protection
+
 ## Install
 
 Node.js 18+ is required.
@@ -653,18 +664,53 @@ The shortcut commands track webhooks, alerts, and deployments in a local store a
 
 ## Architecture
 
-The CLI uses the [Model Context Protocol (MCP)](https://modelcontextprotocol.io) to expose platform tools to Claude. On startup, the CLI spawns an MCP server as a child process over stdio. Claude calls tools through this server, which executes GraphQL queries against the StateSet backend.
+The CLI uses the [Model Context Protocol (MCP)](https://modelcontextprotocol.io) to expose platform tools to Claude. On startup, the CLI spawns an MCP server as a child process over stdio. Claude calls tools through this server, which executes GraphQL queries against the StateSet backend and third-party integration APIs.
 
 ```
-User  <-->  CLI (Anthropic SDK)  <-->  MCP Server  <-->  StateSet GraphQL API
-                                                    <-->  Qdrant Vector DB
+                     ┌─────────────────────────────────┐
+                     │         MCP Server (stdio)       │
+User ──► CLI ──►     │  ┌───────────┐  ┌────────────┐  │
+         (Anthropic  │  │  GraphQL   │  │Integration │  │
+          SDK)       │  │  Client    │  │  Clients   │  │
+                     │  └─────┬─────┘  └─────┬──────┘  │
+                     └────────┼──────────────┼─────────┘
+                              │              │
+                     ┌────────▼───┐  ┌───────▼────────┐
+                     │  StateSet   │  │ Shopify, Klaviyo│
+                     │  GraphQL    │  │ Gorgias, etc.  │
+                     │  API        │  └────────────────┘
+                     └────────┬───┘
+                              │
+                     ┌────────▼───┐
+                     │  Qdrant    │
+                     │  Vector DB │
+                     └────────────┘
 ```
 
-The WhatsApp and Slack gateways create per-user agent sessions with the same architecture. Sessions have a 30-minute TTL and are automatically cleaned up.
+**Resilience:**
+- **Circuit breaker** on all outbound HTTP calls — trips after repeated failures, auto-recovers
+- **Retry with exponential backoff + jitter** and `Retry-After` header support (429/502/503/504)
+- **Eager config validation** at all entry points (CLI, gateways, events)
+
+**Gateways:**
+- WhatsApp and Slack gateways create per-user agent sessions with the same MCP architecture
+- Sessions have a 30-minute TTL and a 400-session cap, with automatic cleanup
+
+## Security
+
+- **Credential encryption** — AES-256-GCM with scrypt v2 key derivation (`enc:v2:` prefix), backward-compatible with v1
+- **File permissions** — config files written with `0o600`, config directory with `0o700`
+- **SSRF prevention** — full URL parsing and validation on integration base URLs; Zendesk subdomain regex enforcement
+- **ANSI escape sanitization** — all untrusted tool output is stripped of escape sequences before display
+- **Path traversal protection** — attachment paths are resolved and validated to reject directory traversal
+- **API key format validation** — rejects keys that don't match the expected `sk-ant-*` prefix
+- **PII redaction** — opt-in redaction of customer emails in integration outputs (`--redact`)
+- **Extension sandboxing** — registration timeout (10s), handler timeouts, and optional SHA-256 hash verification
+- **System prompt size cap** — prompts are capped at 200K characters to prevent abuse
 
 ## Changelog
 
-- [CHANGELOG.md](CHANGELOG.md)
+See [GitHub Releases](https://github.com/stateset/stateset-response-cli/releases) for version history.
 
 ## Development
 
@@ -687,10 +733,19 @@ npm run test:watch
 # Run tests with coverage
 npm run test:coverage
 
+# Full quality check (typecheck + lint + format + test:coverage:core)
+npm run check
+
 # Lint & format
 npm run lint
 npm run format
 ```
+
+**Testing:** 81 test files, 1510+ tests (vitest). Core coverage targets: 75% statements, 75% branches, 75% functions, 75% lines.
+
+**CI:** GitHub Actions matrix across Node 18, 20, and 22. Release workflow publishes to npm with provenance on GitHub Release creation.
+
+**Pre-commit hooks:** lint-staged runs ESLint + Prettier on staged files, followed by `tsc --noEmit` for type checking.
 
 ## License
 
