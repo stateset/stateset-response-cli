@@ -11,6 +11,32 @@ const BASE_DELAY_MS = 1000;
 const DEFAULT_TIMEOUT_MS = 30000; // 30 seconds
 const MAX_RETRY_AFTER_MS = 60_000;
 
+function isTruthyEnv(value: string | undefined): boolean {
+  if (!value) return false;
+  return ['1', 'true', 'yes', 'y', 'on'].includes(value.trim().toLowerCase());
+}
+
+function allowInsecureHttp(): boolean {
+  return isTruthyEnv(process.env.STATESET_ALLOW_INSECURE_HTTP);
+}
+
+function assertGraphqlEndpointProtocol(endpoint: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(endpoint);
+  } catch {
+    throw new Error(`Invalid GraphQL endpoint: "${endpoint}"`);
+  }
+  if (!['https:', 'http:'].includes(parsed.protocol)) {
+    throw new Error(`Invalid GraphQL endpoint: "${endpoint}"`);
+  }
+  if (parsed.protocol === 'http:' && !allowInsecureHttp()) {
+    throw new Error(
+      `Refusing insecure GraphQL endpoint "${endpoint}". Use https:// or set STATESET_ALLOW_INSECURE_HTTP=true for local/dev use.`,
+    );
+  }
+}
+
 function getRetryAfterMs(error: unknown): number | null {
   const errWithHeaders = error as {
     response?: { headers?: { get?: (name: string) => string | null } & Record<string, unknown> };
@@ -65,6 +91,8 @@ export function createGraphQLClient(
   auth: GraphQLAuth,
   orgId?: string,
 ): GraphQLClient {
+  assertGraphqlEndpointProtocol(endpoint);
+
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };

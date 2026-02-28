@@ -1,4 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+const mockDnsLookup = vi.hoisted(() => vi.fn());
+vi.mock('node:dns/promises', () => ({
+  lookup: (...args: unknown[]) => mockDnsLookup(...args),
+}));
+
 import {
   requestText,
   requestJson,
@@ -11,6 +17,7 @@ import {
 describe('requestText', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    mockDnsLookup.mockReset().mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
   });
 
   it('returns status, headers, and text', async () => {
@@ -69,6 +76,7 @@ describe('requestText', () => {
 describe('requestJson', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    mockDnsLookup.mockReset().mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
   });
 
   it('parses JSON response', async () => {
@@ -104,6 +112,7 @@ describe('requestJson', () => {
 describe('requestJsonWithRetry', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    mockDnsLookup.mockReset().mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
   });
 
   it('returns immediately on success', async () => {
@@ -117,6 +126,28 @@ describe('requestJsonWithRetry', () => {
     const result = await requestJsonWithRetry('https://example.com/api');
     expect(result.data).toEqual({ ok: true });
     expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('blocks literal private IP targets before issuing a request', async () => {
+    const mockFetch = vi.fn();
+    vi.stubGlobal('fetch', mockFetch);
+
+    await expect(requestJsonWithRetry('https://127.0.0.1/api')).rejects.toThrow(
+      'Blocked private network URL host',
+    );
+    expect(mockDnsLookup).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('blocks hostnames that resolve to private IP addresses', async () => {
+    mockDnsLookup.mockResolvedValueOnce([{ address: '10.0.0.8', family: 4 }]);
+    const mockFetch = vi.fn();
+    vi.stubGlobal('fetch', mockFetch);
+
+    await expect(requestJsonWithRetry('https://api.example.com/api')).rejects.toThrow(
+      'resolved to "10.0.0.8"',
+    );
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it('retries on 429 status', async () => {

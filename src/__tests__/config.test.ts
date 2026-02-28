@@ -29,6 +29,7 @@ beforeEach(() => {
   mockedFs.existsSync.mockReturnValue(false);
   mockedFs.readFileSync.mockReturnValue('');
   delete process.env.ANTHROPIC_API_KEY;
+  delete process.env.STATESET_ALLOW_INSECURE_HTTP;
 });
 
 describe('getAnthropicApiKey', () => {
@@ -167,6 +168,46 @@ describe('validateRuntimeConfig', () => {
     );
 
     expect(() => validateRuntimeConfig()).toThrow('invalid GraphQL endpoint');
+  });
+
+  it('throws when graphqlEndpoint uses insecure http by default', () => {
+    mockedFs.existsSync.mockReturnValue(true);
+    mockedFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        currentOrg: 'org-1',
+        organizations: {
+          'org-1': {
+            name: 'Org',
+            graphqlEndpoint: 'http://api.example.com/v1/graphql',
+            adminSecret: 'admin',
+          },
+        },
+        anthropicApiKey: 'sk-ant-valid-key-1234567890',
+      }),
+    );
+
+    expect(() => validateRuntimeConfig()).toThrow('Expected a valid HTTPS URL');
+  });
+
+  it('allows insecure http endpoint when explicitly enabled via env', () => {
+    process.env.STATESET_ALLOW_INSECURE_HTTP = 'true';
+    mockedFs.existsSync.mockReturnValue(true);
+    mockedFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        currentOrg: 'org-1',
+        organizations: {
+          'org-1': {
+            name: 'Org',
+            graphqlEndpoint: 'http://api.example.com/v1/graphql',
+            adminSecret: 'admin',
+          },
+        },
+        anthropicApiKey: 'sk-ant-valid-key-1234567890',
+      }),
+    );
+
+    const ctx = validateRuntimeConfig();
+    expect(ctx.orgConfig.graphqlEndpoint).toBe('http://api.example.com/v1/graphql');
   });
 });
 

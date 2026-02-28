@@ -15,6 +15,7 @@ vi.mock('graphql-request', () => ({
 describe('createGraphQLClient', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    delete process.env.STATESET_ALLOW_INSECURE_HTTP;
   });
 
   it('creates client with admin secret auth', () => {
@@ -56,6 +57,31 @@ describe('createGraphQLClient', () => {
     });
 
     expect(GraphQLClient).toHaveBeenCalledWith('https://api.example.com/graphql', {
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer my-token',
+      },
+    });
+  });
+
+  it('rejects insecure http endpoint by default', () => {
+    expect(() =>
+      createGraphQLClient('http://api.example.com/graphql', {
+        type: 'cli_token',
+        token: 'my-token',
+      }),
+    ).toThrow('Refusing insecure GraphQL endpoint');
+  });
+
+  it('allows insecure http endpoint when explicitly enabled', () => {
+    process.env.STATESET_ALLOW_INSECURE_HTTP = 'true';
+
+    createGraphQLClient('http://api.example.com/graphql', {
+      type: 'cli_token',
+      token: 'my-token',
+    });
+
+    expect(GraphQLClient).toHaveBeenCalledWith('http://api.example.com/graphql', {
       headers: {
         'Content-Type': 'application/json',
         Authorization: 'Bearer my-token',

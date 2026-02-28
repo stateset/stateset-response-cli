@@ -11,6 +11,9 @@ import {
 } from '../lib/errors.js';
 import { MAX_TEXT_FILE_SIZE_BYTES } from '../utils/file-read.js';
 import { getCircuitBreaker } from '../lib/circuit-breaker.js';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
+import type { LookupAddress } from 'node:dns';
 
 export interface RequestOptions {
   method?: string;
@@ -40,6 +43,123 @@ const MAX_BACKOFF_MS = 30_000;
 const MAX_RETRY_AFTER_MS = 60_000;
 const MAX_TEXT_RESPONSE_BYTES = MAX_TEXT_FILE_SIZE_BYTES;
 const RETRYABLE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS', 'TRACE', 'PUT', 'DELETE']);
+const BLOCKED_HOSTS = new Set(['localhost', 'localhost.localdomain']);
+const BLOCKED_HOST_SUFFIXES = ['.localhost', '.local', '.localdomain', '.internal'];
+
+function normalizeHost(host: string): string {
+  const lowered = host.toLowerCase();
+  const bracketMatch = /^\[(.*)\]$/.exec(lowered);
+  return (bracketMatch ? bracketMatch[1] : lowered).split('%')[0];
+}
+
+function isBlockedHostname(host: string): boolean {
+  if (BLOCKED_HOSTS.has(host)) return true;
+  return BLOCKED_HOST_SUFFIXES.some((suffix) => host.endsWith(suffix));
+}
+
+function parseIPv4(host: string): number[] | null {
+  const parts = host.split('.');
+  if (parts.length !== 4) return null;
+  const octets = parts.map((part) => Number.parseInt(part, 10));
+  if (octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) return null;
+  return octets;
+}
+
+function isPrivateIPv4(host: string): boolean {
+  const octets = parseIPv4(host);
+  if (!octets) return false;
+  const [a, b] = octets;
+
+  if (a === 10) return true;
+  if (a === 127) return true;
+  if (a === 0) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true;
+  if (a === 198 && (b === 18 || b === 19)) return true;
+  if (a >= 224) return true;
+
+  return false;
+}
+
+function parseMappedIPv4(host: string): string | null {
+  const normalized = host.toLowerCase();
+  if (!normalized.startsWith('::ffff:')) return null;
+  const mapped = normalized.slice('::ffff:'.length);
+  const dotted = parseIPv4(mapped);
+  if (dotted) return mapped;
+  const hexParts = mapped.split(':');
+  if (hexParts.length === 1) {
+    const [part] = hexParts;
+    if (!/^[0-9a-f]{1,8}$/.test(part)) return null;
+    const value = Number.parseInt(part, 16);
+    if (!Number.isFinite(value) || value < 0 || value > 0xffffffff) return null;
+    return `${(value >>> 24) & 0xff}.${(value >>> 16) & 0xff}.${(value >>> 8) & 0xff}.${value & 0xff}`;
+  }
+  if (hexParts.length === 2) {
+    const [highHex, lowHex] = hexParts;
+    if (!/^[0-9a-f]{1,4}$/.test(highHex) || !/^[0-9a-f]{1,4}$/.test(lowHex)) return null;
+    const high = Number.parseInt(highHex, 16);
+    const low = Number.parseInt(lowHex, 16);
+    const value = high * 0x10000 + low;
+    return `${(value >>> 24) & 0xff}.${(value >>> 16) & 0xff}.${(value >>> 8) & 0xff}.${value & 0xff}`;
+  }
+  return null;
+}
+
+function isPrivateIPv6(host: string): boolean {
+  const normalized = host.toLowerCase().split('%')[0];
+  if (normalized === '::1' || normalized === '::') return true;
+  if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true;
+  if (/^fe[89ab]/.test(normalized)) return true;
+  const mapped = parseMappedIPv4(normalized);
+  if (mapped && isPrivateIPv4(mapped)) return true;
+  return false;
+}
+
+function isPrivateIpHost(host: string): boolean {
+  const normalized = normalizeHost(host);
+  const family = isIP(normalized);
+  if (family === 4) return isPrivateIPv4(normalized);
+  if (family === 6) return isPrivateIPv6(normalized);
+  return false;
+}
+
+async function assertPublicRequestUrl(url: string): Promise<void> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new ValidationError(`Invalid request URL: "${url}"`);
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new ValidationError(`Unsupported URL protocol: "${parsed.protocol}"`);
+  }
+  const host = normalizeHost(parsed.hostname);
+  if (isBlockedHostname(host) || isPrivateIpHost(host)) {
+    throw new ValidationError(`Blocked private network URL host: "${host}"`);
+  }
+  // Resolve hostnames to guard against DNS rebinding and private-network aliases.
+  if (isIP(host) === 0) {
+    let records: LookupAddress[];
+    try {
+      records = (await lookup(host, { all: true, verbatim: true })) as LookupAddress[];
+    } catch (error) {
+      throw new NetworkError(`Unable to resolve host "${host}": ${String(error)}`);
+    }
+    const addresses = records.map((record: LookupAddress) => normalizeHost(record.address));
+    if (addresses.length === 0) {
+      throw new NetworkError(`Unable to resolve host "${host}": no addresses returned`);
+    }
+    const privateAddress = addresses.find((address: string) => isPrivateIpHost(address));
+    if (privateAddress) {
+      throw new ValidationError(
+        `Blocked private network URL host: "${host}" resolved to "${privateAddress}"`,
+      );
+    }
+  }
+}
 
 function hasIdempotencyKey(headers?: Record<string, string>): boolean {
   if (!headers) return false;
@@ -145,6 +265,8 @@ export async function requestJsonWithRetry(
   options: RequestOptions = {},
   { maxRetries = DEFAULT_MAX_RETRIES }: { maxRetries?: number } = {},
 ): Promise<HttpJsonResponse> {
+  await assertPublicRequestUrl(url);
+
   let hostname: string;
   try {
     hostname = new URL(url).hostname;

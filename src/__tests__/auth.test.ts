@@ -49,6 +49,7 @@ describe('auth command', () => {
     mockSaveConfig.mockClear();
     mockPrompt.mockReset();
     mockRequestJson.mockReset();
+    delete process.env.STATESET_ALLOW_INSECURE_HTTP;
     process.exitCode = undefined;
   });
 
@@ -84,6 +85,38 @@ describe('auth command', () => {
       },
       anthropicApiKey: 'sk-ant-test',
     });
+  });
+
+  it('rejects insecure http GraphQL endpoint by default', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const program = new Command();
+    registerAuthCommands(program);
+
+    await program.parseAsync([
+      'node',
+      'response',
+      'auth',
+      'login',
+      '--manual',
+      '--org-id',
+      'org-123',
+      '--org-name',
+      'Acme Org',
+      '--graphql-endpoint',
+      'http://example.com/graphql',
+      '--admin-secret',
+      'admin-secret',
+      '--non-interactive',
+    ]);
+
+    expect(
+      errSpy.mock.calls.some(
+        ([line]) => typeof line === 'string' && line.includes('GraphQL endpoint must use https://'),
+      ),
+    ).toBe(true);
+    expect(mockedSaveConfig).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+    errSpy.mockRestore();
   });
 
   it('prints an error for unknown authentication method', async () => {

@@ -20,6 +20,15 @@ const HTTP_PROTOCOLS = new Set(['http:', 'https:']);
 
 type LoginMethod = 'device' | 'manual';
 
+function isTruthyEnv(value: string | undefined): boolean {
+  if (!value) return false;
+  return ['1', 'true', 'yes', 'y', 'on'].includes(value.trim().toLowerCase());
+}
+
+function allowInsecureHttp(): boolean {
+  return isTruthyEnv(process.env.STATESET_ALLOW_INSECURE_HTTP);
+}
+
 export interface AuthLoginOptions {
   device?: boolean;
   manual?: boolean;
@@ -139,6 +148,11 @@ function validateHttpUrl(value: string, label: string): string {
   }
   if (!HTTP_PROTOCOLS.has(parsed.protocol)) {
     throw new Error(`${label} must use http:// or https://.`);
+  }
+  if (parsed.protocol === 'http:' && !allowInsecureHttp()) {
+    throw new Error(
+      `${label} must use https://. For local/dev HTTP endpoints, set STATESET_ALLOW_INSECURE_HTTP=true.`,
+    );
   }
   return parsed.toString();
 }

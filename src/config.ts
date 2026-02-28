@@ -294,6 +294,15 @@ export interface RuntimeContext {
   anthropicApiKey: string;
 }
 
+function isTruthyEnv(value: string | undefined): boolean {
+  if (!value) return false;
+  return ['1', 'true', 'yes', 'y', 'on'].includes(value.trim().toLowerCase());
+}
+
+function allowInsecureHttp(): boolean {
+  return isTruthyEnv(process.env.STATESET_ALLOW_INSECURE_HTTP);
+}
+
 export function getRuntimeContext(): RuntimeContext {
   const { orgId, config: orgConfig } = getCurrentOrg();
   const anthropicApiKey = getAnthropicApiKey();
@@ -320,9 +329,13 @@ export function validateRuntimeConfig(): RuntimeContext {
     if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
       throw new Error('unsupported protocol');
     }
+    if (parsed.protocol === 'http:' && !allowInsecureHttp()) {
+      throw new Error('insecure protocol');
+    }
   } catch {
+    const protocolHint = allowInsecureHttp() ? 'valid HTTP(S)' : 'valid HTTPS';
     throw new ConfigurationError(
-      `Organization "${ctx.orgId}" has an invalid GraphQL endpoint: "${endpoint}". Expected a valid HTTP(S) URL.`,
+      `Organization "${ctx.orgId}" has an invalid GraphQL endpoint: "${endpoint}". Expected a ${protocolHint} URL.`,
     );
   }
 
