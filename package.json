@@ -64,7 +64,7 @@
     "inquirer": "^9.3.0",
     "ora": "^8.1.0",
     "uuid": "^10.0.0",
-    "zod": "^3.23.0"
+    "zod": "^4.3.6"
   },
   "optionalDependencies": {
     "@slack/bolt": "^3.22.0",
