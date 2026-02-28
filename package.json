@@ -61,7 +61,7 @@
     "croner": "^9.0.0",
     "graphql": "^16.9.0",
     "graphql-request": "^7.1.0",
-    "inquirer": "^9.3.0",
+    "inquirer": "^13.3.0",
     "ora": "^8.1.0",
     "uuid": "^10.0.0",
     "zod": "^3.23.0"
