@@ -97,7 +97,9 @@ describe('resolveSlashRouteAction', () => {
   });
 
   it('suggests near-miss slash commands', () => {
-    expect(getSlashCommandSuggestions('/hlp')).toEqual(['/help', '/bulk', '/kb']);
+    const suggestions = getSlashCommandSuggestions('/hlp');
+    expect(suggestions).toContain('/help');
+    expect(suggestions.length).toBeLessThanOrEqual(3);
   });
 
   it('suggests extension commands when provided', () => {

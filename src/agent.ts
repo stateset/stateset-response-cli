@@ -12,7 +12,27 @@ import { metrics } from './lib/metrics.js';
 const THIS_FILE = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(THIS_FILE);
 const IS_TS = THIS_FILE.endsWith('.ts');
-const MAX_HISTORY_MESSAGES = 40;
+const DEFAULT_MAX_HISTORY = 40;
+
+function getMaxHistoryMessages(): number {
+  const envVal = process.env.STATESET_MAX_HISTORY;
+  if (envVal) {
+    const parsed = Number.parseInt(envVal, 10);
+    if (Number.isFinite(parsed) && parsed >= 10 && parsed <= 200) {
+      return parsed;
+    }
+  }
+  return DEFAULT_MAX_HISTORY;
+}
+
+const MAX_HISTORY_MESSAGES = getMaxHistoryMessages();
+
+export interface TrimInfo {
+  trimmed: boolean;
+  messagesBefore: number;
+  messagesAfter: number;
+  timestamp: number;
+}
 const DEFAULT_MAX_TOKENS = 16384;
 const MAX_TOOL_RETRIES = 2;
 const RETRY_BASE_DELAY_MS = 500;
@@ -274,6 +294,7 @@ export class StateSetAgent {
   private systemPrompt: string = BASE_SYSTEM_PROMPT;
   private sessionStore: SessionStore | null = null;
   private mcpEnvOverrides: Record<string, string> = {};
+  private lastTrimInfo: TrimInfo | null = null;
 
   constructor(anthropicApiKey: string, model?: ModelId) {
     this.anthropic = new Anthropic({ apiKey: anthropicApiKey });
@@ -306,6 +327,14 @@ export class StateSetAgent {
 
   getHistoryLength(): number {
     return this.conversationHistory.length;
+  }
+
+  getMaxHistoryMessages(): number {
+    return MAX_HISTORY_MESSAGES;
+  }
+
+  getLastTrimInfo(): TrimInfo | null {
+    return this.lastTrimInfo;
   }
 
   clearHistory(): void {
@@ -628,13 +657,26 @@ export class StateSetAgent {
   }
 
   private trimHistory(): void {
-    if (this.conversationHistory.length > MAX_HISTORY_MESSAGES) {
+    const before = this.conversationHistory.length;
+    if (before > MAX_HISTORY_MESSAGES) {
       this.conversationHistory = normalizeToolHistory(
         this.conversationHistory.slice(-MAX_HISTORY_MESSAGES),
       );
+      this.lastTrimInfo = {
+        trimmed: true,
+        messagesBefore: before,
+        messagesAfter: this.conversationHistory.length,
+        timestamp: Date.now(),
+      };
       return;
     }
     this.conversationHistory = normalizeToolHistory(this.conversationHistory);
+    this.lastTrimInfo = {
+      trimmed: false,
+      messagesBefore: before,
+      messagesAfter: this.conversationHistory.length,
+      timestamp: Date.now(),
+    };
   }
 
   /**

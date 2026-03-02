@@ -3,11 +3,18 @@ import { loadMemory } from '../memory.js';
 import { buildSystemPrompt } from '../prompt.js';
 import {
   printHelp,
+  printCommandHelp,
   formatError,
   formatSuccess,
   formatWarning,
   formatTable,
 } from '../utils/display.js';
+import {
+  findCommand,
+  getCommandsForCategory,
+  getCategoryLabel,
+  type CommandCategory,
+} from './command-registry.js';
 import { getSkill, listSkills } from '../resources.js';
 import { getErrorMessage } from '../lib/errors.js';
 import type { ChatContext, CommandResult } from './types.js';
@@ -112,8 +119,51 @@ export async function handleChatCommand(input: string, ctx: ChatContext): Promis
     return { handled: true };
   }
 
-  // /help — show help
+  // /help — show help (optionally for a specific command or category)
   if (hasCommand(input, '/help') || hasCommand(input, '/commands')) {
+    const arg = input.split(/\s+/).slice(1).join(' ').trim();
+    if (arg) {
+      // Try to find a command by name or alias
+      const cmd = findCommand(arg.startsWith('/') ? arg : `/${arg}`);
+      if (cmd) {
+        printCommandHelp(cmd);
+        ctx.rl.prompt();
+        return { handled: true };
+      }
+      // Try as a category name
+      const VALID_CATEGORIES: CommandCategory[] = [
+        'core',
+        'safety',
+        'integrations',
+        'sessions',
+        'shortcuts',
+        'exports',
+        'prompts',
+        'extensions',
+      ];
+      const lower = arg.toLowerCase();
+      if (VALID_CATEGORIES.includes(lower as CommandCategory)) {
+        const cmds = getCommandsForCategory(lower);
+        if (cmds.length > 0) {
+          console.log('');
+          console.log(chalk.bold(`  ${getCategoryLabel(lower as CommandCategory)}`));
+          for (const c of cmds) {
+            const aliasStr =
+              c.aliases && c.aliases.length > 0 ? chalk.gray(` (${c.aliases.join(', ')})`) : '';
+            console.log(chalk.cyan(`    ${c.usage}`) + aliasStr + chalk.gray('  ' + c.description));
+          }
+          console.log('');
+          ctx.rl.prompt();
+          return { handled: true };
+        }
+      }
+      console.log(
+        formatWarning(`No command or category found: "${arg}". Use /help for full list.`),
+      );
+      console.log('');
+      ctx.rl.prompt();
+      return { handled: true };
+    }
     printHelp();
     ctx.rl.prompt();
     return { handled: true };
@@ -136,6 +186,42 @@ export async function handleChatCommand(input: string, ctx: ChatContext): Promis
     console.log('');
     ctx.rl.prompt();
     return { handled: true };
+  }
+
+  // /context — show context window usage
+  if (hasCommand(input, '/context')) {
+    const current = ctx.agent.getHistoryLength();
+    const max = ctx.agent.getMaxHistoryMessages();
+    const pct = max > 0 ? Math.round((current / max) * 100) : 0;
+    const barWidth = 20;
+    const filled = Math.round((pct / 100) * barWidth);
+    const bar = '█'.repeat(filled) + '░'.repeat(barWidth - filled);
+    const trimInfo = ctx.agent.getLastTrimInfo();
+    console.log('');
+    console.log(chalk.bold('  Context Window'));
+    console.log(`  Messages: ${current}/${max} (${pct}%) [${bar}]`);
+    console.log(chalk.gray(`  Model: ${ctx.model}`));
+    if (trimInfo?.trimmed) {
+      console.log(
+        chalk.yellow(
+          `  Note: History was trimmed (${trimInfo.messagesBefore} → ${trimInfo.messagesAfter} messages)`,
+        ),
+      );
+    }
+    console.log('');
+    ctx.rl.prompt();
+    return { handled: true };
+  }
+
+  // /retry — resend the last user message
+  if (hasCommand(input, '/retry')) {
+    if (!ctx.lastUserMessage) {
+      console.log(formatWarning('No previous message to retry.'));
+      console.log('');
+      ctx.rl.prompt();
+      return { handled: true };
+    }
+    return { handled: true, sendMessage: ctx.lastUserMessage };
   }
 
   // /extensions — list loaded extensions

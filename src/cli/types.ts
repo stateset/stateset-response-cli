@@ -73,6 +73,7 @@ export interface ChatContext {
   allowApply: boolean;
   redactEmails: boolean;
   model: string;
+  lastUserMessage: string | null;
 
   switchSession: (nextSessionId: string) => Promise<void>;
   reconnectAgent: () => Promise<void>;

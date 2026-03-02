@@ -17,12 +17,12 @@ import fs from 'node:fs';
 import {
   printWelcome,
   printAuthHelp,
-  formatAssistantMessage,
   formatError,
   formatSuccess,
   formatWarning,
   formatElapsed,
   formatToolCall,
+  formatToolResultInline,
   formatUsage,
   formatRelativeTime,
 } from '../utils/display.js';
@@ -32,6 +32,11 @@ import { metrics } from '../lib/metrics.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { extractInlineFlags, readBooleanEnv } from './utils.js';
 import type { ChatContext, ToolAuditEntry, CommandResult } from './types.js';
+import { MarkdownStreamRenderer } from '../utils/markdown-stream.js';
+import { renderMarkdown } from '../utils/markdown.js';
+import { smartCompleter } from './completer.js';
+import { loadInputHistory, appendHistoryLine, trimHistoryFile } from './history.js';
+import { checkForUpdate } from '../utils/update-check.js';
 
 const SIGINT_GRACE_MS = 2000;
 import { readSessionMeta, listSessionSummaries } from './session-meta.js';
@@ -247,9 +252,37 @@ export async function startChatSession(
     console.log('');
   }
 
-  printWelcome(orgId, meta.version, model);
+  // Count active integrations for welcome banner
+  let integrationCount = 0;
+  try {
+    const { INTEGRATION_DEFINITIONS } = await import('../integrations/registry.js');
+    integrationCount = INTEGRATION_DEFINITIONS.filter(
+      (def: { fields: Array<{ envVars: string[] }> }) =>
+        def.fields.some((f: { envVars: string[] }) =>
+          f.envVars.some((e: string) => process.env[e]),
+        ),
+    ).length;
+  } catch {
+    /* ignore */
+  }
+
+  const sessionMessageCount = sessionStore.getMessageCount();
+  printWelcome(orgId, meta.version, model, {
+    integrationCount,
+    sessionMessageCount,
+    allowApply,
+  });
   console.log(chalk.gray(`  Session: ${sessionId}`));
   console.log('');
+
+  // Async update check (never blocks startup)
+  if (meta.version) {
+    checkForUpdate(meta.version)
+      .then((msg) => {
+        if (msg) console.log(msg);
+      })
+      .catch(() => {});
+  }
 
   // Graceful shutdown
   const SHUTDOWN_FORCE_EXIT_MS = 10_000;
@@ -283,18 +316,27 @@ export async function startChatSession(
 
   process.on('SIGTERM', shutdown);
 
-  const slashCompleter = (line: string): [string[], string] => {
-    if (!line.startsWith('/')) return [[], line];
-    const hits = getKnownSlashCommands().filter((cmd) => cmd.startsWith(line));
-    return [hits.length > 0 ? hits : getKnownSlashCommands(), line];
+  const completer = (line: string): [string[], string] => {
+    const extensionCommands = extensions.listCommands
+      ? extensions.listCommands().map((c) => c.name)
+      : [];
+    return smartCompleter(line, extensionCommands);
   };
 
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
     prompt: chalk.cyan('response> '),
-    completer: slashCompleter,
+    completer,
   });
+
+  // Pre-populate readline history from persistent file
+  const savedHistory = loadInputHistory();
+  for (const entry of savedHistory) {
+    (rl as unknown as { history: string[] }).history?.unshift(entry);
+  }
+  // Trim history file periodically
+  trimHistoryFile();
 
   let processing = false;
   let multiLineBuffer = '';
@@ -397,6 +439,7 @@ export async function startChatSession(
     allowApply,
     redactEmails,
     model: model as string,
+    lastUserMessage: null,
     switchSession: async (nextId: string) => {
       switchSession(nextId);
       ctx.sessionId = sessionId;
@@ -585,13 +628,24 @@ export async function startChatSession(
       return;
     }
 
+    // Save to persistent history
+    appendHistoryLine(input);
+
+    // Track for /retry
+    ctx.lastUserMessage = finalInput;
+
     processing = true;
     metrics.increment('chat.userMessages');
     const startTime = Date.now();
 
-    // Stream response: print text token-by-token
+    // Thinking spinner — shows until first text or tool call
+    const thinkSpinner = ora({ text: chalk.gray('Thinking...'), spinner: 'dots' }).start();
+
+    // Stream response: print text token-by-token with markdown rendering
     let firstText = true;
     let usageLine = '';
+    let toolCallCount = 0;
+    const mdStream = new MarkdownStreamRenderer();
     try {
       const memory = loadMemory(sessionId);
       agent.setSystemPrompt(buildSystemPrompt({ sessionId, memory, cwd, activeSkills }));
@@ -611,12 +665,22 @@ export async function startChatSession(
       const response = await agent.chat(userContent, {
         onText: (delta) => {
           if (firstText) {
+            thinkSpinner.stop();
             firstText = false;
           }
-          process.stdout.write(chalk.white(delta));
+          const rendered = mdStream.push(delta);
+          if (rendered) {
+            process.stdout.write(rendered);
+          }
         },
         onToolCall: (name, args) => {
-          console.log(formatToolCall(name, args));
+          if (firstText) {
+            thinkSpinner.stop();
+            firstText = false;
+          }
+          toolCallCount++;
+          const prefix = toolCallCount > 1 ? chalk.gray(`[step ${toolCallCount}] `) : '';
+          console.log(prefix + formatToolCall(name, args));
         },
         onToolCallStart: async (name, args) => {
           try {
@@ -706,6 +770,8 @@ export async function startChatSession(
           }
         },
         onToolCallEnd: (result) => {
+          // Show inline status for completed tool calls
+          console.log(formatToolResultInline(result.name, result.durationMs, result.isError));
           extensions.runToolResultHooks(result, buildToolHookContext()).catch((err) => {
             console.error(formatError(getErrorMessage(err)));
           });
@@ -748,9 +814,15 @@ export async function startChatSession(
         },
       });
 
+      // Flush any remaining buffered markdown
+      const flushed = mdStream.flush();
+      if (flushed) {
+        process.stdout.write(flushed);
+      }
+
       // If no streaming text was emitted (shouldn't happen, but safety)
       if (firstText && response) {
-        console.log(formatAssistantMessage(response));
+        console.log(renderMarkdown(response));
       }
 
       const elapsed = Date.now() - startTime;
@@ -758,7 +830,18 @@ export async function startChatSession(
       if (usageLine) {
         console.log(usageLine);
       }
+
+      // Warn if history was trimmed
+      const trimInfo = agent.getLastTrimInfo();
+      if (trimInfo?.trimmed) {
+        console.log(
+          chalk.yellow(
+            `  Context trimmed: oldest messages dropped (${trimInfo.messagesBefore} → ${trimInfo.messagesAfter}). Use /context for details.`,
+          ),
+        );
+      }
     } catch (e: unknown) {
+      thinkSpinner.stop();
       const msg = getErrorMessage(e);
       if (msg !== 'Request cancelled') {
         console.log('\n' + formatError(msg));

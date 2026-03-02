@@ -4,6 +4,7 @@ import {
   getCommandsByCategory,
   getCategoryOrder,
   getCategoryLabel,
+  type CommandDefinition,
 } from '../cli/command-registry.js';
 
 const SENSITIVE_KEY_RE = /(secret|token|authorization|api[-_]?key|password|admin)/i;
@@ -160,14 +161,36 @@ export function formatDuration(ms: number): string {
   return `${minutes}m ${seconds}s`;
 }
 
-export function printWelcome(orgId: string, version?: string, model?: string): void {
+export interface WelcomeOptions {
+  integrationCount?: number;
+  sessionMessageCount?: number;
+  allowApply?: boolean;
+}
+
+export function printWelcome(
+  orgId: string,
+  version?: string,
+  model?: string,
+  options?: WelcomeOptions,
+): void {
   console.log('');
   console.log(
     chalk.bold.cyan('  StateSet Response CLI') + (version ? chalk.gray(` v${version}`) : ''),
   );
   console.log(chalk.gray(`  Organization: ${orgId}`));
-  if (model) {
-    console.log(chalk.gray(`  Model: ${model}`));
+  const infoParts: string[] = [];
+  if (model) infoParts.push(`Model: ${model}`);
+  if (options?.integrationCount !== undefined && options.integrationCount > 0) {
+    infoParts.push(`Integrations: ${options.integrationCount}`);
+  }
+  if (options?.allowApply) {
+    infoParts.push('Writes: enabled');
+  }
+  if (infoParts.length > 0) {
+    console.log(chalk.gray(`  ${infoParts.join(' | ')}`));
+  }
+  if (options?.sessionMessageCount !== undefined && options.sessionMessageCount > 0) {
+    console.log(chalk.gray(`  Resuming session (${options.sessionMessageCount} messages)`));
   }
   console.log('');
   console.log(chalk.gray('  Quick start:'));
@@ -186,7 +209,9 @@ export function printWelcome(orgId: string, version?: string, model?: string): v
       chalk.gray(`Switch model (${getModelAliasText('list').replace(/,\s*/g, '/')})`),
   );
   console.log('');
-  console.log(chalk.gray('  Tab completes commands. End a line with \\ for multi-line input.'));
+  console.log(
+    chalk.gray('  Tab completes commands + arguments. End a line with \\ for multi-line input.'),
+  );
   console.log('');
 }
 
@@ -196,6 +221,7 @@ export function printHelp(): void {
 
   console.log('');
   console.log(chalk.bold('  Available Commands'));
+  console.log(chalk.gray('  Use /help <command> for detailed help on a specific command.'));
   console.log('');
 
   for (const category of order) {
@@ -204,7 +230,9 @@ export function printHelp(): void {
 
     console.log(chalk.bold(`  ${getCategoryLabel(category)}`));
     for (const cmd of cmds) {
-      console.log(chalk.cyan(`    ${cmd.usage}`) + chalk.gray(cmd.description));
+      const aliasStr =
+        cmd.aliases && cmd.aliases.length > 0 ? chalk.gray(` (${cmd.aliases.join(', ')})`) : '';
+      console.log(chalk.cyan(`    ${cmd.usage}`) + aliasStr + chalk.gray('  ' + cmd.description));
     }
     console.log('');
   }
@@ -212,6 +240,36 @@ export function printHelp(): void {
   console.log(chalk.gray('  Multi-line input: end a line with \\ to continue on the next line.'));
   console.log(chalk.gray('  Press Ctrl+C to cancel the current request.'));
   console.log('');
+}
+
+/** Print detailed help for a single command. */
+export function printCommandHelp(cmd: CommandDefinition): void {
+  console.log('');
+  console.log(chalk.bold(`  ${cmd.name}`));
+  if (cmd.aliases && cmd.aliases.length > 0) {
+    console.log(chalk.gray(`  Aliases: ${cmd.aliases.join(', ')}`));
+  }
+  console.log(chalk.gray(`  Usage: ${cmd.usage}`));
+  console.log(`  ${cmd.description}`);
+  if (cmd.detailedHelp) {
+    console.log('');
+    console.log(chalk.gray(`  ${cmd.detailedHelp}`));
+  }
+  if (cmd.examples && cmd.examples.length > 0) {
+    console.log('');
+    console.log(chalk.bold('  Examples:'));
+    for (const ex of cmd.examples) {
+      console.log(chalk.cyan(`    ${ex}`));
+    }
+  }
+  console.log('');
+}
+
+/** Format an inline tool result status line. */
+export function formatToolResultInline(name: string, durationMs: number, isError: boolean): string {
+  const icon = isError ? chalk.red('✗') : chalk.green('✓');
+  const dur = durationMs < 1000 ? `${durationMs}ms` : `${(durationMs / 1000).toFixed(1)}s`;
+  return `  ${icon} ${chalk.gray(name)} ${chalk.gray(`(${dur})`)}`;
 }
 
 export function printAuthHelp(): void {

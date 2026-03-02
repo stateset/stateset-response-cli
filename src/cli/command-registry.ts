@@ -18,6 +18,10 @@ export interface CommandDefinition {
   category: CommandCategory;
   /** When true the entry appears in help text but not in tab completion. */
   helpOnly?: boolean;
+  /** Extended help text shown by `/help <command>`. */
+  detailedHelp?: string;
+  /** Example usages shown by `/help <command>`. */
+  examples?: string[];
 }
 
 const registry: CommandDefinition[] = [];
@@ -57,6 +61,27 @@ export function getCommandsByCategory(): Map<CommandCategory, CommandDefinition[
   return map;
 }
 
+/**
+ * Find a command by its canonical name or any alias.
+ * Returns the first matching definition, or null.
+ */
+export function findCommand(nameOrAlias: string): CommandDefinition | null {
+  const normalized = nameOrAlias.startsWith('/') ? nameOrAlias : `/${nameOrAlias}`;
+  for (const def of registry) {
+    if (def.name === normalized) return def;
+    if (def.aliases?.includes(normalized)) return def;
+  }
+  return null;
+}
+
+/**
+ * Find all commands in a category by category name.
+ */
+export function getCommandsForCategory(categoryName: string): CommandDefinition[] {
+  const lower = categoryName.toLowerCase();
+  return registry.filter((def) => def.category === lower);
+}
+
 const CATEGORY_ORDER: CommandCategory[] = [
   'core',
   'safety',
@@ -94,28 +119,36 @@ export function registerAllCommands(): void {
   // ── Core ──────────────────────────────────────────────────────────
   registerCommand({
     name: '/help',
-    aliases: ['/commands'],
-    usage: '/help',
-    description: 'Show this help message',
+    aliases: ['/commands', '/h'],
+    usage: '/help [command|category]',
+    description: 'Show help (optionally for a specific command or category)',
     category: 'core',
+    detailedHelp:
+      'Show the full command reference, or detailed help for a specific command or category.',
+    examples: ['/help', '/help model', '/help sessions'],
   });
   registerCommand({
     name: '/clear',
+    aliases: ['/c'],
     usage: '/clear',
     description: 'Reset conversation history',
     category: 'core',
   });
   registerCommand({
     name: '/history',
+    aliases: ['/hist'],
     usage: '/history',
     description: 'Show conversation turn count',
     category: 'core',
   });
   registerCommand({
     name: '/model',
+    aliases: ['/m'],
     usage: '/model <name>',
     description: `Switch model (${getModelAliasText('list')})`,
     category: 'core',
+    detailedHelp: 'Switch the active Claude model for this session.',
+    examples: ['/model sonnet', '/model haiku', '/model opus'],
   });
   registerCommand({
     name: '/usage',
@@ -250,9 +283,11 @@ export function registerAllCommands(): void {
   });
   registerCommand({
     name: '/sessions',
+    aliases: ['/s'],
     usage: '/sessions [all] [tag=tag]',
     description: 'List sessions (optionally include archived or filter by tag)',
     category: 'sessions',
+    examples: ['/sessions', '/sessions all', '/sessions tag=debug'],
   });
   registerCommand({
     name: '/new',
@@ -295,6 +330,7 @@ export function registerAllCommands(): void {
     usage: '/tag list|add|remove <tag> [session]',
     description: 'Manage session tags',
     category: 'sessions',
+    examples: ['/tag list', '/tag add debug', '/tag remove debug'],
   });
   registerCommand({
     name: '/search',
@@ -302,6 +338,7 @@ export function registerAllCommands(): void {
       '/search <text> [all] [role=user|assistant] [since=YYYY-MM-DD] [until=YYYY-MM-DD] [regex=/.../] [limit=100]',
     description: 'Search session transcripts (scans up to 5000 entries)',
     category: 'sessions',
+    examples: ['/search refund', '/search error role=assistant since=2025-01-01'],
   });
   registerCommand({
     name: '/session-meta',
@@ -313,21 +350,30 @@ export function registerAllCommands(): void {
   // ── Shortcut Commands ─────────────────────────────────────────────
   registerCommand({
     name: '/rules',
+    aliases: ['/r'],
     usage: '/rules [get|list|create|toggle|delete|import|export|agent|<id>]',
     description: 'Manage agent rules',
     category: 'shortcuts',
+    detailedHelp:
+      'List, create, toggle, delete, import, or export agent rules. Use a rule ID to view details.',
+    examples: ['/rules list', '/rules create', '/rules toggle <id>', '/rules export'],
   });
   registerCommand({
     name: '/kb',
     usage: '/kb [search|add|delete|scroll|list|info]',
     description: 'Manage KB entries',
     category: 'shortcuts',
+    detailedHelp: 'Search, add, delete, or browse knowledge base entries.',
+    examples: ['/kb search shipping policy', '/kb add', '/kb list'],
   });
   registerCommand({
     name: '/agents',
+    aliases: ['/a'],
     usage: '/agents [list|get|create|switch|export|import|bootstrap|<id>]',
     description: 'Manage agents',
     category: 'shortcuts',
+    detailedHelp: 'List, create, switch between, or import/export agents.',
+    examples: ['/agents list', '/agents get <id>', '/agents switch <id>', '/agents bootstrap'],
   });
   registerCommand({
     name: '/channels',
@@ -361,6 +407,7 @@ export function registerAllCommands(): void {
   });
   registerCommand({
     name: '/status',
+    aliases: ['/st'],
     usage: '/status',
     description: 'Show platform status summary',
     category: 'shortcuts',
@@ -464,10 +511,27 @@ export function registerAllCommands(): void {
 
   // ── Exports ───────────────────────────────────────────────────────
   registerCommand({
+    name: '/context',
+    usage: '/context',
+    description: 'Show context window usage',
+    category: 'core',
+    detailedHelp: 'Display how much of the conversation history window is used.',
+  });
+  registerCommand({
+    name: '/retry',
+    usage: '/retry',
+    description: 'Retry the last user message',
+    category: 'core',
+    detailedHelp:
+      'Re-send the last user message to the agent. Useful after errors or cancelled requests.',
+  });
+
+  registerCommand({
     name: '/export',
     usage: '/export [session] [md|json|jsonl] [path] [--unsafe-path]',
     description: 'Export session to markdown/json/jsonl',
     category: 'exports',
+    examples: ['/export md', '/export my-session json', '/export jsonl ./out.jsonl'],
   });
   registerCommand({
     name: '/export-list',
