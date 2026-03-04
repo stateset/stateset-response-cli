@@ -3,17 +3,20 @@
 AI-powered CLI for managing the [StateSet ResponseCX](https://response.cx) platform. Chat with an AI agent that can manage your agents, rules, skills, knowledge base, channels, messages, and more — all from the terminal.
 
 Includes optional WhatsApp and Slack gateways for connecting your agent to messaging platforms.
-Current version: `1.7.3`.
+Current version: `1.7.5`.
 
 ## Features
 
 - **100+ MCP tools** across 16 integrations — Shopify, Gorgias, Recharge, Klaviyo, Loop, ShipStation, ShipHero, ShipFusion, ShipHawk, Zendesk, Skio, Stay.ai, Amazon SP-API, DHL, FedEx, Global-e
 - **WhatsApp and Slack gateways** with a multi-channel orchestrator for running both simultaneously
 - **Interactive chat** with session management, memory, file attachments, and prompt templates
+- **Markdown-aware terminal output** with streaming-safe rendering for headings, lists, quotes, and code fences
+- **Productive CLI ergonomics** with slash-command tab completion and persistent local input history
 - **Extension system** with trust policies, tool hooks, and hash verification
 - **Event-driven automation** — immediate, one-shot, and periodic (cron) agent runs
 - **Shortcut commands** for direct CLI operations (deploy, backup, monitor, snapshot, diff, etc.)
 - **Circuit breaker** and retry with exponential backoff + jitter for HTTP/GraphQL resilience
+- **Version awareness** with cached npm update checks that surface newer CLI releases
 - **Security hardened** — AES-256-GCM credential encryption, SSRF prevention, ANSI escape sanitization, path traversal protection
 
 ## Install

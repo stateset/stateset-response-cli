@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.7.5 - 2026-03-04
+
+### UX
+- Added markdown-aware terminal rendering for agent output, including headings, lists, quotes, inline formatting, and fenced code blocks in streaming responses.
+- Added context-aware tab completion for slash commands and common arguments (model aliases, session IDs, toggles, and command sub-actions).
+- Added persistent local input history at `~/.stateset/input-history` for interactive chat prompts.
+
+### Runtime
+- Added non-blocking npm update checks with a 24-hour cache to surface newer published CLI versions.
+
+### Tests
+- Added dedicated tests for markdown rendering, streaming markdown behavior, command completion, input history persistence, and update checks.
+- Expanded chat action tests to cover the updated rendering and interaction flow.
+
 ## 1.7.1 - 2026-02-27
 
 ### Quality Gates

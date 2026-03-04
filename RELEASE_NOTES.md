@@ -1,41 +1,30 @@
-# StateSet ResponseCLI Release Notes (v1.7.1)
+# StateSet ResponseCLI Release Notes (v1.7.5)
 
 ## Overview
 
-StateSet ResponseCLI `v1.7.1` focuses on production readiness: stronger quality gates, real integration diagnostics (not placeholders), enforced analytics date filtering in summary mode, and refreshed security/process documentation.
+StateSet ResponseCLI `v1.7.5` improves interactive UX with markdown-aware terminal rendering, context-aware tab completion, persistent prompt history, and cached update notifications. This release also expands test coverage for the new CLI behavior.
 
 ## Highlights
 
-### Quality and CI
-- Pre-commit now enforces lint-staged + TypeScript typecheck.
-- Coverage is enforced in two layers:
-  - Full test suite: minimum 75% for lines/branches/functions/statements.
-  - Core deterministic modules: strict 100% for lines/branches/functions/statements.
-- CI runs both coverage gates.
+### Chat and terminal UX
+- Added markdown rendering for streamed agent output:
+  - headings, lists, block quotes, inline emphasis, links, and fenced code blocks
+  - streaming-safe buffering behavior for partial lines and code fences
+- Updated chat flow to use the new markdown rendering path.
 
-### Integrations observability
-- `response integrations health` now reports:
-  - readiness status (`ready`, `degraded`, `disabled`, etc.)
-  - required-field coverage
-  - config source resolution (`env`, `store`, `default`)
-  - URL validation status
-- `response integrations limits` now reports telemetry from tool-audit history:
-  - call count
-  - error count
-  - observed rate-limit events
-  - last seen/last rate-limit timestamps
-- `response integrations logs` now returns real recent integration tool events with session and duration context.
+### CLI productivity
+- Added smart tab completion for slash commands and common arguments.
+- Added persistent local input history at `~/.stateset/input-history`.
+- Added update checks against npm latest with 24-hour local caching (non-blocking startup behavior).
 
-### Analytics filtering
-- `response stats` and `response analytics` now apply date filters in summary mode where timestamped data is available.
-- Help text no longer claims `--from`/`--to` are "not yet enforced."
-
-### Documentation and governance
-- README version and quality-check docs now match shipped behavior.
-- Added:
-  - `SECURITY.md`
-  - `CONTRIBUTING.md`
-  - `SUPPORT.md`
+### Test coverage
+- Added dedicated tests for:
+  - markdown renderer
+  - markdown stream renderer
+  - command completer
+  - history storage utilities
+  - update check utility
+- Expanded chat action test coverage for the updated output path.
 
 ## CLI entry points
 
