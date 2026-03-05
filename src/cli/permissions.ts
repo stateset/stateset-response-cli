@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { getStateSetDir } from '../session.js';
 import { readJsonFile } from '../utils/file-read.js';
-import { ensureDirExists } from './utils.js';
 import type { PermissionDecision, PermissionStore } from './types.js';
 
 export function getPermissionStorePath(): string {
@@ -21,8 +20,7 @@ export function readPermissionStore(): PermissionStore {
 
 export function writePermissionStore(store: PermissionStore): void {
   const filePath = getPermissionStorePath();
-  ensureDirExists(filePath);
-  fs.writeFileSync(filePath, JSON.stringify(store, null, 2), { encoding: 'utf-8', mode: 0o600 });
+  writeJsonFileSecure(filePath, store, 'permission store');
 }
 
 export function getPolicyOverridesPath(cwd: string): string {
@@ -66,8 +64,7 @@ export function readPolicyOverridesDetailed(cwd: string): {
 
 export function writePolicyOverrides(cwd: string, data: PermissionStore): void {
   const pathToWrite = getPolicyOverridesPath(cwd);
-  ensureDirExists(pathToWrite);
-  fs.writeFileSync(pathToWrite, JSON.stringify(data, null, 2), { encoding: 'utf-8', mode: 0o600 });
+  writeJsonFileSecure(pathToWrite, data, 'policy overrides');
 }
 
 export function readPolicyFile(pathInput: string): PermissionStore {
@@ -131,4 +128,58 @@ function normalizeToolHooks(value: unknown): PermissionStore {
 
 export function makeHookPermissionKey(hookName: string, toolName: string): string {
   return `${hookName}::${toolName}`;
+}
+
+function ensureSafeParentDirectory(filePath: string): void {
+  const dirPath = path.dirname(path.resolve(filePath));
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true, mode: 0o700 });
+    return;
+  }
+  const dirStat = fs.lstatSync(dirPath);
+  if (dirStat.isSymbolicLink()) {
+    throw new Error(`Refusing to write through symlinked directory: ${dirPath}`);
+  }
+  if (!dirStat.isDirectory()) {
+    throw new Error(`Refusing to write through non-directory path: ${dirPath}`);
+  }
+}
+
+function assertSafeWritableFileTarget(filePath: string, label: string): void {
+  const resolved = path.resolve(filePath);
+  ensureSafeParentDirectory(resolved);
+  if (!fs.existsSync(resolved)) {
+    return;
+  }
+  const fileStat = fs.lstatSync(resolved);
+  if (fileStat.isSymbolicLink()) {
+    throw new Error(`Refusing to write ${label} to symlink: ${resolved}`);
+  }
+  if (!fileStat.isFile()) {
+    throw new Error(`Refusing to write ${label} to non-file path: ${resolved}`);
+  }
+}
+
+function writeJsonFileSecure(filePath: string, data: PermissionStore, label: string): void {
+  const resolved = path.resolve(filePath);
+  assertSafeWritableFileTarget(resolved, label);
+  const tmpPath = `${resolved}.tmp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), { encoding: 'utf-8', mode: 0o600 });
+    fs.renameSync(tmpPath, resolved);
+    try {
+      fs.chmodSync(resolved, 0o600);
+    } catch {
+      // Best-effort on non-POSIX systems.
+    }
+  } catch (err) {
+    try {
+      if (fs.existsSync(tmpPath)) {
+        fs.unlinkSync(tmpPath);
+      }
+    } catch {
+      // Best-effort cleanup.
+    }
+    throw err;
+  }
 }

@@ -98,7 +98,16 @@ export function readFirstEnvValue(names: string[]): string | null {
 export function ensureDirExists(filePath: string): void {
   const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    return;
+  }
+  try {
+    const stat = fs.lstatSync(dir);
+    if (stat.isDirectory() && !stat.isSymbolicLink()) {
+      fs.chmodSync(dir, 0o700);
+    }
+  } catch {
+    // Best-effort on non-POSIX systems.
   }
 }
 

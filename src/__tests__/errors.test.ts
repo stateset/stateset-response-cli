@@ -361,4 +361,29 @@ describe('installGlobalErrorHandlers', () => {
     installGlobalErrorHandlers();
     expect(spy).toHaveBeenCalledWith('unhandledRejection', expect.any(Function));
   });
+
+  it('exits after handling an unhandled rejection', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const before = new Set(
+      process.listeners('unhandledRejection') as Array<(...args: unknown[]) => void>,
+    );
+
+    installGlobalErrorHandlers();
+    const after = process.listeners('unhandledRejection') as Array<(...args: unknown[]) => void>;
+    const handler = after.find((fn) => !before.has(fn));
+    expect(typeof handler).toBe('function');
+    if (!handler) {
+      return;
+    }
+
+    handler(new Error('boom'), Promise.resolve());
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+
+    process.removeListener('unhandledRejection', handler as never);
+    logSpy.mockRestore();
+    exitSpy.mockRestore();
+  });
 });

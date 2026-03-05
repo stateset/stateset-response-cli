@@ -3,7 +3,7 @@
 AI-powered CLI for managing the [StateSet ResponseCX](https://response.cx) platform. Chat with an AI agent that can manage your agents, rules, skills, knowledge base, channels, messages, and more — all from the terminal.
 
 Includes optional WhatsApp and Slack gateways for connecting your agent to messaging platforms.
-Current version: `1.7.5`.
+Current version: `1.7.6`.
 
 ## Features
 
@@ -17,7 +17,7 @@ Current version: `1.7.5`.
 - **Shortcut commands** for direct CLI operations (deploy, backup, monitor, snapshot, diff, etc.)
 - **Circuit breaker** and retry with exponential backoff + jitter for HTTP/GraphQL resilience
 - **Version awareness** with cached npm update checks that surface newer CLI releases
-- **Security hardened** — AES-256-GCM credential encryption, SSRF prevention, ANSI escape sanitization, path traversal protection
+- **Security hardened** — AES-256-GCM credential encryption, SSRF prevention, ANSI escape sanitization, path traversal protection, strict auth URL validation, and symlink-safe policy/export/cache writes with tighter `0600/0700` file permissions
 
 ## Install
 

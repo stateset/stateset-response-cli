@@ -1,30 +1,30 @@
-# StateSet ResponseCLI Release Notes (v1.7.5)
+# StateSet ResponseCLI Release Notes (v1.7.6)
 
 ## Overview
 
-StateSet ResponseCLI `v1.7.5` improves interactive UX with markdown-aware terminal rendering, context-aware tab completion, persistent prompt history, and cached update notifications. This release also expands test coverage for the new CLI behavior.
+StateSet ResponseCLI `v1.7.6` hardens authentication and file-write security paths while improving runtime safety and resilience for integrations.
 
 ## Highlights
 
-### Chat and terminal UX
-- Added markdown rendering for streamed agent output:
-  - headings, lists, block quotes, inline emphasis, links, and fenced code blocks
-  - streaming-safe buffering behavior for partial lines and code fences
-- Updated chat flow to use the new markdown rendering path.
+### Security hardening
+- Enforced HTTP(S)-only validation for device verification URLs in auth flow.
+- Updated Windows browser opening path to avoid shell interpretation risks.
+- Hardened local policy/permission/export/cache writes:
+  - reject symlinked write targets
+  - enforce stricter file mode defaults (`0600`) with directory mode tightening (`0700`)
+  - apply safer output-path validation for policy/export destinations
 
-### CLI productivity
-- Added smart tab completion for slash commands and common arguments.
-- Added persistent local input history at `~/.stateset/input-history`.
-- Added update checks against npm latest with 24-hour local caching (non-blocking startup behavior).
+### Runtime reliability
+- Fatal global error handlers now force process termination after logging, preventing continued execution in an undefined state.
+- Gorgias integration now uses the retrying HTTP helper for better transient failure handling.
 
 ### Test coverage
-- Added dedicated tests for:
-  - markdown renderer
-  - markdown stream renderer
-  - command completer
-  - history storage utilities
-  - update check utility
-- Expanded chat action test coverage for the updated output path.
+- Added and updated tests for:
+  - unsafe device verification URL rejection
+  - unhandled-rejection exit behavior
+  - symlink-safe policy write protections
+  - secure write options in export/policy command paths
+  - Gorgias retry-helper request path
 
 ## CLI entry points
 

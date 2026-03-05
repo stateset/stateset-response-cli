@@ -133,7 +133,9 @@ describe('handleExportCommand', () => {
     expect(mockWriteFileSync).toHaveBeenCalled();
     expect(mockWriteFileSync.mock.calls[0][0]).toBe(path.resolve(outPath));
     expect(mockWriteFileSync.mock.calls[0][1]).toBe(JSON.stringify(mockEntries, null, 2));
-    expect(mockWriteFileSync.mock.calls[0][2]).toBe('utf-8');
+    expect(mockWriteFileSync.mock.calls[0][2]).toEqual(
+      expect.objectContaining({ encoding: 'utf-8', mode: 0o600 }),
+    );
   });
 
   it('/export-list shows empty export list', async () => {

@@ -26,6 +26,15 @@ function readExportPreview(filePath: string): string | null {
   }
 }
 
+function writePrivateFile(filePath: string, content: string): void {
+  fs.writeFileSync(filePath, content, { encoding: 'utf-8', mode: 0o600 });
+  try {
+    fs.chmodSync(filePath, 0o600);
+  } catch {
+    // Best-effort on non-POSIX systems.
+  }
+}
+
 export async function handleExportCommand(input: string, ctx: ChatContext): Promise<boolean> {
   // /export-list — list export files for a session
   if (hasCommand(input, '/export-list')) {
@@ -296,16 +305,19 @@ export async function handleExportCommand(input: string, ctx: ChatContext): Prom
             allowOutside: allowUnsafePath,
             allowedRoots: [defaultDir, ctx.cwd, getStateSetDir()],
           })
-        : resolvedPath;
+        : resolveSafeOutputPath(resolvedPath, {
+            label: 'Export output',
+            allowOutside: true,
+          });
       ensureDirExists(finalOutputPath);
       if (format === 'jsonl') {
         const lines = entries.map((entry) => JSON.stringify(entry));
-        fs.writeFileSync(finalOutputPath, lines.join('\n') + '\n', 'utf-8');
+        writePrivateFile(finalOutputPath, lines.join('\n') + '\n');
       } else if (format === 'json') {
-        fs.writeFileSync(finalOutputPath, JSON.stringify(entries, null, 2), 'utf-8');
+        writePrivateFile(finalOutputPath, JSON.stringify(entries, null, 2));
       } else {
         const markdown = exportSessionToMarkdown(targetSession, entries);
-        fs.writeFileSync(finalOutputPath, markdown, 'utf-8');
+        writePrivateFile(finalOutputPath, markdown);
       }
       console.log(formatSuccess(`Exported ${entries.length} messages to ${finalOutputPath}`));
     } catch (err) {

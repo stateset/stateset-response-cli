@@ -2,7 +2,12 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parsePolicyFile, makeHookPermissionKey, readPolicyFile } from '../cli/permissions.js';
+import {
+  parsePolicyFile,
+  makeHookPermissionKey,
+  readPolicyFile,
+  writePolicyOverrides,
+} from '../cli/permissions.js';
 
 const MAX_POLICY_FILE_SIZE_BYTES = 1_048_576;
 let tmpDir: string;
@@ -117,5 +122,54 @@ describe('makeHookPermissionKey', () => {
 
   it('handles empty strings', () => {
     expect(makeHookPermissionKey('', '')).toBe('::');
+  });
+});
+
+describe('writePolicyOverrides', () => {
+  it('writes policy overrides to a regular file', () => {
+    const cwd = path.join(tmpDir, 'repo');
+    fs.mkdirSync(cwd);
+
+    writePolicyOverrides(cwd, { toolHooks: { 'my-hook': 'allow' } });
+
+    const outPath = path.join(cwd, '.stateset', 'policies.json');
+    const parsed = JSON.parse(fs.readFileSync(outPath, 'utf-8')) as {
+      toolHooks: Record<string, string>;
+    };
+    expect(parsed.toolHooks['my-hook']).toBe('allow');
+  });
+
+  it.skipIf(process.platform === 'win32')('rejects symlink policy targets', () => {
+    const cwd = path.join(tmpDir, 'repo');
+    fs.mkdirSync(cwd);
+    const statesetDir = path.join(cwd, '.stateset');
+    fs.mkdirSync(statesetDir);
+    const realTarget = path.join(tmpDir, 'real-policy.json');
+    fs.writeFileSync(realTarget, JSON.stringify({ toolHooks: { safe: 'deny' } }));
+    const symlinkPath = path.join(statesetDir, 'policies.json');
+    fs.symlinkSync(realTarget, symlinkPath);
+
+    expect(() => writePolicyOverrides(cwd, { toolHooks: { override: 'allow' } })).toThrow(
+      /symlink/,
+    );
+    const parsed = JSON.parse(fs.readFileSync(realTarget, 'utf-8')) as {
+      toolHooks: Record<string, string>;
+    };
+    expect(parsed.toolHooks['safe']).toBe('deny');
+    expect(parsed.toolHooks['override']).toBeUndefined();
+  });
+
+  it.skipIf(process.platform === 'win32')('rejects symlinked .stateset directory', () => {
+    const cwd = path.join(tmpDir, 'repo');
+    fs.mkdirSync(cwd);
+    const realDir = path.join(tmpDir, 'real-stateset');
+    fs.mkdirSync(realDir);
+    const symlinkDir = path.join(cwd, '.stateset');
+    fs.symlinkSync(realDir, symlinkDir);
+
+    expect(() => writePolicyOverrides(cwd, { toolHooks: { override: 'allow' } })).toThrow(
+      /symlink/,
+    );
+    expect(fs.existsSync(path.join(realDir, 'policies.json'))).toBe(false);
   });
 });

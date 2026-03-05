@@ -33,10 +33,27 @@ function readCache(): CachedResult | null {
 function writeCache(latestVersion: string): void {
   try {
     if (!fs.existsSync(CACHE_DIR)) {
-      fs.mkdirSync(CACHE_DIR, { recursive: true });
+      fs.mkdirSync(CACHE_DIR, { recursive: true, mode: 0o700 });
+    } else {
+      const dirStat = fs.lstatSync(CACHE_DIR);
+      if (!dirStat.isDirectory() || dirStat.isSymbolicLink()) {
+        return;
+      }
+    }
+    if (fs.existsSync(CACHE_FILE)) {
+      const fileStat = fs.lstatSync(CACHE_FILE);
+      if (!fileStat.isFile() || fileStat.isSymbolicLink()) {
+        return;
+      }
     }
     const data: CachedResult = { latestVersion, checkedAt: Date.now() };
-    fs.writeFileSync(CACHE_FILE, JSON.stringify(data), 'utf-8');
+    fs.writeFileSync(CACHE_FILE, JSON.stringify(data), { encoding: 'utf-8', mode: 0o600 });
+    try {
+      fs.chmodSync(CACHE_DIR, 0o700);
+      fs.chmodSync(CACHE_FILE, 0o600);
+    } catch {
+      // Best-effort on non-POSIX systems.
+    }
   } catch {
     // Best-effort
   }

@@ -1,4 +1,4 @@
-import { normalizePath, applyQueryParams, requestJson } from './http.js';
+import { normalizePath, applyQueryParams, requestJsonWithRetry } from './http.js';
 import type { GorgiasConfig } from './config.js';
 import { NotFoundError, ServiceUnavailableError, StateSetError } from '../lib/errors.js';
 
@@ -52,7 +52,7 @@ export function createGorgiasApi({ domain, apiKey, email }: GorgiasConfig): Gorg
     const url = new URL(`${baseUrl}${normalizedEndpoint}`);
     applyQueryParams(url, query);
 
-    const response = await requestJson(url.toString(), {
+    const response = await requestJsonWithRetry(url.toString(), {
       method,
       headers: {
         Authorization: `Basic ${auth}`,

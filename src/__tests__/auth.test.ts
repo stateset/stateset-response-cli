@@ -210,4 +210,44 @@ describe('auth command', () => {
     expect(mockRequestJson).toHaveBeenCalledTimes(2);
     logSpy.mockRestore();
   });
+
+  it('rejects unsafe device verification URLs', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    mockRequestJson.mockResolvedValueOnce({
+      status: 200,
+      data: {
+        device_code: 'dev-code',
+        user_code: 'USER123',
+        verification_url: 'file:///tmp/verify',
+        expires_in: 60,
+        interval: 5,
+      },
+    });
+
+    const program = new Command();
+    registerAuthCommands(program);
+
+    await program.parseAsync([
+      'node',
+      'response',
+      'auth',
+      'login',
+      '--device',
+      '--instance-url',
+      'https://response.example.com',
+      '--non-interactive',
+      '--no-open-browser',
+    ]);
+
+    expect(mockedSaveConfig).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+    expect(
+      errSpy.mock.calls.some(
+        ([line]) =>
+          typeof line === 'string' &&
+          line.includes('Device verification URL must use http:// or https://'),
+      ),
+    ).toBe(true);
+    errSpy.mockRestore();
+  });
 });

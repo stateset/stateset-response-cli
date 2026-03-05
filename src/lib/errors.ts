@@ -45,6 +45,10 @@ function shutdownWithError(message: string): void {
   }
   isExiting = true;
   process.exitCode = 1;
+  // Fatal exceptions leave the process in an unknown state. Exit on next tick.
+  setImmediate(() => {
+    process.exit(1);
+  });
 }
 
 /**

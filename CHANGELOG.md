@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.7.6 - 2026-03-05
+
+### Security
+- Hardened auth device flow URL handling: verification URLs must be HTTP(S), and Windows browser launch now avoids shell interpretation.
+- Hardened local writes for permissions, policies, exports, and update-cache files with stricter file modes (`0600`) and directory modes (`0700`).
+- Added symlink-target rejection and safer output-path checks for policy/export writes.
+
+### Reliability
+- Fatal global error handlers now force process exit on the next tick after logging to avoid undefined runtime state.
+- Switched Gorgias HTTP calls to the retrying request helper for better transient error resilience.
+
+### Tests
+- Added regression tests for unsafe device verification URLs, unhandled-rejection process exit, and symlink-safe policy writes.
+- Updated Gorgias integration tests for the retry helper path and updated export/policy tests to assert secure file-write options.
+
 ## 1.7.5 - 2026-03-04
 
 ### UX

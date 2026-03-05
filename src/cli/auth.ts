@@ -173,13 +173,18 @@ function tryOpenBrowser(url: string): boolean {
       command = 'open';
       args = [url];
     } else if (process.platform === 'win32') {
-      command = 'cmd';
-      args = ['/c', 'start', '', url];
+      // Avoid `cmd /c start` to prevent shell interpretation of URL content.
+      command = 'explorer.exe';
+      args = [url];
     } else {
       command = 'xdg-open';
       args = [url];
     }
-    const result = spawnSync(command, args, { stdio: 'ignore' });
+    const result = spawnSync(command, args, {
+      stdio: 'ignore',
+      windowsHide: true,
+      timeout: 5000,
+    });
     if (result.error) {
       return false;
     }
@@ -283,13 +288,14 @@ export async function runAuthLogin(options: AuthLoginOptions = {}): Promise<void
     const normalizedInstance = validateInstanceUrl(instanceUrl);
     const { device_code, user_code, verification_url, expires_in, interval } =
       await startDeviceFlow(normalizedInstance);
+    const safeVerificationUrl = validateHttpUrl(verification_url, 'Device verification URL');
 
     console.log('');
     console.log(chalk.bold('  Authorize the CLI'));
-    console.log(chalk.gray(`  Visit: ${verification_url}`));
+    console.log(chalk.gray(`  Visit: ${safeVerificationUrl}`));
     console.log(chalk.gray(`  Code:  ${user_code}`));
     if (options.openBrowser !== false) {
-      const opened = tryOpenBrowser(verification_url);
+      const opened = tryOpenBrowser(safeVerificationUrl);
       console.log(
         opened
           ? chalk.gray('  Opened verification URL in your browser.')

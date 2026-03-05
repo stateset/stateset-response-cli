@@ -13,6 +13,15 @@ import {
   readPolicyFile,
 } from './permissions.js';
 
+function writePrivateJson(filePath: string, value: unknown): void {
+  fs.writeFileSync(filePath, JSON.stringify(value, null, 2), { encoding: 'utf-8', mode: 0o600 });
+  try {
+    fs.chmodSync(filePath, 0o600);
+  } catch {
+    // Best-effort on non-POSIX systems.
+  }
+}
+
 export async function handlePolicyCommand(input: string, ctx: ChatContext): Promise<CommandResult> {
   // /permissions — manage stored tool hook permissions
   if (hasCommand(input, '/permissions')) {
@@ -187,9 +196,12 @@ export async function handlePolicyCommand(input: string, ctx: ChatContext): Prom
               allowOutside: allowUnsafePath,
               allowedRoots: [ctx.cwd, getStateSetDir()],
             })
-          : defaultPath;
+          : resolveSafeOutputPath(defaultPath, {
+              label: 'Policy export target',
+              allowOutside: true,
+            });
         ensureDirExists(resolved);
-        fs.writeFileSync(resolved, JSON.stringify(view, null, 2), 'utf-8');
+        writePrivateJson(resolved, view);
         console.log(formatSuccess(`Policy overrides (${mode}) exported to ${resolved}`));
       } catch (err) {
         console.error(formatError(getErrorMessage(err)));
@@ -222,14 +234,13 @@ export async function handlePolicyCommand(input: string, ctx: ChatContext): Prom
         ctx.rl.prompt();
         return { handled: true };
       }
-      const starter = {
+      const starter: { toolHooks: Record<string, PermissionDecision> } = {
         toolHooks: {
           'example-hook': 'deny',
         },
       };
       try {
-        ensureDirExists(target);
-        fs.writeFileSync(target, JSON.stringify(starter, null, 2), 'utf-8');
+        writePolicyOverrides(ctx.cwd, starter);
         console.log(formatSuccess('Created policy file.'));
         console.log(chalk.gray(`  ${target}`));
       } catch (err) {

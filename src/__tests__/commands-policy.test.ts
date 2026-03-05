@@ -131,7 +131,9 @@ describe('handlePolicyCommand', () => {
     expect(mockWriteFileSync.mock.calls[0][0]).toBe(outPath);
     const payload = JSON.parse(String(mockWriteFileSync.mock.calls[0][1]));
     expect(payload).toEqual(mockReadPolicyOverridesDetailed().merged);
-    expect(mockWriteFileSync.mock.calls[0][2]).toBe('utf-8');
+    expect(mockWriteFileSync.mock.calls[0][2]).toEqual(
+      expect.objectContaining({ encoding: 'utf-8', mode: 0o600 }),
+    );
   });
 
   it('/policy import handles merge mode through command handler', async () => {
@@ -331,7 +333,11 @@ describe('handlePolicyCommand', () => {
     const result = await handlePolicyCommand('/policy init', ctx);
 
     expect(result).toEqual({ handled: true });
-    expect(mockWriteFileSync).toHaveBeenCalled();
+    expect(mockWritePolicyOverrides).toHaveBeenCalledTimes(1);
+    expect(mockWritePolicyOverrides.mock.calls[0][0]).toBe('/tmp/project');
+    expect(mockWritePolicyOverrides.mock.calls[0][1]).toEqual({
+      toolHooks: { 'example-hook': 'deny' },
+    });
     expect(
       consoleSpy.mock.calls.some(
         ([line]) => typeof line === 'string' && line.includes('Created policy file'),
