@@ -18,6 +18,26 @@ import {
 
 const ANALYTICS_PAGE_LIMIT = 500;
 
+function isPositiveRating(value: unknown): boolean {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase();
+  return ['good', 'positive', 'great', 'excellent', 'thumbs_up', 'upvote', '5', '4'].includes(
+    normalized,
+  );
+}
+
+function isNegativeRating(value: unknown): boolean {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase();
+  return ['bad', 'negative', 'poor', 'thumbs_down', 'downvote', '1', '2'].includes(normalized);
+}
+
+function formatPercent(value: number): string {
+  return `${value.toFixed(1)}%`;
+}
+
 async function fetchPaginatedAnalytics(
   runner: ShortcutRunner,
   toolName: 'list_channels' | 'list_responses',
@@ -106,6 +126,7 @@ export async function runAnalyticsCommand(
     'conversations',
     'conversation',
     'responses',
+    'quality',
   ]);
   let positionals = [...initialPositionals];
   let fromInput = options.from || options.since;
@@ -290,6 +311,159 @@ export async function runAnalyticsCommand(
       filteredItems,
       false,
     );
+    return;
+  }
+
+  if (action === 'quality') {
+    const [channelsData, responsesData, settingsData] = await Promise.all([
+      fetchPaginatedAnalytics(runner, 'list_channels'),
+      fetchPaginatedAnalytics(runner, 'list_responses'),
+      runner.callTool<unknown[]>('list_agent_settings', {}),
+    ]);
+
+    const filteredChannels = channelsData.filter((item) =>
+      isInDateRange(asStringRecord(item).created_at, dateRange.from, dateRange.to),
+    );
+    const filteredResponses = responsesData.filter((item) =>
+      isInDateRange(asStringRecord(item).created_date, dateRange.from, dateRange.to),
+    );
+
+    const ratedResponses = filteredResponses.filter((item) => {
+      const rating = asStringRecord(item).rating;
+      return typeof rating === 'string' && rating.trim().length > 0;
+    });
+    const positiveRatings = ratedResponses.filter((item) =>
+      isPositiveRating(asStringRecord(item).rating),
+    ).length;
+    const negativeRatings = ratedResponses.filter((item) =>
+      isNegativeRating(asStringRecord(item).rating),
+    ).length;
+    const escalatedChannels = filteredChannels.filter((item) => {
+      const channel = asStringRecord(item);
+      return channel.escalated === true || channel.status === 'needs_attention';
+    }).length;
+    const resolvedChannels = filteredChannels.filter(
+      (item) => asStringRecord(item).status === 'closed',
+    ).length;
+    const settingsRows = Array.isArray(settingsData.payload) ? settingsData.payload : [];
+    const configuredHandleTimes = settingsRows
+      .map((entry) => Number(asStringRecord(entry).handle_time))
+      .filter((value) => Number.isFinite(value) && value > 0);
+    const averageHandleTime =
+      configuredHandleTimes.length > 0
+        ? configuredHandleTimes.reduce((sum, value) => sum + value, 0) /
+          configuredHandleTimes.length
+        : null;
+
+    const overall = [
+      {
+        metric: 'Conversations',
+        value: String(filteredChannels.length),
+      },
+      {
+        metric: 'Resolution rate',
+        value:
+          filteredChannels.length > 0
+            ? formatPercent((resolvedChannels / filteredChannels.length) * 100)
+            : '0.0%',
+      },
+      {
+        metric: 'Escalation rate',
+        value:
+          filteredChannels.length > 0
+            ? formatPercent((escalatedChannels / filteredChannels.length) * 100)
+            : '0.0%',
+      },
+      {
+        metric: 'CSAT signal',
+        value:
+          ratedResponses.length > 0
+            ? formatPercent((positiveRatings / ratedResponses.length) * 100)
+            : 'n/a',
+      },
+      {
+        metric: 'Negative feedback',
+        value:
+          ratedResponses.length > 0
+            ? formatPercent((negativeRatings / ratedResponses.length) * 100)
+            : 'n/a',
+      },
+      {
+        metric: 'Avg handle time',
+        value: averageHandleTime === null ? 'n/a' : `${Math.round(averageHandleTime)}ms`,
+      },
+    ];
+
+    const byAgent = new Map<
+      string,
+      {
+        responses: number;
+        rated: number;
+        positive: number;
+        negative: number;
+        takeovers: number;
+      }
+    >();
+    for (const entry of filteredResponses) {
+      const response = asStringRecord(entry);
+      const agentName = String(response.served_by_agent || 'unassigned').trim() || 'unassigned';
+      const row = byAgent.get(agentName) || {
+        responses: 0,
+        rated: 0,
+        positive: 0,
+        negative: 0,
+        takeovers: 0,
+      };
+      row.responses += 1;
+      if (response.agent_take_over === true) {
+        row.takeovers += 1;
+      }
+      if (typeof response.rating === 'string' && response.rating.trim()) {
+        row.rated += 1;
+        if (isPositiveRating(response.rating)) row.positive += 1;
+        if (isNegativeRating(response.rating)) row.negative += 1;
+      }
+      byAgent.set(agentName, row);
+    }
+
+    const agentRows = Array.from(byAgent.entries())
+      .map(([agentName, row]) => ({
+        agent: agentName,
+        responses: String(row.responses),
+        csat: row.rated > 0 ? formatPercent((row.positive / row.rated) * 100) : 'n/a',
+        escalations: formatPercent((row.takeovers / Math.max(row.responses, 1)) * 100),
+        negative: row.rated > 0 ? formatPercent((row.negative / row.rated) * 100) : 'n/a',
+      }))
+      .sort((a, b) => Number.parseInt(b.responses, 10) - Number.parseInt(a.responses, 10))
+      .slice(0, 10);
+
+    if (json) {
+      logger.output(
+        JSON.stringify(
+          {
+            overall,
+            agents: agentRows,
+            filters: {
+              from: dateRange.from ? new Date(dateRange.from).toISOString() : undefined,
+              to: dateRange.to ? new Date(dateRange.to).toISOString() : undefined,
+            },
+          },
+          null,
+          2,
+        ),
+      );
+      return;
+    }
+
+    logger.success('Response quality dashboard');
+    logger.output(formatTable(overall, ['metric', 'value']));
+    if (agentRows.length > 0) {
+      logger.output('');
+      logger.output('By agent');
+      logger.output(
+        formatTable(agentRows, ['agent', 'responses', 'csat', 'escalations', 'negative']),
+      );
+    }
     return;
   }
 

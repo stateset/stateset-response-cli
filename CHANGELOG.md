@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.9.0 - 2026-03-06
+
+### Agent Iteration & Debugging
+
+- Turned `response test` into a traced simulator with visible tool decisions, optional mock tool responses, and sandboxed write blocking by default.
+- Added `response replay <conversation-id>` with step-through tracing so existing conversations can be rerun against the current agent behavior.
+- Added `response logs --watch` to tail recent local agent activity from session logs and tool audit history.
+
+### Config & Operations
+
+- Added `response diff --remote` for local-vs-deployed drift detection with named entity change summaries.
+- Added `response sync status` to summarize integration readiness, last successful activity, and recent failures from local telemetry.
+- Added bulk update flows for rules and agents, including `response rules disable --tag ...` and `response agents update --all --model ...`.
+
+### Templates, Analytics, and Documentation
+
+- Added `response init --template refund-agent|subscription-management` to scaffold local `.stateset` starter bundles.
+- Added `response analytics quality` for derived quality metrics such as CSAT signal, resolution rate, escalation rate, and per-agent breakdowns.
+- Added `response export runbook --agent ...` to generate human-readable agent documentation from the exported agent configuration.
+
 ## 1.8.0 - 2026-03-06
 
 ### CLI UX

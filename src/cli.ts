@@ -28,6 +28,8 @@ import { registerIntegrationsCommands, runIntegrationsSetup } from './cli/comman
 import { registerDoctorCommand, runDoctorChecks } from './cli/commands-doctor.js';
 import { registerShortcutTopLevelCommands } from './cli/commands-shortcuts.js';
 import { resolveOneShotInput, runOneShotPrompt, startChatSession } from './cli/chat-action.js';
+import { exportAgentRunbook } from './cli/runbook.js';
+import { listAgentTemplates, scaffoldAgentTemplate } from './cli/agent-templates.js';
 
 const require = createRequire(import.meta.url);
 const pkg = require('../package.json') as { version?: string };
@@ -81,6 +83,7 @@ interface InitCommandOptions extends AuthLoginOptions {
   chat?: boolean;
   fromEnv?: boolean;
   integration?: string;
+  template?: string;
 }
 
 program
@@ -96,6 +99,12 @@ program
   .option('--no-chat', 'Skip launching chat after setup')
   .option('--from-env', 'During integration setup, prefill values from environment variables')
   .option('--integration <id>', 'Configure one integration during setup')
+  .option(
+    '--template <id>',
+    `Scaffold a local agent template (${listAgentTemplates()
+      .map((template) => template.id)
+      .join(', ')})`,
+  )
   .option('--device', 'Use browser/device code authentication')
   .option('--manual', 'Use manual admin-secret authentication')
   .option('--instance-url <url>', 'StateSet ResponseCX instance URL')
@@ -180,6 +189,19 @@ program
         process.exitCode = 1;
         return;
       }
+    }
+
+    if (options.template) {
+      try {
+        const result = scaffoldAgentTemplate(options.template, process.cwd());
+        console.log(chalk.green(`  Template scaffolded: ${result.template.label}`));
+        console.log(chalk.gray(`  Wrote local bundle to ${result.path}`));
+      } catch (e: unknown) {
+        console.error(formatError(getErrorMessage(e)));
+        process.exitCode = 1;
+        return;
+      }
+      console.log('');
     }
 
     if (options.chat === false) {
@@ -277,38 +299,68 @@ configCmd
 // Export command
 program
   .command('export')
-  .description('Export entire org configuration to a JSON file')
-  .argument('[file]', 'Output file path', 'stateset-export.json')
-  .action(async (file: string) => {
-    if (!configExists()) {
-      printAuthHelp();
-      process.exitCode = 1;
-      return;
-    }
-    const { orgId } = getCurrentOrg();
-    const spinner = ora(`Exporting organization ${orgId}...`).start();
-    try {
-      const data = await exportOrg(file);
-      const counts = [
-        `${data.agents.length} agents`,
-        `${data.rules.length} rules`,
-        `${data.skills.length} skills`,
-        `${data.attributes.length} attributes`,
-        `${data.functions.length} functions`,
-        `${data.examples.length} examples`,
-        `${data.evals.length} evals`,
-        `${data.datasets.length} datasets`,
-        `${data.agentSettings.length} agent settings`,
-      ];
-      spinner.succeed(`Exported to ${file}`);
-      console.log(chalk.gray(`  ${counts.join(', ')}`));
-    } catch (e: unknown) {
-      spinner.fail('Export failed');
-      console.error(formatError(getErrorMessage(e)));
-      process.exitCode = 1;
-      return;
-    }
-  });
+  .description('Export org configuration or generate a runbook')
+  .argument('[args...]', 'Output file path or `runbook` subcommand')
+  .option('--agent <agent-id-or-name>', 'Target agent for runbook generation')
+  .option('--out <path>', 'Override output path')
+  .action(
+    async (
+      args: string[],
+      options: {
+        agent?: string;
+        out?: string;
+      },
+    ) => {
+      const [firstArg, secondArg] = args;
+      if (firstArg === 'runbook') {
+        const agentReference = options.agent || secondArg;
+        if (!agentReference) {
+          console.error(formatError('Usage: response export runbook --agent <agent-id-or-name>'));
+          process.exitCode = 1;
+          return;
+        }
+        const spinner = ora(`Generating runbook for ${agentReference}...`).start();
+        try {
+          const outputPath = await exportAgentRunbook(agentReference, options.out);
+          spinner.succeed(`Runbook exported to ${outputPath}`);
+        } catch (e: unknown) {
+          spinner.fail('Runbook export failed');
+          console.error(formatError(getErrorMessage(e)));
+          process.exitCode = 1;
+        }
+        return;
+      }
+
+      const file = options.out || firstArg || 'stateset-export.json';
+      if (!configExists()) {
+        printAuthHelp();
+        process.exitCode = 1;
+        return;
+      }
+      const { orgId } = getCurrentOrg();
+      const spinner = ora(`Exporting organization ${orgId}...`).start();
+      try {
+        const data = await exportOrg(file);
+        const counts = [
+          `${data.agents.length} agents`,
+          `${data.rules.length} rules`,
+          `${data.skills.length} skills`,
+          `${data.attributes.length} attributes`,
+          `${data.functions.length} functions`,
+          `${data.examples.length} examples`,
+          `${data.evals.length} evals`,
+          `${data.datasets.length} datasets`,
+          `${data.agentSettings.length} agent settings`,
+        ];
+        spinner.succeed(`Exported to ${file}`);
+        console.log(chalk.gray(`  ${counts.join(', ')}`));
+      } catch (e: unknown) {
+        spinner.fail('Export failed');
+        console.error(formatError(getErrorMessage(e)));
+        process.exitCode = 1;
+      }
+    },
+  );
 
 // Import command
 program

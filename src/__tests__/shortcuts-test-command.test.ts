@@ -1,56 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ShortcutLogger } from '../cli/shortcuts/types.js';
 
-const {
-  state,
-  mockGetRuntimeContext,
-  MockStateSetAgent,
-  mockBuildTopLevelLogger,
-  mockFormatToolResult,
-  instances,
-} = vi.hoisted(() => {
-  const state = {
-    chatResult: 'agent-response',
-    chatError: null as Error | null,
-  };
-  const instances: Array<{
-    connect: ReturnType<typeof vi.fn>;
-    chat: ReturnType<typeof vi.fn>;
-    disconnect: ReturnType<typeof vi.fn>;
-  }> = [];
-  const mockGetRuntimeContext = vi.fn();
-  const mockBuildTopLevelLogger = vi.fn();
-  const mockFormatToolResult = vi.fn((text: string) => `formatted:${text}`);
-  const MockStateSetAgent = vi.fn(function MockStateSetAgent(this: Record<string, unknown>) {
-    this.connect = vi.fn(async () => undefined);
-    this.chat = vi.fn(async () => {
-      if (state.chatError) throw state.chatError;
-      return state.chatResult;
-    });
-    this.disconnect = vi.fn(async () => undefined);
-    instances.push({
-      connect: this.connect as ReturnType<typeof vi.fn>,
-      chat: this.chat as ReturnType<typeof vi.fn>,
-      disconnect: this.disconnect as ReturnType<typeof vi.fn>,
-    });
-  });
+const { mockRunTracedAgentChat, mockBuildTopLevelLogger, mockFormatToolResult } = vi.hoisted(
+  () => ({
+    mockRunTracedAgentChat: vi.fn(),
+    mockBuildTopLevelLogger: vi.fn(),
+    mockFormatToolResult: vi.fn((text: string) => `formatted:${text}`),
+  }),
+);
 
-  return {
-    state,
-    mockGetRuntimeContext,
-    MockStateSetAgent,
-    mockBuildTopLevelLogger,
-    mockFormatToolResult,
-    instances,
-  };
-});
-
-vi.mock('../config.js', () => ({
-  getRuntimeContext: mockGetRuntimeContext,
-}));
-
-vi.mock('../agent.js', () => ({
-  StateSetAgent: MockStateSetAgent,
+vi.mock('../cli/shortcuts/agent-runtime.js', () => ({
+  runTracedAgentChat: mockRunTracedAgentChat,
 }));
 
 vi.mock('../cli/shortcuts/utils.js', async () => {
@@ -79,12 +39,24 @@ function createLogger(): ShortcutLogger {
 describe('shortcuts test command', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    instances.length = 0;
-    state.chatResult = 'agent-response';
-    state.chatError = null;
-    mockGetRuntimeContext.mockReturnValue({ anthropicApiKey: 'test-api-key' });
     mockBuildTopLevelLogger.mockReturnValue(createLogger());
-    delete process.env.STATESET_ACTIVE_AGENT_ID;
+    mockRunTracedAgentChat.mockResolvedValue({
+      input: 'hello world',
+      finalResponse: 'agent-response',
+      toolCalls: [
+        {
+          step: 1,
+          name: 'list_orders',
+          args: { limit: 1 },
+          decision: 'allow',
+          resultText: '[]',
+          isError: false,
+          durationMs: 10,
+        },
+      ],
+      assistantTurns: [],
+      sandboxed: true,
+    });
   });
 
   it('shows usage when no input is provided', async () => {
@@ -92,32 +64,31 @@ describe('shortcuts test command', () => {
 
     await runTestCommand([], logger, false);
 
-    expect(logger.warning).toHaveBeenCalledWith('Usage: /test "<message>" [--agent <id>]');
-    expect(MockStateSetAgent).not.toHaveBeenCalled();
+    expect(logger.warning).toHaveBeenCalledWith(
+      'Usage: /test "<message>" [--agent <id>] [--mock <file>] [--context-file <file>] [--allow-writes]',
+    );
+    expect(mockRunTracedAgentChat).not.toHaveBeenCalled();
   });
 
-  it('runs a chat call and restores a previous active agent id', async () => {
-    const logger = createLogger();
-    process.env.STATESET_ACTIVE_AGENT_ID = 'existing-agent';
-
-    await runTestCommand(['"hello world"'], logger, false, 'temp-agent');
-
-    expect(mockGetRuntimeContext).toHaveBeenCalledTimes(1);
-    expect(MockStateSetAgent).toHaveBeenCalledWith('test-api-key');
-    expect(instances[0].connect).toHaveBeenCalledTimes(1);
-    expect(instances[0].chat).toHaveBeenCalledWith('hello world');
-    expect(mockFormatToolResult).toHaveBeenCalledWith('agent-response');
-    expect(logger.output).toHaveBeenCalledWith('formatted:agent-response');
-    expect(instances[0].disconnect).toHaveBeenCalledTimes(1);
-    expect(process.env.STATESET_ACTIVE_AGENT_ID).toBe('existing-agent');
-  });
-
-  it('removes temporary active agent id when there was no previous value', async () => {
+  it('runs traced chat with forwarded options', async () => {
     const logger = createLogger();
 
-    await runTestCommand(['hello'], logger, false, 'temp-agent');
+    await runTestCommand(['"hello world"'], logger, false, {
+      agentId: 'agent-1',
+      mockFile: 'fixtures/mock.json',
+      contextFile: 'fixtures/context.md',
+      allowWrites: true,
+    });
 
-    expect(process.env.STATESET_ACTIVE_AGENT_ID).toBeUndefined();
+    expect(mockRunTracedAgentChat).toHaveBeenCalledWith({
+      input: 'hello world',
+      agentId: 'agent-1',
+      mockFile: 'fixtures/mock.json',
+      contextFile: 'fixtures/context.md',
+      allowWrites: true,
+    });
+    expect(mockFormatToolResult).toHaveBeenCalledWith(expect.stringContaining('Decision Trace'));
+    expect(logger.output).toHaveBeenCalledWith(expect.stringContaining('formatted:'));
   });
 
   it('prints raw JSON output in json mode', async () => {
@@ -126,21 +97,29 @@ describe('shortcuts test command', () => {
     await runTestCommand(['hello'], logger, true);
 
     expect(logger.output).toHaveBeenCalledWith(
-      JSON.stringify({ response: 'agent-response' }, null, 2),
+      JSON.stringify(
+        {
+          input: 'hello world',
+          finalResponse: 'agent-response',
+          toolCalls: [
+            {
+              step: 1,
+              name: 'list_orders',
+              args: { limit: 1 },
+              decision: 'allow',
+              resultText: '[]',
+              isError: false,
+              durationMs: 10,
+            },
+          ],
+          assistantTurns: [],
+          sandboxed: true,
+        },
+        null,
+        2,
+      ),
     );
     expect(mockFormatToolResult).not.toHaveBeenCalled();
-  });
-
-  it('always disconnects and restores env when chat fails', async () => {
-    const logger = createLogger();
-    state.chatError = new Error('network down');
-
-    await expect(runTestCommand(['hello'], logger, false, 'temp-agent')).rejects.toThrow(
-      'network down',
-    );
-
-    expect(instances[0].disconnect).toHaveBeenCalledTimes(1);
-    expect(process.env.STATESET_ACTIVE_AGENT_ID).toBeUndefined();
   });
 
   it('runTopLevelTest uses top-level logger and delegates to runTestCommand', async () => {
@@ -150,6 +129,8 @@ describe('shortcuts test command', () => {
     await runTopLevelTest([], {});
 
     expect(mockBuildTopLevelLogger).toHaveBeenCalledTimes(1);
-    expect(topLevelLogger.warning).toHaveBeenCalledWith('Usage: /test "<message>" [--agent <id>]');
+    expect(topLevelLogger.warning).toHaveBeenCalledWith(
+      'Usage: /test "<message>" [--agent <id>] [--mock <file>] [--context-file <file>] [--allow-writes]',
+    );
   });
 });

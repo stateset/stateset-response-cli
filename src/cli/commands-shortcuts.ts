@@ -48,6 +48,9 @@ import {
   runTopLevelBulk,
   runTopLevelWatch,
 } from './shortcuts/deployments.js';
+import { runTopLevelReplay } from './shortcuts/replay.js';
+import { runTopLevelSync } from './shortcuts/sync.js';
+import { runTopLevelLogs } from './shortcuts/logs.js';
 import {
   runWebhooksCommand,
   runAlertsCommand,
@@ -245,7 +248,7 @@ export async function handleShortcutCommand(input: string, ctx: ChatContext) {
       const options = tokenOptions.options;
       const agentId = options.agent || options.agentId;
       const remaining = tokenOptions.positionals;
-      await runTestCommand(remaining, logger, slashOptions.json, agentId);
+      await runTestCommand(remaining, logger, slashOptions.json, { agentId });
       logger.done();
       return { handled: true };
     }
@@ -368,18 +371,33 @@ export function registerShortcutTopLevelCommands(program: Command): void {
   const rules = program
     .command('rules')
     .description('Manage rules with direct MCP shortcuts')
-    .argument('[args...]', 'Rules command: get|list|create|toggle|delete|import|export|agent|<id>')
-    .action(async (args: string[], opts: { json?: boolean }) => {
-      try {
-        await runTopLevelRules(args, opts);
-      } catch (error) {
-        if (error instanceof Error) {
-          console.error(formatError(error.message));
-          process.exitCode = 1;
+    .argument(
+      '[args...]',
+      'Rules command: get|list|create|toggle|enable|disable|delete|import|export|agent|<id>',
+    )
+    .option('--tag <tag>', 'Filter rules by tag for bulk enable/disable')
+    .option('--agent <agent-id>', 'Filter rules by agent ID for bulk enable/disable')
+    .option('--all', 'Apply to all rules for bulk enable/disable')
+    .action(
+      async (
+        args: string[],
+        opts: { json?: boolean; tag?: string; agent?: string; all?: boolean },
+      ) => {
+        try {
+          const forwarded = [...args];
+          if (opts.tag) forwarded.push('--tag', opts.tag);
+          if (opts.agent) forwarded.push('--agent', opts.agent);
+          if (opts.all) forwarded.push('--all');
+          await runTopLevelRules(forwarded, { json: opts.json });
+        } catch (error) {
+          if (error instanceof Error) {
+            console.error(formatError(error.message));
+            process.exitCode = 1;
+          }
+          throw error;
         }
-        throw error;
-      }
-    });
+      },
+    );
   addCommonJsonOption(rules, 'rules');
 
   const kb = program
@@ -402,18 +420,64 @@ export function registerShortcutTopLevelCommands(program: Command): void {
   const agents = program
     .command('agents')
     .description('Manage agents')
-    .argument('[args...]', 'Agents command: create|get|switch|export|import|bootstrap|<id>')
-    .action(async (args: string[], opts: { json?: boolean }) => {
-      try {
-        await runTopLevelAgents(args, opts);
-      } catch (error) {
-        if (error instanceof Error) {
-          console.error(formatError(error.message));
-          process.exitCode = 1;
+    .argument('[args...]', 'Agents command: create|get|update|switch|export|import|bootstrap|<id>')
+    .option('--all', 'Apply updates to all agents')
+    .option('--model <model>', 'Update configured model on agent settings records')
+    .option('--name <name>', 'Agent name')
+    .option('--type <type>', 'Agent type')
+    .option('--description <text>', 'Agent description')
+    .option('--role <text>', 'Agent role')
+    .option('--goal <text>', 'Agent goal')
+    .option('--instructions <text>', 'Agent instructions')
+    .option('--active <on|off>', 'Activation state')
+    .option('--voice-model <name>', 'Voice model name')
+    .option('--voice-model-id <id>', 'Voice model ID')
+    .option('--voice-model-provider <provider>', 'Voice model provider')
+    .action(
+      async (
+        args: string[],
+        opts: {
+          json?: boolean;
+          all?: boolean;
+          model?: string;
+          name?: string;
+          type?: string;
+          description?: string;
+          role?: string;
+          goal?: string;
+          instructions?: string;
+          active?: string;
+          voiceModel?: string;
+          voiceModelId?: string;
+          voiceModelProvider?: string;
+        },
+      ) => {
+        try {
+          const forwarded = [...args];
+          if (opts.all) forwarded.push('--all');
+          if (opts.model) forwarded.push('--model', opts.model);
+          if (opts.name) forwarded.push('--name', opts.name);
+          if (opts.type) forwarded.push('--type', opts.type);
+          if (opts.description) forwarded.push('--description', opts.description);
+          if (opts.role) forwarded.push('--role', opts.role);
+          if (opts.goal) forwarded.push('--goal', opts.goal);
+          if (opts.instructions) forwarded.push('--instructions', opts.instructions);
+          if (opts.active) forwarded.push('--active', opts.active);
+          if (opts.voiceModel) forwarded.push('--voice_model', opts.voiceModel);
+          if (opts.voiceModelId) forwarded.push('--voice_model_id', opts.voiceModelId);
+          if (opts.voiceModelProvider) {
+            forwarded.push('--voice_model_provider', opts.voiceModelProvider);
+          }
+          await runTopLevelAgents(forwarded, { json: opts.json });
+        } catch (error) {
+          if (error instanceof Error) {
+            console.error(formatError(error.message));
+            process.exitCode = 1;
+          }
+          throw error;
         }
-        throw error;
-      }
-    });
+      },
+    );
   addCommonJsonOption(agents, 'agents');
 
   const channels = program
@@ -486,7 +550,7 @@ export function registerShortcutTopLevelCommands(program: Command): void {
   program
     .command('stats')
     .description('Show analytics summary')
-    .argument('[args...]', 'Stats command: summary|agents|conversations|responses')
+    .argument('[args...]', 'Stats command: summary|agents|conversations|responses|quality')
     .option('--period <duration>', 'Filter window (supports 7d, 30d, 90d, etc.)')
     .option('--since <date>', 'Alias for --from (supports 7d, 2026-01-01, etc.)')
     .option('--from <date>', 'Filter start date (supports 7d, 2026-01-01, etc.)')
@@ -569,26 +633,93 @@ export function registerShortcutTopLevelCommands(program: Command): void {
 
   program
     .command('test')
-    .description('Test an agent-style response without writing to a conversation')
+    .description('Run a traced agent simulation without writing to a conversation')
     .argument('[message...]', 'Message to evaluate')
     .option('--agent <agent-id>', 'Target agent ID')
+    .option('--mock <file>', 'Mock tool responses from a JSON file')
+    .option('--context-file <file>', 'Append extra system context during simulation')
+    .option('--allow-writes', 'Allow write-like tool calls during simulation')
     .option('--json', 'Output as JSON')
-    .action(async (message: string[], opts: { agent?: string; json?: boolean }) => {
-      try {
-        await runTopLevelTest(message, { json: opts.json, agent: opts.agent });
-      } catch (error) {
-        if (error instanceof Error) {
-          console.error(formatError(error.message));
-          process.exitCode = 1;
+    .action(
+      async (
+        message: string[],
+        opts: {
+          agent?: string;
+          mock?: string;
+          contextFile?: string;
+          allowWrites?: boolean;
+          json?: boolean;
+        },
+      ) => {
+        try {
+          await runTopLevelTest(message, {
+            json: opts.json,
+            agent: opts.agent,
+            mock: opts.mock,
+            contextFile: opts.contextFile,
+            allowWrites: opts.allowWrites,
+          });
+        } catch (error) {
+          if (error instanceof Error) {
+            console.error(formatError(error.message));
+            process.exitCode = 1;
+          }
+          throw error;
         }
-        throw error;
-      }
-    });
+      },
+    );
+
+  program
+    .command('replay')
+    .description('Replay a conversation against traced agent execution')
+    .argument('<conversation-id>', 'Conversation UUID')
+    .option('--step-through', 'Show every customer turn instead of only the final turn')
+    .option('--limit <n>', 'Max messages to load from the conversation')
+    .option('--agent <agent-id>', 'Override the conversation agent ID')
+    .option('--mock <file>', 'Mock tool responses from a JSON file')
+    .option('--context-file <file>', 'Append extra system context during replay')
+    .option('--allow-writes', 'Allow write-like tool calls during replay')
+    .option('--json', 'Output as JSON')
+    .action(
+      async (
+        conversationId: string,
+        opts: {
+          stepThrough?: boolean;
+          limit?: string;
+          agent?: string;
+          mock?: string;
+          contextFile?: string;
+          allowWrites?: boolean;
+          json?: boolean;
+        },
+      ) => {
+        try {
+          await runTopLevelReplay(conversationId, {
+            json: opts.json,
+            stepThrough: opts.stepThrough,
+            limit: opts.limit,
+            agentId: opts.agent,
+            mock: opts.mock,
+            contextFile: opts.contextFile,
+            allowWrites: opts.allowWrites,
+          });
+        } catch (error) {
+          if (error instanceof Error) {
+            console.error(formatError(error.message));
+            process.exitCode = 1;
+          }
+          throw error;
+        }
+      },
+    );
 
   program
     .command('analytics')
     .description('Show platform analytics')
-    .argument('[args...]', 'analytics command: summary|agents|conversations|responses [options]')
+    .argument(
+      '[args...]',
+      'analytics command: summary|agents|conversations|responses|quality [options]',
+    )
     .option('--period <duration>', 'Filter window (supports 7d, 30d, 90d, etc.)')
     .option('--since <date>', 'Alias for --from (supports 7d, 2026-01-01, etc.)')
     .option('--from <date>', 'Filter start date (supports 7d, 2026-01-01, etc.)')
@@ -646,19 +777,88 @@ export function registerShortcutTopLevelCommands(program: Command): void {
     .argument('[refs...]', 'Diff refs: [from] [to]')
     .option('--from <snapshot>', 'Source snapshot')
     .option('--to <snapshot>', 'Target snapshot')
+    .option('--remote', 'Compare local .stateset config against the deployed remote state')
     .option('--json', 'Output diff as JSON')
     .option('--include-secrets', 'Include secrets when exporting current snapshot')
     .action(
       async (
         args: string[],
-        opts: { from?: string; to?: string; json?: boolean; includeSecrets?: boolean },
+        opts: {
+          from?: string;
+          to?: string;
+          remote?: boolean;
+          json?: boolean;
+          includeSecrets?: boolean;
+        },
       ) => {
         try {
           await runTopLevelDiff(args, {
             json: opts.json,
             from: opts.from,
             to: opts.to,
+            remote: opts.remote,
             includeSecrets: opts.includeSecrets,
+          });
+        } catch (error) {
+          if (error instanceof Error) {
+            console.error(formatError(error.message));
+            process.exitCode = 1;
+          }
+          throw error;
+        }
+      },
+    );
+
+  program
+    .command('sync')
+    .description('Show derived integration sync status')
+    .argument('[args...]', 'sync command: status [integration-id]')
+    .option('--json', 'Output as JSON')
+    .action(async (args: string[], opts: { json?: boolean }) => {
+      try {
+        await runTopLevelSync(args, { json: opts.json });
+      } catch (error) {
+        if (error instanceof Error) {
+          console.error(formatError(error.message));
+          process.exitCode = 1;
+        }
+        throw error;
+      }
+    });
+
+  program
+    .command('logs')
+    .description('Inspect or tail live agent activity from local session logs')
+    .argument('[args...]', 'logs command')
+    .option('--watch', 'Tail new events instead of printing recent history')
+    .option('--filter <text>', 'Filter events by substring')
+    .option('--limit <n>', 'Max events to show in non-watch mode')
+    .option('--interval <seconds>', 'Polling interval for watch mode')
+    .option('--count <n>', 'Stop after emitting n events in watch mode')
+    .option('--session <id>', 'Restrict to one session ID')
+    .option('--json', 'Output as JSON')
+    .action(
+      async (
+        args: string[],
+        opts: {
+          watch?: boolean;
+          filter?: string;
+          limit?: string;
+          interval?: string;
+          count?: string;
+          session?: string;
+          json?: boolean;
+        },
+      ) => {
+        try {
+          await runTopLevelLogs(args, {
+            json: opts.json,
+            watch: opts.watch,
+            filter: opts.filter,
+            limit: opts.limit,
+            interval: opts.interval,
+            count: opts.count,
+            session: opts.session,
           });
         } catch (error) {
           if (error instanceof Error) {

@@ -30,6 +30,7 @@ import type {
   SnapshotPathResult,
   SnapshotDiffRow,
   DiffSummary,
+  DiffDetail,
   StateSetBundleManifest,
   StateSetResourceField,
 } from './types.js';
@@ -180,6 +181,13 @@ export function parseCommandArgs(tokens: string[]) {
     'include-secrets',
     'includeSecrets',
     'once',
+    'remote',
+    'step-through',
+    'stepThrough',
+    'watch',
+    'allow-writes',
+    'allowWrites',
+    'all',
   ]);
   let i = 0;
   while (i < tokens.length) {
@@ -244,6 +252,7 @@ export function parseTopLevelOptionsFromSlashArgs(options: Record<string, string
   const approveValue = options.approve;
   const intervalValue = options.interval;
   const onceValue = options.once;
+  const remoteValue = options.remote;
   const fromFromPeriod = periodValue ? parsePeriodRangeAsIso(periodValue) : undefined;
 
   return {
@@ -261,6 +270,7 @@ export function parseTopLevelOptionsFromSlashArgs(options: Record<string, string
     includeSecrets: parseToggleValue(includeSecretsValue),
     interval: intervalValue,
     once: parseToggleValue(onceValue),
+    remote: parseToggleValue(remoteValue),
   };
 }
 
@@ -565,6 +575,83 @@ export function extractEntityId(item: Record<string, unknown>, index: number): s
   return `index:${index}`;
 }
 
+export function extractEntityLabel(item: Record<string, unknown>, index: number): string {
+  const preferredKeys = [
+    'name',
+    'agent_name',
+    'rule_name',
+    'skill_name',
+    'attribute_name',
+    'function_name',
+    'title',
+    'id',
+    'uuid',
+  ] as const;
+  for (const key of preferredKeys) {
+    const value = item[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  return extractEntityId(item, index);
+}
+
+export function buildDiffDetails(before: OrgExport, after: OrgExport): DiffDetail[] {
+  return SNAPSHOT_RESOURCE_FIELDS.map((field) => {
+    const beforeRows = extractEntityRows(before[field]);
+    const afterRows = extractEntityRows(after[field]);
+    const beforeMap = new Map<string, { serialized: string; label: string }>();
+    const afterMap = new Map<string, { serialized: string; label: string }>();
+
+    for (let i = 0; i < beforeRows.length; i += 1) {
+      const row = beforeRows[i];
+      if (!row) continue;
+      beforeMap.set(extractEntityId(row, i), {
+        serialized: stableStringify(row),
+        label: extractEntityLabel(row, i),
+      });
+    }
+
+    for (let i = 0; i < afterRows.length; i += 1) {
+      const row = afterRows[i];
+      if (!row) continue;
+      afterMap.set(extractEntityId(row, i), {
+        serialized: stableStringify(row),
+        label: extractEntityLabel(row, i),
+      });
+    }
+
+    const added: string[] = [];
+    const removed: string[] = [];
+    const changed: string[] = [];
+
+    for (const [key, value] of afterMap.entries()) {
+      if (!beforeMap.has(key)) {
+        added.push(value.label);
+        continue;
+      }
+      if (beforeMap.get(key)?.serialized !== value.serialized) {
+        changed.push(value.label);
+      }
+    }
+
+    for (const [key, value] of beforeMap.entries()) {
+      if (!afterMap.has(key)) {
+        removed.push(value.label);
+      }
+    }
+
+    return {
+      collection: field,
+      added: added.slice(0, 10),
+      removed: removed.slice(0, 10),
+      changed: changed.slice(0, 10),
+    };
+  }).filter(
+    (entry) => entry.added.length > 0 || entry.removed.length > 0 || entry.changed.length > 0,
+  );
+}
+
 export function buildDiffRows(before: OrgExport, after: OrgExport): SnapshotDiffRow[] {
   return SNAPSHOT_RESOURCE_FIELDS.map((field) => {
     const beforeRows = extractEntityRows(before[field]);
@@ -628,6 +715,7 @@ export function buildDiffSummary(
     from: beforeRef,
     to: afterRef,
     rows: buildDiffRows(before, after),
+    details: buildDiffDetails(before, after),
   };
 }
 
@@ -948,12 +1036,22 @@ export async function resolveSnapshotSourceForRead(
   }
 
   const exactPath = path.resolve(requested);
-  if (fs.existsSync(exactPath) && fs.lstatSync(exactPath).isFile()) {
-    return { payload: readSnapshot(exactPath), source: path.basename(exactPath) };
+  if (fs.existsSync(exactPath)) {
+    const stats = fs.lstatSync(exactPath);
+    if (stats.isFile()) {
+      return { payload: readSnapshot(exactPath), source: path.basename(exactPath) };
+    }
+    if (stats.isDirectory()) {
+      return { payload: readStateSetBundle(exactPath), source: path.basename(exactPath) };
+    }
   }
 
   const resolved = resolveSnapshotPath(requested);
   if (!resolved) {
+    const bundlePath = path.resolve(requested);
+    if (fs.existsSync(bundlePath) && fs.lstatSync(bundlePath).isDirectory()) {
+      return { payload: readStateSetBundle(bundlePath), source: path.basename(bundlePath) };
+    }
     throw new Error(`Snapshot not found: ${requested}`);
   }
   return { payload: readSnapshot(resolved), source: path.basename(resolved) };

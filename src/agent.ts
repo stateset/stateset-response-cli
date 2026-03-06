@@ -237,6 +237,7 @@ Commerce/support safety:
  */
 export interface ChatCallbacks {
   onText?: (delta: string) => void;
+  onAssistantTurn?: (turn: AssistantTurnInfo) => void;
   onToolCall?: (name: string, args: Record<string, unknown>) => void;
   onToolCallStart?: (
     name: string,
@@ -270,6 +271,12 @@ export interface ToolCallPayload<T = unknown> {
   payload: T;
   rawText: string;
   isError: boolean;
+}
+
+export interface AssistantTurnInfo {
+  text: string;
+  stopReason: string | null;
+  toolUseCount: number;
 }
 
 export interface HealthCheckResult {
@@ -486,6 +493,12 @@ export class StateSetAgent {
       if (currentText) {
         textParts.push(currentText);
       }
+
+      callbacks?.onAssistantTurn?.({
+        text: currentText,
+        stopReason: finalMessage.stop_reason,
+        toolUseCount: finalMessage.content.filter((block) => block.type === 'tool_use').length,
+      });
 
       if (finalMessage.usage) {
         metrics.recordTokenUsage(finalMessage.usage);

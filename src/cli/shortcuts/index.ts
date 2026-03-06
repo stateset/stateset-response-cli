@@ -43,6 +43,9 @@ export {
   runTopLevelMonitor,
 } from './monitoring.js';
 export { runTestCommand, runTopLevelTest } from './test.js';
+export { runReplayCommand, runTopLevelReplay } from './replay.js';
+export { runSyncCommand, runTopLevelSync } from './sync.js';
+export { runLogsCommand, runTopLevelLogs } from './logs.js';
 
 export type {
   AnyPayload,

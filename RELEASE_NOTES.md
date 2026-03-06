@@ -1,26 +1,28 @@
-# StateSet ResponseCLI Release Notes (v1.8.0)
+# StateSet ResponseCLI Release Notes (v1.9.0)
 
 ## Overview
 
-StateSet ResponseCLI `v1.8.0` sharpens the interactive CLI, adds a real one-shot prompt mode for scripts and pipelines, and hardens packaged runtime startup when the shell is still pinned to an older Node version.
+StateSet ResponseCLI `v1.9.0` adds a traced simulator and conversation replay workflow for faster agent iteration, expands CLI operations around drift detection and bulk updates, and adds scaffolding and runbook generation for faster rollout across brands.
 
 ## Highlights
 
-### Interactive and one-shot UX
+### Agent simulation and replay
 
-- Improved `/help` discoverability with category-aware matching, fuzzy suggestions, and stronger integrations command coverage.
-- Added `response ask` for one-shot prompts with session support, file attachments, and `--stdin` input for pipeline-friendly usage.
-- Updated the README and getting-started docs so the new one-shot workflow is visible from first use.
+- Turned `response test` into a traced simulator with visible tool calls, sandboxed write blocking, optional mock tool responses, and final-response inspection.
+- Added `response replay <conversation-id>` so existing conversations can be rerun step by step with tool visibility.
+- Added `response logs --watch` to tail local session and audit activity during rollouts and debugging.
 
-### Runtime resilience
+### Operational controls
 
-- Added Node runtime relaunch support so shipped binaries can recover when the current shell still resolves `node` to an unsupported version.
-- Extended packaged bin smoke coverage and added launcher-focused regression tests for re-exec behavior under piped execution.
+- Added `response diff --remote` to compare local `.stateset` config with deployed remote state before deploys.
+- Added `response sync status` to summarize integration readiness, last success, and failure signals from local telemetry.
+- Added bulk mutation flows for rules and agents so repetitive cross-brand updates can be handled from the CLI.
 
-### Integration diagnostics
+### Templates, analytics, and runbooks
 
-- Unified integration readiness around a single snapshot model that understands env, persisted store values, and defaults.
-- Fixed `response doctor` and the chat welcome banner so store-backed integrations are reported consistently instead of looking unconfigured.
+- Added `response init --template refund-agent|subscription-management` to scaffold local starter bundles.
+- Added `response analytics quality` for derived CSAT, escalation, resolution, and per-agent quality reporting.
+- Added `response export runbook --agent ...` to generate human-readable documentation for audits and handoffs.
 
 ## CLI entry points
 

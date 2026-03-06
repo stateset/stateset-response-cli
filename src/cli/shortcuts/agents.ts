@@ -14,6 +14,7 @@ import {
   resolveSafeOutputPath,
   writePrivateTextFile,
   parseToggleValue,
+  formatTable,
 } from './utils.js';
 
 export async function runAgentsCommand(
@@ -67,6 +68,94 @@ export async function runAgentsCommand(
       'Agent context is stored only for this process. Use /agents create with default channel binding for persistence.',
     );
     logger.success(`Active agent for this session set to ${agentId}`);
+    return;
+  }
+
+  if (action === 'update') {
+    const target = positionals[1];
+    const updatePayload: Record<string, unknown> = {};
+    const activatedRaw = options.active ?? options.enabled ?? options.activate;
+    const activated = activatedRaw ? parseToggleValue(activatedRaw) : undefined;
+    if (options.name) updatePayload.agent_name = stripQuotes(options.name);
+    if (options.type) updatePayload.agent_type = stripQuotes(options.type);
+    if (options.description) updatePayload.description = stripQuotes(options.description);
+    if (options.role) updatePayload.role = stripQuotes(options.role);
+    if (options.goal) updatePayload.goal = stripQuotes(options.goal);
+    if (options.instructions) updatePayload.instructions = stripQuotes(options.instructions);
+    if (options.voice_model) updatePayload.voice_model = stripQuotes(options.voice_model);
+    if (options.voice_model_id) updatePayload.voice_model_id = stripQuotes(options.voice_model_id);
+    if (options.voice_model_provider) {
+      updatePayload.voice_model_provider = stripQuotes(options.voice_model_provider);
+    }
+    if (activated !== undefined) updatePayload.activated = activated;
+
+    const updateModel = options.model ? stripQuotes(options.model) : '';
+    const all = options.all === 'true';
+    const rows: Array<Record<string, string>> = [];
+
+    if (Object.keys(updatePayload).length === 0 && !updateModel) {
+      logger.warning(
+        'Usage: /agents update <agent-id> [--name ...] [--role ...] or /agents update --all --model <model>',
+      );
+      return;
+    }
+
+    if (updateModel) {
+      const settingsResult = await runner.callTool<unknown[]>('list_agent_settings', {});
+      const settingsRows = Array.isArray(settingsResult.payload) ? settingsResult.payload : [];
+      for (const entry of settingsRows) {
+        const settings = asStringRecord(entry);
+        const id = Number(settings.id);
+        if (!Number.isFinite(id)) {
+          continue;
+        }
+        const updated = await runner.callTool('update_agent_settings', {
+          id,
+          model_name: updateModel,
+        });
+        rows.push({
+          target: `settings:${id}`,
+          status: updated.isError ? 'error' : 'updated',
+          change: `model=${updateModel}`,
+        });
+      }
+    }
+
+    if (Object.keys(updatePayload).length > 0) {
+      if (all) {
+        const agentsResult = await runner.callTool<unknown[]>('list_agents', {
+          limit: 1000,
+          offset: 0,
+        });
+        const agentRows = Array.isArray(agentsResult.payload) ? agentsResult.payload : [];
+        for (const entry of agentRows) {
+          const agent = asStringRecord(entry);
+          const agentId = String(agent.id || '').trim();
+          if (!agentId) continue;
+          const updated = await runner.callTool('update_agent', { id: agentId, ...updatePayload });
+          rows.push({
+            target: agentId,
+            status: updated.isError ? 'error' : 'updated',
+            change: Object.keys(updatePayload).join(', '),
+          });
+        }
+      } else {
+        if (!target) {
+          logger.warning('Usage: /agents update <agent-id> [fields...]');
+          return;
+        }
+        const updated = await runner.callTool('update_agent', { id: target, ...updatePayload });
+        printPayload(logger, `Agent ${target} updated`, updated.payload, json);
+        return;
+      }
+    }
+
+    if (json) {
+      logger.output(JSON.stringify({ updated: rows }, null, 2));
+      return;
+    }
+    logger.success(`Updated ${rows.length} target(s)`);
+    logger.output(formatTable(rows, ['target', 'status', 'change']));
     return;
   }
 

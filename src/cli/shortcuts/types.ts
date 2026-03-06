@@ -33,6 +33,7 @@ export type TopLevelOptions = {
   to?: string;
   since?: string;
   period?: string;
+  remote?: boolean;
   dryRun?: boolean;
   yes?: boolean;
   strict?: boolean;
@@ -73,6 +74,14 @@ export interface DiffSummary {
   from: string;
   to: string;
   rows: SnapshotDiffRow[];
+  details?: DiffDetail[];
+}
+
+export interface DiffDetail {
+  collection: string;
+  added: string[];
+  removed: string[];
+  changed: string[];
 }
 
 export type ParsedDateRange = {

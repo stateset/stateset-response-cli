@@ -220,12 +220,22 @@ export async function runDiffCommand(
   options: TopLevelOptions = {},
 ): Promise<void> {
   const parsed = parseCommandArgs(tokens);
-  const fromTo = parseDiffRefs(parsed.positionals, options.from, options.to);
+  const remoteMode =
+    options.remote === true ||
+    parsed.options.remote === 'true' ||
+    parsed.options.remote === '1' ||
+    parsed.options.remote === '';
+  const fromTo = remoteMode
+    ? {
+        from: options.from || parsed.options.from || parsed.positionals[0] || DEFAULT_STATESET_DIR,
+        to: options.to || parsed.options.to || 'current',
+      }
+    : parseDiffRefs(parsed.positionals, options.from, options.to);
   const fromRef = fromTo.from;
   const toRef = fromTo.to;
 
   if (!fromRef || !toRef) {
-    logger.warning('Usage: /diff [from] [to] [--from ref --to ref]');
+    logger.warning('Usage: /diff [from] [to] [--from ref --to ref] [--remote]');
     return;
   }
 
@@ -267,6 +277,7 @@ export async function runDiffCommand(
             to: summary.to,
             totals,
             rows: summary.rows,
+            details: summary.details || [],
           },
           null,
           2,
@@ -277,6 +288,18 @@ export async function runDiffCommand(
 
     logger.success(`Diff: ${summary.from} -> ${summary.to}`);
     logger.output(formatTable(rows, ['collection', 'from', 'to', 'added', 'removed', 'changed']));
+    if ((summary.details || []).length > 0) {
+      logger.output('');
+      logger.output('Changed entities:');
+      for (const detail of summary.details || []) {
+        const detailParts = [
+          detail.added.length > 0 ? `+ ${detail.added.join(', ')}` : '',
+          detail.removed.length > 0 ? `- ${detail.removed.join(', ')}` : '',
+          detail.changed.length > 0 ? `~ ${detail.changed.join(', ')}` : '',
+        ].filter(Boolean);
+        logger.output(`  ${detail.collection}: ${detailParts.join(' | ')}`);
+      }
+    }
     logger.output('');
     logger.output(
       formatToolResult(

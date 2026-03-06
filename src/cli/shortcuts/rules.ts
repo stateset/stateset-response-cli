@@ -14,6 +14,18 @@ import {
   parseToggleValue,
 } from './utils.js';
 
+function extractRuleTags(rule: Record<string, unknown>): string[] {
+  const tags = Array.isArray(rule.tags)
+    ? rule.tags
+    : Array.isArray(asStringRecord(rule.metadata).tags)
+      ? (asStringRecord(rule.metadata).tags as unknown[])
+      : [];
+  return tags
+    .filter((entry): entry is string => typeof entry === 'string')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+}
+
 export async function runRulesCommand(
   tokens: string[],
   runner: ShortcutRunner,
@@ -85,6 +97,54 @@ export async function runRulesCommand(
       metadata: {},
     });
     printPayload(logger, 'Created rule', result.payload, json);
+    return;
+  }
+
+  if (action === 'enable' || action === 'disable') {
+    const targetState = action === 'enable';
+    const tagFilter = (options.tag || options.tags || '').trim().toLowerCase();
+    const agentFilter = (options.agent || options.agent_id || '').trim();
+    const list = await runner.callTool<unknown[]>('list_rules', { limit: 1000, offset: 0 });
+    const rows = Array.isArray(list.payload) ? list.payload : [];
+    const matches = rows
+      .map((entry) => asStringRecord(entry))
+      .filter((rule) => {
+        if (agentFilter && String(rule.agent_id || '') !== agentFilter) {
+          return false;
+        }
+        if (tagFilter) {
+          return extractRuleTags(rule).includes(tagFilter);
+        }
+        return options.all === 'true' || options.all === '1' || positionals[1] === '--all';
+      });
+
+    if (!tagFilter && !agentFilter && options.all !== 'true' && options.all !== '1') {
+      logger.warning(`Usage: /rules ${action} --tag <tag> | --agent <agent-id> | --all`);
+      return;
+    }
+    if (matches.length === 0) {
+      logger.warning(`No rules matched the ${action} filter.`);
+      return;
+    }
+    const ids = matches.map((rule) => String(rule.id || '').trim()).filter((id) => id.length > 0);
+    if (ids.length === 0) {
+      logger.warning('No rule IDs available for matched rules.');
+      return;
+    }
+
+    const result =
+      ids.length === 1
+        ? await runner.callTool('update_rule', { id: ids[0], activated: targetState })
+        : await runner.callTool('bulk_update_rule_status', {
+            ids,
+            activated: targetState,
+          });
+    printPayload(
+      logger,
+      `${targetState ? 'Enabled' : 'Disabled'} ${ids.length} rule(s)`,
+      result.payload,
+      json,
+    );
     return;
   }
 
