@@ -1,23 +1,26 @@
-# StateSet ResponseCLI Release Notes (v1.7.8)
+# StateSet ResponseCLI Release Notes (v1.8.0)
 
 ## Overview
 
-StateSet ResponseCLI `v1.7.8` aligns integration readiness reporting with persisted configuration, hardens packaged CLI entrypoints, and adds release-level smoke coverage for the shipped binaries.
+StateSet ResponseCLI `v1.8.0` sharpens the interactive CLI, adds a real one-shot prompt mode for scripts and pipelines, and hardens packaged runtime startup when the shell is still pinned to an older Node version.
 
 ## Highlights
 
-### Integration UX and diagnostics
+### Interactive and one-shot UX
+
+- Improved `/help` discoverability with category-aware matching, fuzzy suggestions, and stronger integrations command coverage.
+- Added `response ask` for one-shot prompts with session support, file attachments, and `--stdin` input for pipeline-friendly usage.
+- Updated the README and getting-started docs so the new one-shot workflow is visible from first use.
+
+### Runtime resilience
+
+- Added Node runtime relaunch support so shipped binaries can recover when the current shell still resolves `node` to an unsupported version.
+- Extended packaged bin smoke coverage and added launcher-focused regression tests for re-exec behavior under piped execution.
+
+### Integration diagnostics
+
 - Unified integration readiness around a single snapshot model that understands env, persisted store values, and defaults.
 - Fixed `response doctor` and the chat welcome banner so store-backed integrations are reported consistently instead of looking unconfigured.
-- Added targeted regression coverage for ready, partial, invalid, and default-only integration states.
-
-### Packaging and release safety
-- Moved published package bin targets to `.js` entrypoints while keeping compatibility wrappers for the legacy extensionless files.
-- Made Slack, WhatsApp, and gateway bins lazy-load optional runtime dependencies so `--help` and `--version` work without optional packages installed.
-- Added executable bin smoke coverage for the shipped package commands and wired it into CI, including cross-platform smoke jobs.
-
-### Update handling
-- Replaced the hand-rolled update-version comparison with semver-aware prerelease handling so stable releases compare correctly against prerelease builds.
 
 ## CLI entry points
 

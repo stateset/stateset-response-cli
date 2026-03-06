@@ -64,6 +64,12 @@ const cases = [
     expect: [],
   },
   {
+    name: 'response ask --help',
+    bin: bins.response,
+    args: ['ask', '--help'],
+    expect: [],
+  },
+  {
     name: 'response-gateway --help',
     bin: bins['response-gateway'],
     args: ['--help'],

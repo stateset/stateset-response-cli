@@ -253,11 +253,42 @@ export function registerAllCommands(): void {
     category: 'integrations',
   });
   registerCommand({
+    name: '/integrations status',
+    usage: '/integrations status',
+    description: 'Alias for /integrations',
+    category: 'integrations',
+    helpOnly: true,
+  });
+  registerCommand({
     name: '/integrations setup',
     usage: '/integrations setup [integration]',
     description: 'Run integration setup wizard',
     category: 'integrations',
     helpOnly: true,
+  });
+  registerCommand({
+    name: '/integrations health',
+    usage: '/integrations health [integration] [--detailed]',
+    description: 'Show integration readiness and config health',
+    category: 'integrations',
+    helpOnly: true,
+    examples: ['/integrations health', '/integrations health shopify --detailed'],
+  });
+  registerCommand({
+    name: '/integrations limits',
+    usage: '/integrations limits [integration]',
+    description: 'Show integration call/error and rate-limit telemetry',
+    category: 'integrations',
+    helpOnly: true,
+    examples: ['/integrations limits', '/integrations limits shopify'],
+  });
+  registerCommand({
+    name: '/integrations logs',
+    usage: '/integrations logs [integration] [--last 20]',
+    description: 'Show recent integration audit events',
+    category: 'integrations',
+    helpOnly: true,
+    examples: ['/integrations logs', '/integrations logs shopify --last 50'],
   });
 
   // ── Sessions ──────────────────────────────────────────────────────

@@ -14,13 +14,20 @@ function handleFatalError(err) {
 }
 
 async function main() {
-  const [{ configExists, getAnthropicApiKey, getCurrentOrg, resolveModelOrThrow }, { logger }, { installGlobalErrorHandlers }, { parseSlackArgs }] =
-    await Promise.all([
-      import('../dist/config.js'),
-      import('../dist/lib/logger.js'),
-      import('../dist/lib/errors.js'),
-      import('../dist/cli/gateway-args.js'),
-    ]);
+  const { ensureSupportedNodeRuntime } = await import('../dist/runtime/node-launcher.js');
+  await ensureSupportedNodeRuntime(import.meta.url);
+
+  const [
+    { configExists, getAnthropicApiKey, getCurrentOrg, resolveModelOrThrow },
+    { logger },
+    { installGlobalErrorHandlers },
+    { parseSlackArgs },
+  ] = await Promise.all([
+    import('../dist/config.js'),
+    import('../dist/lib/logger.js'),
+    import('../dist/lib/errors.js'),
+    import('../dist/cli/gateway-args.js'),
+  ]);
 
   installGlobalErrorHandlers();
 

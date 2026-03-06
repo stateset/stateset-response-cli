@@ -184,6 +184,44 @@ describe('handleChatCommand', () => {
     expect(await handleChatCommand('/skills  ', ctx)).toEqual({ handled: true });
   });
 
+  it('/help resolves category prefixes to category listings', async () => {
+    const ctx = createMockCtx();
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await handleChatCommand('/help sess', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(
+      consoleSpy.mock.calls.some(([line]) => typeof line === 'string' && line.includes('Sessions')),
+    ).toBe(true);
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) => typeof line === 'string' && line.includes('/sessions'),
+      ),
+    ).toBe(true);
+    consoleSpy.mockRestore();
+  });
+
+  it('/help shows fuzzy command matches when exact lookup misses', async () => {
+    const ctx = createMockCtx();
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await handleChatCommand('/help logs', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) => typeof line === 'string' && line.includes('Matches for "logs"'),
+      ),
+    ).toBe(true);
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) => typeof line === 'string' && line.includes('/integrations logs'),
+      ),
+    ).toBe(true);
+    consoleSpy.mockRestore();
+  });
+
   it('handles /skill and ignores command collisions', async () => {
     const ctx = createMockCtx();
 
@@ -253,6 +291,28 @@ describe('handleChatCommand', () => {
   it('/metricsx is not matched', async () => {
     const ctx = createMockCtx();
     expect(await handleChatCommand('/metricsx', ctx)).toEqual({ handled: false });
+  });
+
+  it('/integrations warns on unknown subcommands instead of falling back to status', async () => {
+    const ctx = createMockCtx();
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await handleChatCommand('/integrations healthz', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(ctx.printIntegrationStatus).not.toHaveBeenCalled();
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) =>
+          typeof line === 'string' && line.includes('Unknown /integrations subcommand "healthz"'),
+      ),
+    ).toBe(true);
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) => typeof line === 'string' && line.includes('Did you mean: health?'),
+      ),
+    ).toBe(true);
+    consoleSpy.mockRestore();
   });
 
   it('/clear clears conversation history', async () => {

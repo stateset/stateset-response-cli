@@ -31,7 +31,7 @@ import { logger } from '../lib/logger.js';
 import { metrics } from '../lib/metrics.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { extractInlineFlags, readBooleanEnv } from './utils.js';
-import type { ChatContext, ToolAuditEntry, CommandResult } from './types.js';
+import type { ChatContext, ToolAuditEntry, CommandResult, PermissionStore } from './types.js';
 import { MarkdownStreamRenderer } from '../utils/markdown-stream.js';
 import { renderMarkdown } from '../utils/markdown.js';
 import { smartCompleter } from './completer.js';
@@ -162,31 +162,156 @@ export interface ChatOptions {
   verbose?: boolean;
 }
 
-export function getWelcomeIntegrationCount(cwd: string = process.cwd()): number {
+export interface OneShotInputOptions {
+  promptParts?: string[];
+  stdin?: boolean;
+  stdinStream?: NodeJS.ReadableStream;
+  stdinIsTTY?: boolean;
+}
+
+export interface OneShotPromptOptions extends ChatOptions {
+  message: string;
+}
+
+type PermissionChoice = 'allow_once' | 'allow_always' | 'deny_once' | 'deny_always';
+
+interface ChatRuntime {
+  orgId: string;
+  apiKey: string;
+  model: ModelId;
+  allowApply: boolean;
+  redactEmails: boolean;
+  sessionId: string;
+  sessionStore: SessionStore;
+  agent: StateSetAgent;
+  cwd: string;
+  activeSkills: string[];
+  extensions: ExtensionManager;
+}
+
+interface ChatTurnOptions {
+  agent: StateSetAgent;
+  extensions: ExtensionManager;
+  sessionId: string;
+  sessionStore: SessionStore;
+  cwd: string;
+  activeSkills: string[];
+  input: string;
+  pendingAttachments: string[];
+  showUsage: boolean;
+  auditEnabled: boolean;
+  auditIncludeExcerpt: boolean;
+  permissionStore: PermissionStore;
+  allowApply: boolean;
+  redactEmails: boolean;
+  requestPermissionChoice?: (details: {
+    hookName: string;
+    toolName: string;
+    reason?: string;
+  }) => Promise<PermissionChoice>;
+  showSpinner?: boolean;
+}
+
+interface ChatTurnResult {
+  pendingAttachments: string[];
+  success: boolean;
+}
+
+async function readStreamText(stream: NodeJS.ReadableStream): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    stream.on('data', (chunk) => {
+      if (typeof chunk === 'string') {
+        chunks.push(Buffer.from(chunk));
+      } else {
+        chunks.push(Buffer.from(chunk));
+      }
+    });
+    stream.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    stream.on('error', reject);
+  });
+}
+
+export async function resolveOneShotInput(options: OneShotInputOptions): Promise<string> {
+  const promptText = (options.promptParts ?? []).join(' ').trim();
+  const stdinStream = options.stdinStream ?? process.stdin;
+  const stdinIsTTY =
+    options.stdinIsTTY ??
+    Boolean((stdinStream as NodeJS.ReadableStream & { isTTY?: boolean }).isTTY);
+
+  if (promptText && options.stdin) {
+    throw new Error('Pass prompt text as arguments or use --stdin, not both.');
+  }
+
+  if (promptText) {
+    return promptText;
+  }
+
+  const shouldReadStdin = Boolean(options.stdin) || !stdinIsTTY;
+  if (!shouldReadStdin) {
+    throw new Error('Provide a message or pipe text via stdin.');
+  }
+
+  if (options.stdin && stdinIsTTY) {
+    throw new Error('--stdin requires piped input.');
+  }
+
+  const stdinText = (await readStreamText(stdinStream)).trim();
+  if (!stdinText) {
+    throw new Error('Prompt text is empty.');
+  }
+
+  return stdinText;
+}
+
+async function promptForPermissionChoice(
+  details: {
+    hookName: string;
+    toolName: string;
+    reason?: string;
+  },
+  controls?: {
+    pause?: () => void;
+    resume?: () => void;
+  },
+): Promise<PermissionChoice> {
+  controls?.pause?.();
   try {
-    return countConfiguredIntegrations(cwd);
-  } catch {
-    return 0;
+    const answer = await inquirer.prompt<{ choice: PermissionChoice }>([
+      {
+        type: 'list',
+        name: 'choice',
+        message: details.reason
+          ? `Extension hook "${details.hookName}" denied tool "${details.toolName}": ${details.reason}`
+          : `Extension hook "${details.hookName}" denied tool "${details.toolName}".`,
+        choices: [
+          { name: 'Allow once', value: 'allow_once' },
+          { name: 'Always allow', value: 'allow_always' },
+          { name: 'Deny once', value: 'deny_once' },
+          { name: 'Always deny', value: 'deny_always' },
+        ],
+      },
+    ]);
+    return answer.choice;
+  } finally {
+    controls?.resume?.();
   }
 }
 
-export async function startChatSession(
+async function initializeChatRuntime(
   options: ChatOptions,
-  meta: { version?: string },
-): Promise<void> {
-  // Populate the command registry (idempotent)
+  connectLabel = 'Connecting to StateSet Response...',
+): Promise<ChatRuntime | null> {
   registerAllCommands();
 
-  // Configure logger
   if (options.verbose) {
     logger.configure({ level: 'debug' });
   }
 
-  // Check config
   if (!configExists()) {
     printAuthHelp();
     process.exitCode = 1;
-    return;
+    return null;
   }
 
   let orgId: string;
@@ -200,13 +325,12 @@ export async function startChatSession(
   } catch (e: unknown) {
     console.error(formatError(getErrorMessage(e)));
     process.exitCode = 1;
-    return;
+    return null;
   }
 
   allowApply = options.apply ? true : readBooleanEnv('STATESET_ALLOW_APPLY');
   redactEmails = options.redact ? true : readBooleanEnv('STATESET_REDACT');
 
-  // Resolve model
   let model: ModelId = getConfiguredModel();
   if (options.model) {
     try {
@@ -214,19 +338,21 @@ export async function startChatSession(
     } catch (e: unknown) {
       console.error(formatError(getErrorMessage(e)));
       process.exitCode = 1;
-      return;
+      return null;
     }
   }
 
-  let sessionId = sanitizeSessionId(options.session || 'default');
-  let sessionStore = new SessionStore(sessionId);
+  const sessionId = sanitizeSessionId(options.session || 'default');
+  const sessionStore = new SessionStore(sessionId);
   metrics.increment('sessions.started');
   logger.setDefaultContext({ sessionId });
+
   const agent = new StateSetAgent(apiKey, model);
   agent.setMcpEnvOverrides({
     STATESET_ALLOW_APPLY: allowApply ? 'true' : 'false',
     STATESET_REDACT: redactEmails ? 'true' : 'false',
   });
+
   const cwd = process.cwd();
   const activeSkills: string[] = [];
   const extensions = new ExtensionManager();
@@ -235,7 +361,7 @@ export async function startChatSession(
     buildSystemPrompt({ sessionId, memory: loadMemory(sessionId), cwd, activeSkills }),
   );
 
-  const spinner = ora('Connecting to StateSet Response...').start();
+  const spinner = ora(connectLabel).start();
   try {
     await agent.connect();
     spinner.succeed('Connected');
@@ -243,7 +369,7 @@ export async function startChatSession(
     spinner.fail('Failed to connect');
     console.error(formatError(getErrorMessage(e)));
     process.exitCode = 1;
-    return;
+    return null;
   }
 
   try {
@@ -251,18 +377,379 @@ export async function startChatSession(
   } catch (err) {
     console.error(formatError(getErrorMessage(err)));
   }
+
+  return {
+    orgId,
+    apiKey,
+    model,
+    allowApply,
+    redactEmails,
+    sessionId,
+    sessionStore,
+    agent,
+    cwd,
+    activeSkills,
+    extensions,
+  };
+}
+
+function printExtensionStartupWarnings(extensions: ExtensionManager): void {
   const extensionDiagnostics = extensions.listDiagnostics();
   const blockedProjectExtensionWarning = extensionDiagnostics.find((entry) =>
     entry.message.includes('Project extension trust policy is disabled'),
   );
-  if (blockedProjectExtensionWarning) {
-    console.log('');
-    console.log(formatWarning(blockedProjectExtensionWarning.message));
-    console.log(
-      chalk.gray('  Tip: keep project extensions enabled only when running trusted repositories.'),
-    );
-    console.log('');
+  if (!blockedProjectExtensionWarning) {
+    return;
   }
+
+  console.log('');
+  console.log(formatWarning(blockedProjectExtensionWarning.message));
+  console.log(
+    chalk.gray('  Tip: keep project extensions enabled only when running trusted repositories.'),
+  );
+  console.log('');
+}
+
+function buildToolHookContext(options: {
+  cwd: string;
+  sessionId: string;
+  sessionStore: SessionStore;
+  allowApply: boolean;
+  redactEmails: boolean;
+  extensions: ExtensionManager;
+}) {
+  const meta = readSessionMeta(options.sessionStore.getSessionDir());
+  const tags = Array.isArray(meta.tags)
+    ? meta.tags.filter((tag): tag is string => typeof tag === 'string')
+    : [];
+  return {
+    cwd: options.cwd,
+    sessionId: options.sessionId,
+    sessionTags: tags,
+    allowApply: options.allowApply,
+    redact: options.redactEmails,
+    policy: options.extensions.getPolicyOverrides ? options.extensions.getPolicyOverrides() : {},
+    log: (message: string) => console.log(message),
+    success: (message: string) => console.log(formatSuccess(message)),
+    warn: (message: string) => console.log(formatWarning(message)),
+    error: (message: string) => console.error(formatError(message)),
+  };
+}
+
+async function runChatTurn(options: ChatTurnOptions): Promise<ChatTurnResult> {
+  let pendingAttachments = [...options.pendingAttachments];
+  metrics.increment('chat.userMessages');
+  const startTime = Date.now();
+  const thinkSpinner =
+    options.showSpinner === false
+      ? null
+      : ora({ text: chalk.gray('Thinking...'), spinner: 'dots' }).start();
+
+  let firstText = true;
+  let usageLine = '';
+  let toolCallCount = 0;
+  const mdStream = new MarkdownStreamRenderer();
+
+  const stopSpinner = () => {
+    if (firstText && thinkSpinner) {
+      thinkSpinner.stop();
+    }
+    firstText = false;
+  };
+
+  try {
+    const memory = loadMemory(options.sessionId);
+    options.agent.setSystemPrompt(
+      buildSystemPrompt({
+        sessionId: options.sessionId,
+        memory,
+        cwd: options.cwd,
+        activeSkills: options.activeSkills,
+      }),
+    );
+
+    let userContent: string | Parameters<typeof options.agent.chat>[0] = options.input;
+    if (pendingAttachments.length > 0) {
+      const { content, warnings } = buildUserContent(options.input, pendingAttachments, {
+        cwd: options.cwd,
+      });
+      pendingAttachments = [];
+      userContent = content;
+      if (warnings.length > 0) {
+        for (const warning of warnings) {
+          console.log(formatWarning(warning));
+        }
+      }
+    }
+
+    const response = await options.agent.chat(userContent, {
+      onText: (delta) => {
+        stopSpinner();
+        const rendered = mdStream.push(delta);
+        if (rendered) {
+          process.stdout.write(rendered);
+        }
+      },
+      onToolCall: (name, args) => {
+        stopSpinner();
+        toolCallCount += 1;
+        const prefix = toolCallCount > 1 ? chalk.gray(`[step ${toolCallCount}] `) : '';
+        console.log(prefix + formatToolCall(name, args));
+      },
+      onToolCallStart: async (name, args) => {
+        try {
+          const hookContext = buildToolHookContext({
+            cwd: options.cwd,
+            sessionId: options.sessionId,
+            sessionStore: options.sessionStore,
+            allowApply: options.allowApply,
+            redactEmails: options.redactEmails,
+            extensions: options.extensions,
+          });
+
+          let decision = await options.extensions.runToolHooks({ name, args }, hookContext);
+
+          if (decision?.action === 'deny' && decision.hookName) {
+            const hookKey = makeHookPermissionKey(decision.hookName, name);
+            const stored = options.permissionStore.toolHooks[hookKey];
+
+            if (stored === 'allow') {
+              decision = { action: 'allow', args };
+            } else if (stored === 'deny') {
+              decision = {
+                action: 'deny',
+                reason: decision.reason,
+                hookName: decision.hookName,
+              };
+            } else if (options.requestPermissionChoice) {
+              const choice = await options.requestPermissionChoice({
+                hookName: decision.hookName,
+                toolName: name,
+                reason: decision.reason,
+              });
+
+              if (choice === 'allow_once') {
+                decision = { action: 'allow', args };
+              } else if (choice === 'allow_always') {
+                options.permissionStore.toolHooks[hookKey] = 'allow';
+                writePermissionStore(options.permissionStore);
+                decision = { action: 'allow', args };
+              } else if (choice === 'deny_always') {
+                options.permissionStore.toolHooks[hookKey] = 'deny';
+                writePermissionStore(options.permissionStore);
+                decision = {
+                  action: 'deny',
+                  reason: decision.reason,
+                  hookName: decision.hookName,
+                };
+              } else {
+                decision = {
+                  action: 'deny',
+                  reason: decision.reason,
+                  hookName: decision.hookName,
+                };
+              }
+            }
+          }
+
+          const callEntry: ToolAuditEntry = {
+            ts: new Date().toISOString(),
+            type: 'tool_call',
+            session: options.sessionId,
+            name,
+            args: sanitizeToolArgs(
+              decision?.action === 'allow' && decision.args ? decision.args : args,
+            ),
+            decision: decision?.action || 'allow',
+            reason: decision && 'reason' in decision ? decision.reason : undefined,
+          };
+
+          if (options.auditEnabled) {
+            appendToolAudit(options.sessionId, callEntry);
+          }
+          if (isIntegrationToolName(name)) {
+            appendIntegrationTelemetry(callEntry);
+          }
+
+          return decision;
+        } catch (err) {
+          console.error(formatError(getErrorMessage(err)));
+          return undefined;
+        }
+      },
+      onToolCallEnd: (result) => {
+        console.log(formatToolResultInline(result.name, result.durationMs, result.isError));
+        options.extensions
+          .runToolResultHooks(
+            result,
+            buildToolHookContext({
+              cwd: options.cwd,
+              sessionId: options.sessionId,
+              sessionStore: options.sessionStore,
+              allowApply: options.allowApply,
+              redactEmails: options.redactEmails,
+              extensions: options.extensions,
+            }),
+          )
+          .catch((err) => {
+            console.error(formatError(getErrorMessage(err)));
+          });
+
+        if (options.auditEnabled) {
+          const entry: ToolAuditEntry = {
+            ts: new Date().toISOString(),
+            type: 'tool_result',
+            session: options.sessionId,
+            name: result.name,
+            durationMs: result.durationMs,
+            isError: result.isError,
+            resultLength: result.resultText.length,
+          };
+          if (options.auditIncludeExcerpt) {
+            entry.resultExcerpt = result.resultText.slice(0, 500);
+          }
+          appendToolAudit(options.sessionId, entry);
+        }
+
+        if (isIntegrationToolName(result.name)) {
+          const entry: ToolAuditEntry = {
+            ts: new Date().toISOString(),
+            type: 'tool_result',
+            session: options.sessionId,
+            name: result.name,
+            durationMs: result.durationMs,
+            isError: result.isError,
+            resultLength: result.resultText.length,
+            reason:
+              result.isError && isRateLimitedResult(result.resultText) ? 'rate_limited' : undefined,
+          };
+          appendIntegrationTelemetry(entry);
+        }
+      },
+      onUsage: (usage) => {
+        if (options.showUsage) {
+          usageLine = formatUsage(usage);
+        }
+      },
+    });
+
+    const flushed = mdStream.flush();
+    if (flushed) {
+      process.stdout.write(flushed);
+    }
+
+    if (firstText && response) {
+      console.log(renderMarkdown(response));
+    }
+
+    const elapsed = Date.now() - startTime;
+    console.log(formatElapsed(elapsed));
+    if (usageLine) {
+      console.log(usageLine);
+    }
+
+    const trimInfo = options.agent.getLastTrimInfo();
+    if (trimInfo?.trimmed) {
+      console.log(
+        chalk.yellow(
+          `  Context trimmed: oldest messages dropped (${trimInfo.messagesBefore} → ${trimInfo.messagesAfter}). Use /context for details.`,
+        ),
+      );
+    }
+
+    return { pendingAttachments, success: true };
+  } catch (e: unknown) {
+    if (thinkSpinner) {
+      thinkSpinner.stop();
+    }
+    const msg = getErrorMessage(e);
+    if (msg !== 'Request cancelled') {
+      console.log('\n' + formatError(msg));
+    }
+    return { pendingAttachments, success: false };
+  }
+}
+
+export function getWelcomeIntegrationCount(cwd: string = process.cwd()): number {
+  try {
+    return countConfiguredIntegrations(cwd);
+  } catch {
+    return 0;
+  }
+}
+
+export async function runOneShotPrompt(options: OneShotPromptOptions): Promise<void> {
+  const runtime = await initializeChatRuntime(options);
+  if (!runtime) {
+    return;
+  }
+
+  const {
+    agent,
+    extensions,
+    sessionId,
+    sessionStore,
+    cwd,
+    activeSkills,
+    allowApply,
+    redactEmails,
+  } = runtime;
+  const permissionStore = readPermissionStore();
+  const showUsage = Boolean(options.usage) || process.env.STATESET_SHOW_USAGE === 'true';
+  const auditEnabled = process.env.STATESET_TOOL_AUDIT === 'true';
+  const auditIncludeExcerpt = process.env.STATESET_TOOL_AUDIT_DETAIL === 'true';
+  const pendingAttachments = Array.isArray(options.file) ? [...options.file] : [];
+  const canPromptForPermission = Boolean(process.stdin.isTTY);
+
+  printExtensionStartupWarnings(extensions);
+
+  try {
+    const result = await runChatTurn({
+      agent,
+      extensions,
+      sessionId,
+      sessionStore,
+      cwd,
+      activeSkills,
+      input: options.message,
+      pendingAttachments,
+      showUsage,
+      auditEnabled,
+      auditIncludeExcerpt,
+      permissionStore,
+      allowApply,
+      redactEmails,
+      requestPermissionChoice: canPromptForPermission
+        ? (details) => promptForPermissionChoice(details)
+        : undefined,
+    });
+
+    if (!result.success) {
+      process.exitCode = 1;
+    }
+  } finally {
+    try {
+      await agent.disconnect();
+    } catch (error) {
+      console.error(formatError(getErrorMessage(error)));
+      process.exitCode = 1;
+    }
+  }
+}
+
+export async function startChatSession(
+  options: ChatOptions,
+  meta: { version?: string },
+): Promise<void> {
+  const runtime = await initializeChatRuntime(options);
+  if (!runtime) {
+    return;
+  }
+
+  const { orgId, model, agent, cwd, activeSkills, extensions } = runtime;
+  let { allowApply, redactEmails, sessionId, sessionStore } = runtime;
+
+  printExtensionStartupWarnings(extensions);
 
   // Count active integrations for welcome banner
   const integrationCount = getWelcomeIntegrationCount(cwd);
@@ -321,7 +808,7 @@ export async function startChatSession(
     const extensionCommands = extensions.listCommands
       ? extensions.listCommands().map((c) => c.name)
       : [];
-    return smartCompleter(line, extensionCommands);
+    return smartCompleter(line, extensionCommands, cwd);
   };
 
   const rl = readline.createInterface({
@@ -390,25 +877,6 @@ export async function startChatSession(
     error: (message: string) => console.error(formatError(message)),
   });
 
-  const buildToolHookContext = () => {
-    const meta = readSessionMeta(sessionStore.getSessionDir());
-    const tags = Array.isArray(meta.tags)
-      ? meta.tags.filter((tag): tag is string => typeof tag === 'string')
-      : [];
-    return {
-      cwd,
-      sessionId,
-      sessionTags: tags,
-      allowApply,
-      redact: redactEmails,
-      policy: extensions.getPolicyOverrides ? extensions.getPolicyOverrides() : {},
-      log: (message: string) => console.log(message),
-      success: (message: string) => console.log(formatSuccess(message)),
-      warn: (message: string) => console.log(formatWarning(message)),
-      error: (message: string) => console.error(formatError(message)),
-    };
-  };
-
   const reconnectAgent = async () => {
     const reconnectSpinner = ora('Reconnecting to StateSet Response...').start();
     try {
@@ -456,7 +924,15 @@ export async function startChatSession(
     printIntegrationStatus: () => printIntegrationStatus(cwd),
     runIntegrationsSetup: () => runIntegrationsSetup(cwd),
     buildExtensionContext,
-    buildToolHookContext,
+    buildToolHookContext: () =>
+      buildToolHookContext({
+        cwd,
+        sessionId,
+        sessionStore,
+        allowApply,
+        redactEmails,
+        extensions,
+      }),
   };
 
   // Handle Ctrl+C: cancel current request or show prompt
@@ -636,218 +1112,29 @@ export async function startChatSession(
     ctx.lastUserMessage = finalInput;
 
     processing = true;
-    metrics.increment('chat.userMessages');
-    const startTime = Date.now();
+    const turnResult = await runChatTurn({
+      agent,
+      extensions,
+      sessionId,
+      sessionStore,
+      cwd,
+      activeSkills,
+      input: finalInput,
+      pendingAttachments,
+      showUsage,
+      auditEnabled,
+      auditIncludeExcerpt,
+      permissionStore,
+      allowApply,
+      redactEmails,
+      requestPermissionChoice: (details) =>
+        promptForPermissionChoice(details, {
+          pause: () => rl.pause(),
+          resume: () => rl.resume(),
+        }),
+    });
 
-    // Thinking spinner — shows until first text or tool call
-    const thinkSpinner = ora({ text: chalk.gray('Thinking...'), spinner: 'dots' }).start();
-
-    // Stream response: print text token-by-token with markdown rendering
-    let firstText = true;
-    let usageLine = '';
-    let toolCallCount = 0;
-    const mdStream = new MarkdownStreamRenderer();
-    try {
-      const memory = loadMemory(sessionId);
-      agent.setSystemPrompt(buildSystemPrompt({ sessionId, memory, cwd, activeSkills }));
-
-      let userContent: string | Parameters<typeof agent.chat>[0] = finalInput;
-      if (pendingAttachments.length > 0) {
-        const { content, warnings } = buildUserContent(finalInput, pendingAttachments, { cwd });
-        pendingAttachments = [];
-        userContent = content;
-        if (warnings.length > 0) {
-          for (const warning of warnings) {
-            console.log(formatWarning(warning));
-          }
-        }
-      }
-
-      const response = await agent.chat(userContent, {
-        onText: (delta) => {
-          if (firstText) {
-            thinkSpinner.stop();
-            firstText = false;
-          }
-          const rendered = mdStream.push(delta);
-          if (rendered) {
-            process.stdout.write(rendered);
-          }
-        },
-        onToolCall: (name, args) => {
-          if (firstText) {
-            thinkSpinner.stop();
-            firstText = false;
-          }
-          toolCallCount++;
-          const prefix = toolCallCount > 1 ? chalk.gray(`[step ${toolCallCount}] `) : '';
-          console.log(prefix + formatToolCall(name, args));
-        },
-        onToolCallStart: async (name, args) => {
-          try {
-            let decision = await extensions.runToolHooks({ name, args }, buildToolHookContext());
-
-            if (decision?.action === 'deny' && decision.hookName) {
-              const hookKey = makeHookPermissionKey(decision.hookName, name);
-              const stored = permissionStore.toolHooks[hookKey];
-
-              if (stored === 'allow') {
-                decision = { action: 'allow', args };
-              } else if (stored === 'deny') {
-                decision = {
-                  action: 'deny',
-                  reason: decision.reason,
-                  hookName: decision.hookName,
-                };
-              } else {
-                rl.pause();
-                let choice: string;
-                try {
-                  const answer = await inquirer.prompt([
-                    {
-                      type: 'list',
-                      name: 'choice',
-                      message: `Extension hook "${decision.hookName}" denied tool "${name}".`,
-                      choices: [
-                        { name: 'Allow once', value: 'allow_once' },
-                        { name: 'Always allow', value: 'allow_always' },
-                        { name: 'Deny once', value: 'deny_once' },
-                        { name: 'Always deny', value: 'deny_always' },
-                      ],
-                    },
-                  ]);
-                  choice = answer.choice;
-                } finally {
-                  rl.resume();
-                }
-
-                if (choice === 'allow_once') {
-                  decision = { action: 'allow', args };
-                } else if (choice === 'allow_always') {
-                  permissionStore.toolHooks[hookKey] = 'allow';
-                  writePermissionStore(permissionStore);
-                  decision = { action: 'allow', args };
-                } else if (choice === 'deny_always') {
-                  permissionStore.toolHooks[hookKey] = 'deny';
-                  writePermissionStore(permissionStore);
-                  decision = {
-                    action: 'deny',
-                    reason: decision.reason,
-                    hookName: decision.hookName,
-                  };
-                } else {
-                  decision = {
-                    action: 'deny',
-                    reason: decision.reason,
-                    hookName: decision.hookName,
-                  };
-                }
-              }
-            }
-
-            const callEntry: ToolAuditEntry = {
-              ts: new Date().toISOString(),
-              type: 'tool_call',
-              session: sessionId,
-              name,
-              args: sanitizeToolArgs(
-                decision?.action === 'allow' && decision.args ? decision.args : args,
-              ),
-              decision: decision?.action || 'allow',
-              reason: decision && 'reason' in decision ? decision.reason : undefined,
-            };
-
-            if (auditEnabled) {
-              appendToolAudit(sessionId, callEntry);
-            }
-            if (isIntegrationToolName(name)) {
-              appendIntegrationTelemetry(callEntry);
-            }
-
-            return decision;
-          } catch (err) {
-            console.error(formatError(getErrorMessage(err)));
-            return undefined;
-          }
-        },
-        onToolCallEnd: (result) => {
-          // Show inline status for completed tool calls
-          console.log(formatToolResultInline(result.name, result.durationMs, result.isError));
-          extensions.runToolResultHooks(result, buildToolHookContext()).catch((err) => {
-            console.error(formatError(getErrorMessage(err)));
-          });
-          if (auditEnabled) {
-            const entry: ToolAuditEntry = {
-              ts: new Date().toISOString(),
-              type: 'tool_result',
-              session: sessionId,
-              name: result.name,
-              durationMs: result.durationMs,
-              isError: result.isError,
-              resultLength: result.resultText.length,
-            };
-            if (auditIncludeExcerpt) {
-              entry.resultExcerpt = result.resultText.slice(0, 500);
-            }
-            appendToolAudit(sessionId, entry);
-          }
-          if (isIntegrationToolName(result.name)) {
-            const entry: ToolAuditEntry = {
-              ts: new Date().toISOString(),
-              type: 'tool_result',
-              session: sessionId,
-              name: result.name,
-              durationMs: result.durationMs,
-              isError: result.isError,
-              resultLength: result.resultText.length,
-              reason:
-                result.isError && isRateLimitedResult(result.resultText)
-                  ? 'rate_limited'
-                  : undefined,
-            };
-            appendIntegrationTelemetry(entry);
-          }
-        },
-        onUsage: (usage) => {
-          if (showUsage) {
-            usageLine = formatUsage(usage);
-          }
-        },
-      });
-
-      // Flush any remaining buffered markdown
-      const flushed = mdStream.flush();
-      if (flushed) {
-        process.stdout.write(flushed);
-      }
-
-      // If no streaming text was emitted (shouldn't happen, but safety)
-      if (firstText && response) {
-        console.log(renderMarkdown(response));
-      }
-
-      const elapsed = Date.now() - startTime;
-      console.log(formatElapsed(elapsed));
-      if (usageLine) {
-        console.log(usageLine);
-      }
-
-      // Warn if history was trimmed
-      const trimInfo = agent.getLastTrimInfo();
-      if (trimInfo?.trimmed) {
-        console.log(
-          chalk.yellow(
-            `  Context trimmed: oldest messages dropped (${trimInfo.messagesBefore} → ${trimInfo.messagesAfter}). Use /context for details.`,
-          ),
-        );
-      }
-    } catch (e: unknown) {
-      thinkSpinner.stop();
-      const msg = getErrorMessage(e);
-      if (msg !== 'Request cancelled') {
-        console.log('\n' + formatError(msg));
-      }
-    }
+    pendingAttachments = turnResult.pendingAttachments;
     processing = false;
     console.log('');
     rl.prompt();

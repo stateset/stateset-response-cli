@@ -340,6 +340,8 @@ describe('cli help text', () => {
     printHelp();
     const output = spy.mock.calls.map((c) => String(c[0])).join('\n');
     expect(output).toContain('/exit /quit');
+    expect(output).toContain('/integrations health');
+    expect(output).toContain('/integrations logs');
     expect(output).toContain('[limit=100]');
     expect(output).toContain('scans up to 5000 entries');
     spy.mockRestore();

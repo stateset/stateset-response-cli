@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { Command } from 'commander';
+import { Command, CommanderError } from 'commander';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import ora from 'ora';
@@ -27,7 +27,7 @@ import { registerAuthCommands, runAuthLogin, type AuthLoginOptions } from './cli
 import { registerIntegrationsCommands, runIntegrationsSetup } from './cli/commands-integrations.js';
 import { registerDoctorCommand, runDoctorChecks } from './cli/commands-doctor.js';
 import { registerShortcutTopLevelCommands } from './cli/commands-shortcuts.js';
-import { startChatSession } from './cli/chat-action.js';
+import { resolveOneShotInput, runOneShotPrompt, startChatSession } from './cli/chat-action.js';
 
 const require = createRequire(import.meta.url);
 const pkg = require('../package.json') as { version?: string };
@@ -39,12 +39,36 @@ installGlobalErrorHandlers();
 program
   .name('response')
   .description('AI-powered CLI for managing the StateSet Response platform')
-  .version(pkg.version || '0.0.0');
+  .version(pkg.version || '0.0.0')
+  .showSuggestionAfterError(true)
+  .showHelpAfterError();
+program.exitOverride();
+
+program.addHelpText(
+  'after',
+  [
+    '',
+    'Examples:',
+    '  response',
+    '  response ask "Summarize the latest failed orders"',
+    '  cat incident.txt | response ask --stdin --session ops',
+    '  response chat --session ops --model sonnet',
+    '  response init --from-env --integration shopify',
+    '  response integrations setup',
+    '  response doctor',
+    '',
+  ].join('\n'),
+);
 
 registerAuthCommands(program);
 registerIntegrationsCommands(program);
 registerDoctorCommand(program);
 registerShortcutTopLevelCommands(program);
+
+const collectRepeatableOption = (value: string, previous: string[]): string[] => {
+  previous.push(value);
+  return previous;
+};
 
 interface InitCommandOptions extends AuthLoginOptions {
   model?: string;
@@ -193,6 +217,17 @@ program
       { version: pkg.version },
     );
   });
+
+interface AskCommandOptions {
+  model?: string;
+  session?: string;
+  file?: string[];
+  apply?: boolean;
+  redact?: boolean;
+  usage?: boolean;
+  verbose?: boolean;
+  stdin?: boolean;
+}
 
 // Config commands
 const configCmd = program.command('config').description('Manage CLI configuration');
@@ -482,21 +517,50 @@ program
     },
   );
 
+program
+  .command('ask')
+  .description('Send one prompt and print the response')
+  .argument('[prompt...]', 'Prompt text to send')
+  .option('--stdin', 'Read the prompt from stdin')
+  .option('--model <model>', `Model to use (${getModelAliasText('list')} or full model ID)`)
+  .option('--session <name>', 'Session name (default: "default")')
+  .option('--file <path>', 'Attach a file (repeatable)', collectRepeatableOption, [])
+  .option('--apply', 'Allow write operations for integration tools')
+  .option('--redact', 'Redact customer emails in integration outputs')
+  .option('--usage', 'Show token usage summaries')
+  .option('--verbose', 'Enable debug logging')
+  .action(async (promptParts: string[], options: AskCommandOptions) => {
+    let message: string;
+    try {
+      message = await resolveOneShotInput({
+        promptParts,
+        stdin: options.stdin,
+      });
+    } catch (error) {
+      console.error(formatError(getErrorMessage(error)));
+      process.exitCode = 1;
+      return;
+    }
+
+    await runOneShotPrompt({
+      model: options.model,
+      session: options.session,
+      file: options.file,
+      apply: options.apply,
+      redact: options.redact,
+      usage: options.usage,
+      verbose: options.verbose,
+      message,
+    });
+  });
+
 // Default command: interactive agent session
 program
   .command('chat', { isDefault: true })
   .description('Start an interactive AI agent session')
   .option('--model <model>', `Model to use (${getModelAliasText('list')} or full model ID)`)
   .option('--session <name>', 'Session name (default: "default")')
-  .option(
-    '--file <path>',
-    'Attach a file (repeatable)',
-    (value: string, previous: string[]) => {
-      previous.push(value);
-      return previous;
-    },
-    [],
-  )
+  .option('--file <path>', 'Attach a file (repeatable)', collectRepeatableOption, [])
   .option('--apply', 'Allow write operations for integration tools')
   .option('--redact', 'Redact customer emails in integration outputs')
   .option('--usage', 'Show token usage summaries')
@@ -505,4 +569,16 @@ program
     await startChatSession(options, { version: pkg.version });
   });
 
-program.parse();
+try {
+  await program.parseAsync(process.argv);
+} catch (error) {
+  if (error instanceof CommanderError) {
+    if (error.code === 'commander.helpDisplayed' || error.code === 'commander.version') {
+      process.exitCode = 0;
+    } else {
+      process.exitCode = error.exitCode;
+    }
+  } else {
+    throw error;
+  }
+}

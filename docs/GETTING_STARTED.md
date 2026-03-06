@@ -15,6 +15,7 @@ response init
 ```
 
 `response init` will:
+
 - set up authentication (if needed)
 - run diagnostics
 - optionally configure integrations
@@ -25,6 +26,7 @@ response init
 ```bash
 response auth login
 response doctor
+response ask "List my configured integrations"
 response chat
 ```
 

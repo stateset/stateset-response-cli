@@ -9,6 +9,17 @@ vi.mock('../cli/session-meta.js', () => ({
   ]),
 }));
 
+vi.mock('../resources.js', () => ({
+  listPromptTemplates: vi.fn(() => [
+    { name: 'incident', path: '', displayPath: '', content: '', variables: [] },
+    { name: 'refund', path: '', displayPath: '', content: '', variables: [] },
+  ]),
+  listSkills: vi.fn(() => [
+    { name: 'ops', path: '', displayPath: '', description: '', content: '' },
+    { name: 'triage', path: '', displayPath: '', description: '', content: '' },
+  ]),
+}));
+
 import { smartCompleter, invalidateCompleterCache } from '../cli/completer.js';
 
 beforeAll(() => {
@@ -107,5 +118,46 @@ describe('smartCompleter', () => {
   it('includes extension commands in name completion', () => {
     const [hits] = smartCompleter('/my', ['myext']);
     expect(hits).toContain('/myext');
+  });
+
+  it('completes help topics including categories and hidden command names', () => {
+    const [hits] = smartCompleter('/help int');
+    expect(hits).toContain('integrations');
+    expect(hits).toContain('/integrations health');
+    expect(hits).toContain('/integrations logs');
+  });
+
+  it('completes integration subcommands and integration ids', () => {
+    const [subcommands] = smartCompleter('/integrations ');
+    expect(subcommands).toContain('status');
+    expect(subcommands).toContain('health');
+    expect(subcommands).toContain('logs');
+
+    const [integrations] = smartCompleter('/integrations health sh');
+    expect(integrations).toContain('shopify');
+  });
+
+  it('completes integration flags for health/logs subcommands', () => {
+    const [healthFlags] = smartCompleter('/integrations health --');
+    expect(healthFlags).toContain('--detailed');
+
+    const [logFlags] = smartCompleter('/integrations logs --');
+    expect(logFlags).toContain('--last');
+  });
+
+  it('completes prompt template names', () => {
+    const [hits] = smartCompleter('/prompt re');
+    expect(hits).toContain('refund');
+  });
+
+  it('completes prompt validation targets', () => {
+    const [hits] = smartCompleter('/prompt-validate ');
+    expect(hits).toContain('all');
+    expect(hits).toContain('incident');
+  });
+
+  it('completes skill names', () => {
+    const [hits] = smartCompleter('/skill tr');
+    expect(hits).toContain('triage');
   });
 });

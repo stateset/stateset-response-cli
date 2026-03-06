@@ -14,6 +14,9 @@ function handleFatalError(err) {
 }
 
 async function main() {
+  const { ensureSupportedNodeRuntime } = await import('../dist/runtime/node-launcher.js');
+  await ensureSupportedNodeRuntime(import.meta.url);
+
   const [
     { configExists, getAnthropicApiKey, getCurrentOrg, resolveModelOrThrow },
     { logger },

@@ -14,6 +14,9 @@ function handleFatalError(err) {
 }
 
 async function main() {
+  const { ensureSupportedNodeRuntime } = await import('../dist/runtime/node-launcher.js');
+  await ensureSupportedNodeRuntime(import.meta.url);
+
   const [
     { configExists, getAnthropicApiKey, getCurrentOrg, resolveModelOrThrow },
     { logger },
@@ -153,9 +156,7 @@ Examples:
     try {
       await orchestrator.stop();
     } catch (err) {
-      console.error(
-        `Error during shutdown: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      console.error(`Error during shutdown: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       process.exit(0);
     }

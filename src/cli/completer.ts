@@ -1,6 +1,8 @@
-import { getCommandNames } from './command-registry.js';
+import { getCategoryOrder, getCommandNames, getRegisteredCommands } from './command-registry.js';
 import { listSessionSummaries } from './session-meta.js';
 import { MODEL_ALIAS_NAMES } from '../config.js';
+import { listPromptTemplates, listSkills } from '../resources.js';
+import { listIntegrations } from '../integrations/registry.js';
 
 /**
  * Context-aware tab completer for the CLI readline interface.
@@ -37,6 +39,9 @@ export function invalidateCompleterCache(): void {
 
 const TOGGLE_VALUES = ['on', 'off'];
 const EXPORT_FORMATS = ['md', 'json', 'jsonl'];
+const METRICS_SUBS = ['json', 'reset'];
+const INTEGRATIONS_SUBS = ['status', 'setup', 'health', 'limits', 'logs'];
+const INTEGRATIONS_FLAG_SUBS = ['--detailed', '--last'];
 
 const RULES_SUBS = ['get', 'list', 'create', 'toggle', 'delete', 'import', 'export', 'agent'];
 const KB_SUBS = ['search', 'add', 'delete', 'scroll', 'list', 'info'];
@@ -44,8 +49,56 @@ const AGENTS_SUBS = ['list', 'get', 'create', 'switch', 'export', 'import', 'boo
 const POLICY_SUBS = ['list', 'set', 'unset', 'clear', 'edit', 'init', 'import', 'export'];
 const TAG_SUBS = ['list', 'add', 'remove'];
 
-function completeArgs(command: string, partial: string): string[] {
+function getHelpTopics(): string[] {
+  return Array.from(
+    new Set([
+      ...getCategoryOrder(),
+      ...getRegisteredCommands().map((cmd) => cmd.name),
+      ...getCommandNames(),
+    ]),
+  ).sort((a, b) => a.localeCompare(b));
+}
+
+function filterHelpTopics(partial: string): string[] {
+  const normalized = partial.trim().toLowerCase().replace(/^\//, '');
+  const topics = getHelpTopics();
+  if (!normalized) {
+    return topics;
+  }
+  return topics.filter((topic) => topic.toLowerCase().replace(/^\//, '').startsWith(normalized));
+}
+
+function getPromptTemplateNames(cwd: string): string[] {
+  try {
+    return listPromptTemplates(cwd).map((template) => template.name);
+  } catch {
+    return [];
+  }
+}
+
+function getSkillNames(cwd: string): string[] {
+  try {
+    return listSkills(cwd).map((skill) => skill.name);
+  } catch {
+    return [];
+  }
+}
+
+function getIntegrationIds(): string[] {
+  return listIntegrations().map((integration) => integration.id);
+}
+
+function completeArgs(parts: string[], cwd: string): string[] {
+  const command = parts[0];
+  const partial = parts[parts.length - 1] || '';
+  const subcommand = parts[1];
+  const previous = parts[parts.length - 2] || '';
+
   switch (command) {
+    case '/help':
+    case '/commands':
+      return filterHelpTopics(partial);
+
     case '/model':
     case '/m':
       return filterPrefix([...MODEL_ALIAS_NAMES], partial);
@@ -71,6 +124,36 @@ function completeArgs(command: string, partial: string): string[] {
     case '/agentic':
       return filterPrefix(TOGGLE_VALUES, partial);
 
+    case '/metrics':
+      return filterPrefix(METRICS_SUBS, partial);
+
+    case '/integrations':
+      if (parts.length <= 2) {
+        return filterPrefix(INTEGRATIONS_SUBS, partial);
+      }
+      if (subcommand === 'health') {
+        if (partial.startsWith('--')) {
+          return filterPrefix(['--detailed'], partial);
+        }
+        if (previous === '--detailed') {
+          return [];
+        }
+        return filterPrefix(getIntegrationIds(), partial);
+      }
+      if (subcommand === 'limits' || subcommand === 'setup') {
+        return filterPrefix(getIntegrationIds(), partial);
+      }
+      if (subcommand === 'logs') {
+        if (partial.startsWith('--')) {
+          return filterPrefix(['--last'], partial);
+        }
+        if (previous === '--last') {
+          return [];
+        }
+        return filterPrefix(getIntegrationIds(), partial);
+      }
+      return filterPrefix(INTEGRATIONS_FLAG_SUBS, partial);
+
     case '/rules':
     case '/r':
       return filterPrefix(RULES_SUBS, partial);
@@ -88,6 +171,15 @@ function completeArgs(command: string, partial: string): string[] {
     case '/tag':
       return filterPrefix(TAG_SUBS, partial);
 
+    case '/prompt':
+      return filterPrefix(getPromptTemplateNames(cwd), partial);
+
+    case '/prompt-validate':
+      return filterPrefix(['all', ...getPromptTemplateNames(cwd)], partial);
+
+    case '/skill':
+      return filterPrefix(getSkillNames(cwd), partial);
+
     default:
       return [];
   }
@@ -101,7 +193,11 @@ function filterPrefix(candidates: readonly string[], partial: string): string[] 
 /**
  * Smart tab completer. Call as: `readline.createInterface({ completer: smartCompleter })`.
  */
-export function smartCompleter(line: string, extensionCommands: string[] = []): [string[], string] {
+export function smartCompleter(
+  line: string,
+  extensionCommands: string[] = [],
+  cwd: string = process.cwd(),
+): [string[], string] {
   if (!line.startsWith('/')) return [[], line];
 
   const parts = line.split(/\s+/);
@@ -119,7 +215,7 @@ export function smartCompleter(line: string, extensionCommands: string[] = []): 
 
   // Completing arguments
   const partial = parts[parts.length - 1] || '';
-  const argHits = completeArgs(command, partial);
+  const argHits = completeArgs(parts, cwd);
   if (argHits.length > 0) {
     return [argHits, partial];
   }

@@ -11,6 +11,7 @@ import {
 } from '../utils/display.js';
 import {
   findCommand,
+  getRegisteredCommands,
   getCommandsForCategory,
   getCategoryLabel,
   type CommandCategory,
@@ -29,6 +30,183 @@ import {
 } from './commands-integrations.js';
 import { hasCommand } from './utils.js';
 import { metrics } from '../lib/metrics.js';
+
+const HELP_CATEGORIES: CommandCategory[] = [
+  'core',
+  'safety',
+  'integrations',
+  'sessions',
+  'shortcuts',
+  'exports',
+  'prompts',
+  'extensions',
+];
+
+const HELP_CATEGORY_ALIASES: Record<CommandCategory, string[]> = {
+  core: ['core'],
+  safety: ['safety', 'policy', 'policies', 'security'],
+  integrations: ['integration', 'integrations'],
+  sessions: ['session', 'sessions'],
+  shortcuts: ['shortcut', 'shortcuts'],
+  exports: ['export', 'exports'],
+  prompts: ['prompt', 'prompts', 'skill', 'skills'],
+  extensions: ['extension', 'extensions'],
+};
+
+const INTEGRATIONS_SUBCOMMANDS = ['status', 'setup', 'health', 'limits', 'logs'] as const;
+
+function normalizeHelpLookup(value: string): string {
+  return value.trim().toLowerCase().replace(/^\//, '');
+}
+
+function levenshteinDistance(a: string, b: string): number {
+  if (a === b) return 0;
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+
+  const matrix: number[][] = Array.from({ length: a.length + 1 }, () =>
+    Array.from({ length: b.length + 1 }, () => 0),
+  );
+  for (let i = 0; i <= a.length; i += 1) matrix[i][0] = i;
+  for (let j = 0; j <= b.length; j += 1) matrix[0][j] = j;
+
+  for (let i = 1; i <= a.length; i += 1) {
+    for (let j = 1; j <= b.length; j += 1) {
+      if (a[i - 1] === b[j - 1]) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = 1 + Math.min(matrix[i - 1][j], matrix[i][j - 1], matrix[i - 1][j - 1]);
+      }
+    }
+  }
+
+  return matrix[a.length][b.length];
+}
+
+function resolveHelpCategory(query: string): CommandCategory | null {
+  const normalized = normalizeHelpLookup(query);
+  if (!normalized) return null;
+
+  const exactMatches = HELP_CATEGORIES.filter((category) => {
+    const names = [
+      category,
+      getCategoryLabel(category).toLowerCase(),
+      ...HELP_CATEGORY_ALIASES[category],
+    ];
+    return names.some((name) => name === normalized);
+  });
+  if (exactMatches.length === 1) {
+    return exactMatches[0];
+  }
+
+  const prefixMatches = HELP_CATEGORIES.filter((category) => {
+    const names = [
+      category,
+      getCategoryLabel(category).toLowerCase(),
+      ...HELP_CATEGORY_ALIASES[category],
+    ];
+    return names.some((name) => name.startsWith(normalized) || normalized.startsWith(name));
+  });
+  return prefixMatches.length === 1 ? prefixMatches[0] : null;
+}
+
+function scoreHelpMatch(commandName: string, query: string): number {
+  const normalizedCommand = normalizeHelpLookup(commandName);
+  const normalizedQuery = normalizeHelpLookup(query);
+  if (!normalizedQuery) return 0;
+  if (normalizedCommand === normalizedQuery) return 500;
+  if (normalizedCommand.startsWith(normalizedQuery)) return 400;
+  if (normalizedCommand.includes(normalizedQuery)) return 300;
+  const distance = levenshteinDistance(normalizedQuery, normalizedCommand);
+  return distance <= 3 ? 100 - distance : 0;
+}
+
+function findHelpMatches(query: string) {
+  const normalizedQuery = normalizeHelpLookup(query);
+  const terms = normalizedQuery.split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return [];
+
+  const scored = getRegisteredCommands()
+    .map((cmd) => {
+      const aliasScores = (cmd.aliases ?? []).map((alias) => scoreHelpMatch(alias, query));
+      const usageScore = scoreHelpMatch(cmd.usage, query);
+      const detailParts = [
+        cmd.description.toLowerCase(),
+        cmd.detailedHelp?.toLowerCase() ?? '',
+        getCategoryLabel(cmd.category).toLowerCase(),
+        cmd.category,
+      ];
+      const termScore = terms.every((term) => detailParts.some((part) => part.includes(term)))
+        ? 200
+        : 0;
+      const score = Math.max(
+        scoreHelpMatch(cmd.name, query),
+        usageScore,
+        termScore,
+        ...aliasScores,
+      );
+      return { cmd, score };
+    })
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score || a.cmd.name.localeCompare(b.cmd.name));
+
+  const deduped = new Set<string>();
+  return scored
+    .map((entry) => entry.cmd)
+    .filter((cmd) => {
+      if (deduped.has(cmd.name)) return false;
+      deduped.add(cmd.name);
+      return true;
+    })
+    .slice(0, 8);
+}
+
+function printCategoryCommands(category: CommandCategory): void {
+  const cmds = getCommandsForCategory(category);
+  if (cmds.length === 0) {
+    return;
+  }
+
+  console.log('');
+  console.log(chalk.bold(`  ${getCategoryLabel(category)}`));
+  for (const c of cmds) {
+    const aliasStr =
+      c.aliases && c.aliases.length > 0 ? chalk.gray(` (${c.aliases.join(', ')})`) : '';
+    console.log(chalk.cyan(`    ${c.usage}`) + aliasStr + chalk.gray('  ' + c.description));
+  }
+  console.log('');
+}
+
+function printHelpMatches(query: string, commands: ReturnType<typeof findHelpMatches>): void {
+  console.log('');
+  console.log(chalk.bold(`  Matches for "${query}"`));
+  for (const cmd of commands) {
+    const aliasStr =
+      cmd.aliases && cmd.aliases.length > 0 ? chalk.gray(` (${cmd.aliases.join(', ')})`) : '';
+    console.log(chalk.cyan(`    ${cmd.usage}`) + aliasStr + chalk.gray('  ' + cmd.description));
+  }
+  console.log('');
+}
+
+function getSubcommandSuggestions(query: string, candidates: readonly string[]): string[] {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return [];
+
+  const prefixMatches = candidates.filter((candidate) => candidate.startsWith(normalizedQuery));
+  if (prefixMatches.length > 0) {
+    return prefixMatches.slice(0, 4);
+  }
+
+  return candidates
+    .map((candidate) => ({
+      candidate,
+      distance: levenshteinDistance(normalizedQuery, candidate),
+    }))
+    .filter((entry) => entry.distance <= 3)
+    .sort((a, b) => a.distance - b.distance || a.candidate.localeCompare(b.candidate))
+    .slice(0, 3)
+    .map((entry) => entry.candidate);
+}
 
 export async function handleChatCommand(input: string, ctx: ChatContext): Promise<CommandResult> {
   const prefix = input.split(/\s/)[0];
@@ -130,36 +308,30 @@ export async function handleChatCommand(input: string, ctx: ChatContext): Promis
         ctx.rl.prompt();
         return { handled: true };
       }
-      // Try as a category name
-      const VALID_CATEGORIES: CommandCategory[] = [
-        'core',
-        'safety',
-        'integrations',
-        'sessions',
-        'shortcuts',
-        'exports',
-        'prompts',
-        'extensions',
-      ];
-      const lower = arg.toLowerCase();
-      if (VALID_CATEGORIES.includes(lower as CommandCategory)) {
-        const cmds = getCommandsForCategory(lower);
-        if (cmds.length > 0) {
-          console.log('');
-          console.log(chalk.bold(`  ${getCategoryLabel(lower as CommandCategory)}`));
-          for (const c of cmds) {
-            const aliasStr =
-              c.aliases && c.aliases.length > 0 ? chalk.gray(` (${c.aliases.join(', ')})`) : '';
-            console.log(chalk.cyan(`    ${c.usage}`) + aliasStr + chalk.gray('  ' + c.description));
-          }
-          console.log('');
-          ctx.rl.prompt();
-          return { handled: true };
-        }
+      const category = resolveHelpCategory(arg);
+      if (category) {
+        printCategoryCommands(category);
+        ctx.rl.prompt();
+        return { handled: true };
+      }
+      const matches = findHelpMatches(arg);
+      if (matches.length > 0) {
+        printHelpMatches(arg, matches);
+        console.log(chalk.gray('  Tip: use /help <command> for full details.'));
+        console.log('');
+        ctx.rl.prompt();
+        return { handled: true };
       }
       console.log(
         formatWarning(`No command or category found: "${arg}". Use /help for full list.`),
       );
+      const suggestions = getSubcommandSuggestions(normalizeHelpLookup(arg), [
+        ...HELP_CATEGORIES,
+        ...getRegisteredCommands().map((cmd) => normalizeHelpLookup(cmd.name)),
+      ]);
+      if (suggestions.length > 0) {
+        console.log(formatWarning(`Try: ${suggestions.join(', ')}`));
+      }
       console.log('');
       ctx.rl.prompt();
       return { handled: true };
@@ -277,6 +449,12 @@ export async function handleChatCommand(input: string, ctx: ChatContext): Promis
   if (hasCommand(input, '/integrations')) {
     const tokens = input.split(/\s+/).slice(1);
     const action = tokens[0];
+    if (action === 'status') {
+      ctx.printIntegrationStatus();
+      console.log('');
+      ctx.rl.prompt();
+      return { handled: true };
+    }
     if (action === 'health') {
       const detailed = tokens.includes('--detailed');
       printIntegrationHealth(
@@ -360,6 +538,20 @@ export async function handleChatCommand(input: string, ctx: ChatContext): Promis
           console.error(formatError(getErrorMessage(err)));
           console.log(formatWarning('Restart the chat session if tools appear missing.'));
         }
+      }
+      console.log('');
+      ctx.rl.prompt();
+      return { handled: true };
+    }
+    if (action && !action.startsWith('--')) {
+      console.log(
+        formatWarning(
+          `Unknown /integrations subcommand "${action}". Available: ${INTEGRATIONS_SUBCOMMANDS.join(', ')}.`,
+        ),
+      );
+      const suggestions = getSubcommandSuggestions(action, INTEGRATIONS_SUBCOMMANDS);
+      if (suggestions.length > 0) {
+        console.log(formatWarning(`Did you mean: ${suggestions.join(', ')}?`));
       }
       console.log('');
       ctx.rl.prompt();
