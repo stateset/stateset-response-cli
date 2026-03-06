@@ -10,8 +10,7 @@ import {
   MODEL_IDS,
 } from '../config.js';
 import { requestText } from '../integrations/http.js';
-import { listIntegrations } from '../integrations/registry.js';
-import { getIntegrationEnvStatus } from './commands-integrations.js';
+import { getIntegrationReadiness, getIntegrationSnapshots } from './commands-integrations.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { getStateSetDir, getSessionStorageStats, cleanupSessions } from '../session.js';
 
@@ -116,23 +115,40 @@ async function checkGraphQLEndpoint(): Promise<DoctorCheck> {
 }
 
 function checkIntegrations(): DoctorCheck[] {
-  const integrations = listIntegrations();
-  return integrations.map((def) => {
-    const { status } = getIntegrationEnvStatus(def);
-    if (status === 'set') {
-      return { name: def.label, status: 'pass' as const, message: `${def.label}: configured` };
-    }
-    if (status === 'partial') {
+  return getIntegrationSnapshots(process.cwd()).map((snapshot) => {
+    const readiness = getIntegrationReadiness(snapshot);
+    if (readiness === 'ready') {
       return {
-        name: def.label,
+        name: snapshot.label,
+        status: 'pass' as const,
+        message: `${snapshot.label}: configured`,
+      };
+    }
+    if (readiness === 'invalid-config') {
+      return {
+        name: snapshot.label,
         status: 'warn' as const,
-        message: `${def.label}: partially configured (missing required fields)`,
+        message: `${snapshot.label}: invalid configuration`,
+      };
+    }
+    if (readiness === 'disabled') {
+      return {
+        name: snapshot.label,
+        status: 'warn' as const,
+        message: `${snapshot.label}: disabled`,
+      };
+    }
+    if (readiness === 'partial') {
+      return {
+        name: snapshot.label,
+        status: 'warn' as const,
+        message: `${snapshot.label}: partially configured (missing required fields)`,
       };
     }
     return {
-      name: def.label,
+      name: snapshot.label,
       status: 'warn' as const,
-      message: `${def.label}: not configured`,
+      message: `${snapshot.label}: not configured`,
     };
   });
 }

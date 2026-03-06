@@ -67,6 +67,26 @@ describe('checkForUpdate', () => {
     expect(result).toContain('npm i -g');
   });
 
+  it('treats a stable release as newer than a prerelease of the same version', async () => {
+    mockFs.existsSync.mockReturnValue(true);
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({ latestVersion: '1.8.0', checkedAt: Date.now() }),
+    );
+
+    const result = await checkForUpdate('1.8.0-beta.1');
+    expect(result).toContain('1.8.0');
+  });
+
+  it('does not treat a prerelease as newer than the matching stable release', async () => {
+    mockFs.existsSync.mockReturnValue(true);
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({ latestVersion: '1.8.0-beta.2', checkedAt: Date.now() }),
+    );
+
+    const result = await checkForUpdate('1.8.0');
+    expect(result).toBeNull();
+  });
+
   it('returns null when cache is expired and fetch fails', async () => {
     mockFs.existsSync.mockReturnValue(true);
     mockFs.readFileSync.mockReturnValue(

@@ -48,7 +48,11 @@ import {
   isRateLimitedResult,
 } from './audit.js';
 import { readPermissionStore, writePermissionStore, makeHookPermissionKey } from './permissions.js';
-import { printIntegrationStatus, runIntegrationsSetup } from './commands-integrations.js';
+import {
+  countConfiguredIntegrations,
+  printIntegrationStatus,
+  runIntegrationsSetup,
+} from './commands-integrations.js';
 import { routeSlashCommand } from './command-router.js';
 import { getCommandNames, registerAllCommands } from './command-registry.js';
 import inquirer from 'inquirer';
@@ -158,6 +162,14 @@ export interface ChatOptions {
   verbose?: boolean;
 }
 
+export function getWelcomeIntegrationCount(cwd: string = process.cwd()): number {
+  try {
+    return countConfiguredIntegrations(cwd);
+  } catch {
+    return 0;
+  }
+}
+
 export async function startChatSession(
   options: ChatOptions,
   meta: { version?: string },
@@ -253,18 +265,7 @@ export async function startChatSession(
   }
 
   // Count active integrations for welcome banner
-  let integrationCount = 0;
-  try {
-    const { INTEGRATION_DEFINITIONS } = await import('../integrations/registry.js');
-    integrationCount = INTEGRATION_DEFINITIONS.filter(
-      (def: { fields: Array<{ envVars: string[] }> }) =>
-        def.fields.some((f: { envVars: string[] }) =>
-          f.envVars.some((e: string) => process.env[e]),
-        ),
-    ).length;
-  } catch {
-    /* ignore */
-  }
+  const integrationCount = getWelcomeIntegrationCount(cwd);
 
   const sessionMessageCount = sessionStore.getMessageCount();
   printWelcome(orgId, meta.version, model, {

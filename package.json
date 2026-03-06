@@ -1,6 +1,6 @@
 {
   "name": "stateset-response-cli",
-  "version": "1.7.7",
+  "version": "1.7.8",
   "description": "CLI tool for managing the StateSet Response platform via AI agent",
   "license": "MIT",
   "type": "module",
@@ -8,10 +8,10 @@
     "node": ">=18.0.0"
   },
   "bin": {
-    "response": "./bin/stateset-response",
-    "response-whatsapp": "./bin/stateset-whatsapp",
-    "response-slack": "./bin/stateset-slack",
-    "response-gateway": "./bin/stateset-gateway"
+    "response": "./bin/stateset-response.js",
+    "response-whatsapp": "./bin/stateset-whatsapp.js",
+    "response-slack": "./bin/stateset-slack.js",
+    "response-gateway": "./bin/stateset-gateway.js"
   },
   "main": "dist/cli.js",
   "files": [
@@ -29,6 +29,7 @@
   ],
   "scripts": {
     "build": "node scripts/build.mjs",
+    "smoke:bins": "node scripts/smoke-bins.mjs",
     "dev": "tsx src/cli.ts",
     "start": "node dist/cli.js",
     "test": "node --require ./scripts/node-compat.cjs ./node_modules/vitest/vitest.mjs run",

@@ -30,9 +30,10 @@ interface ResolvedField {
   source: FieldSource;
   hasValue: boolean;
   value?: string;
+  matchesDefault: boolean;
 }
 
-interface IntegrationSnapshot {
+export interface IntegrationSnapshot {
   id: IntegrationId;
   label: string;
   envStatus: string;
@@ -47,7 +48,17 @@ interface IntegrationSnapshot {
   url: string;
   urlStatus: 'ok' | 'invalid' | 'n/a';
   health: HealthStatus;
+  hasUserConfig: boolean;
+  hasMeaningfulUserConfig: boolean;
+  requiredUserSatisfied: number;
 }
+
+export type IntegrationReadiness =
+  | 'ready'
+  | 'partial'
+  | 'not-configured'
+  | 'disabled'
+  | 'invalid-config';
 
 export interface IntegrationsSetupOptions {
   target?: string;
@@ -92,6 +103,7 @@ function resolveField(
   entry: IntegrationEntry | undefined,
 ): ResolvedField[] {
   return def.fields.map((field) => {
+    const defaultValue = (field.defaultValue || '').trim();
     const envValue = (readFirstEnvValue(field.envVars) || '').trim();
     if (envValue) {
       return {
@@ -100,6 +112,7 @@ function resolveField(
         source: 'env',
         hasValue: true,
         value: envValue,
+        matchesDefault: defaultValue.length > 0 && envValue === defaultValue,
       };
     }
 
@@ -111,10 +124,10 @@ function resolveField(
         source: 'store',
         hasValue: true,
         value: storeValue,
+        matchesDefault: defaultValue.length > 0 && storeValue === defaultValue,
       };
     }
 
-    const defaultValue = (field.defaultValue || '').trim();
     if (defaultValue) {
       return {
         key: field.key,
@@ -122,6 +135,7 @@ function resolveField(
         source: 'default',
         hasValue: true,
         value: defaultValue,
+        matchesDefault: true,
       };
     }
 
@@ -130,6 +144,7 @@ function resolveField(
       required: field.required !== false,
       source: 'none',
       hasValue: false,
+      matchesDefault: false,
     };
   });
 }
@@ -219,11 +234,23 @@ function loadIntegrationSnapshots(cwd: string, integrationId?: string): Integrat
     const fields = resolveField(def, entry);
     const required = fields.filter((field) => field.required);
     const requiredSatisfied = required.filter((field) => field.hasValue).length;
+    const requiredUserSatisfied = required.filter(
+      (field) => field.hasValue && (field.source === 'env' || field.source === 'store'),
+    ).length;
     const missingRequired = required.filter((field) => !field.hasValue).map((field) => field.key);
     const source = summarizeSources(fields);
     const configStatus = normalizeConfigStatus(entry);
     const configKeys = entry?.config ? Object.keys(entry.config).length : 0;
     const updatedAt = entry?.updatedAt || '-';
+    const hasUserConfig = fields.some(
+      (field) => field.source === 'env' || field.source === 'store',
+    );
+    const hasMeaningfulUserConfig = fields.some((field) => {
+      if (!field.hasValue) return false;
+      if (field.source === 'env') return true;
+      if (field.source !== 'store') return false;
+      return field.required || !field.matchesDefault;
+    });
 
     const urlField = fields.find((field) => /baseurl|endpoint|host/i.test(field.key));
     const { value: url, status: urlStatus } = validateUrl(urlField?.value);
@@ -250,8 +277,44 @@ function loadIntegrationSnapshots(cwd: string, integrationId?: string): Integrat
       url,
       urlStatus,
       health,
+      hasUserConfig,
+      hasMeaningfulUserConfig,
+      requiredUserSatisfied,
     };
   });
+}
+
+export function getIntegrationSnapshots(
+  cwd: string = process.cwd(),
+  integrationId?: string,
+): IntegrationSnapshot[] {
+  return loadIntegrationSnapshots(cwd, integrationId);
+}
+
+export function getIntegrationReadiness(snapshot: IntegrationSnapshot): IntegrationReadiness {
+  if (snapshot.health === 'disabled') return 'disabled';
+  if (snapshot.health === 'invalid-config') return 'invalid-config';
+  if (snapshot.requiredTotal > 0 && snapshot.requiredUserSatisfied === snapshot.requiredTotal) {
+    return 'ready';
+  }
+  if (!snapshot.hasMeaningfulUserConfig && snapshot.configStatus === 'not configured') {
+    return 'not-configured';
+  }
+  if (
+    !snapshot.hasMeaningfulUserConfig &&
+    snapshot.configStatus === 'empty' &&
+    snapshot.requiredUserSatisfied === 0
+  ) {
+    return 'not-configured';
+  }
+  return 'partial';
+}
+
+export function countConfiguredIntegrations(cwd: string = process.cwd()): number {
+  return loadIntegrationSnapshots(cwd).filter((snapshot) => {
+    if (!snapshot.hasMeaningfulUserConfig) return false;
+    return getIntegrationReadiness(snapshot) !== 'disabled';
+  }).length;
 }
 
 function loadIntegrationAuditEntries(): Array<ToolAuditEntry & { integrationId: IntegrationId }> {

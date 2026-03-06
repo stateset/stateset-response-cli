@@ -91,13 +91,72 @@ function fetchLatestVersion(): Promise<string | null> {
   });
 }
 
+interface ParsedSemver {
+  major: number;
+  minor: number;
+  patch: number;
+  prerelease: string[];
+}
+
+function parseSemver(version: string): ParsedSemver | null {
+  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(
+    version.trim(),
+  );
+  if (!match) return null;
+  return {
+    major: Number.parseInt(match[1] || '0', 10),
+    minor: Number.parseInt(match[2] || '0', 10),
+    patch: Number.parseInt(match[3] || '0', 10),
+    prerelease: match[4] ? match[4].split('.') : [],
+  };
+}
+
+function comparePrerelease(a: string[], b: string[]): number {
+  if (a.length === 0 && b.length === 0) return 0;
+  if (a.length === 0) return 1;
+  if (b.length === 0) return -1;
+
+  const maxLength = Math.max(a.length, b.length);
+  for (let index = 0; index < maxLength; index += 1) {
+    const left = a[index];
+    const right = b[index];
+    if (left === undefined) return -1;
+    if (right === undefined) return 1;
+    if (left === right) continue;
+
+    const leftNumeric = /^\d+$/.test(left);
+    const rightNumeric = /^\d+$/.test(right);
+    if (leftNumeric && rightNumeric) {
+      const diff = Number.parseInt(left, 10) - Number.parseInt(right, 10);
+      if (diff !== 0) return diff > 0 ? 1 : -1;
+      continue;
+    }
+    if (leftNumeric !== rightNumeric) {
+      return leftNumeric ? -1 : 1;
+    }
+    return left.localeCompare(right);
+  }
+
+  return 0;
+}
+
 function isNewer(latest: string, current: string): boolean {
-  const parse = (v: string) => v.replace(/^v/, '').split('.').map(Number);
-  const [lMajor = 0, lMinor = 0, lPatch = 0] = parse(latest);
-  const [cMajor = 0, cMinor = 0, cPatch = 0] = parse(current);
-  if (lMajor !== cMajor) return lMajor > cMajor;
-  if (lMinor !== cMinor) return lMinor > cMinor;
-  return lPatch > cPatch;
+  const parsedLatest = parseSemver(latest);
+  const parsedCurrent = parseSemver(current);
+  if (!parsedLatest || !parsedCurrent) {
+    return latest.replace(/^v/, '') !== current.replace(/^v/, '') && latest > current;
+  }
+
+  if (parsedLatest.major !== parsedCurrent.major) {
+    return parsedLatest.major > parsedCurrent.major;
+  }
+  if (parsedLatest.minor !== parsedCurrent.minor) {
+    return parsedLatest.minor > parsedCurrent.minor;
+  }
+  if (parsedLatest.patch !== parsedCurrent.patch) {
+    return parsedLatest.patch > parsedCurrent.patch;
+  }
+  return comparePrerelease(parsedLatest.prerelease, parsedCurrent.prerelease) > 0;
 }
 
 /**

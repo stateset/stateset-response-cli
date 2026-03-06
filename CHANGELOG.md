@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.7.8 - 2026-03-06
+
+### Integration UX
+- Unified integration readiness around a single snapshot model that accounts for env, persisted store config, and default values.
+- Fixed `response doctor` and the interactive chat welcome banner so integrations configured via the local/global integrations store are reported consistently.
+- Added regression tests for ready, invalid, and default-only integration states.
+
+### Packaging & Release Hygiene
+- Moved published package bin targets to `.js` entrypoints while retaining lightweight compatibility wrappers for the legacy extensionless files.
+- Made gateway binaries lazy-load runtime modules so `--help` and `--version` paths work even when optional Slack/WhatsApp packages are not installed.
+- Added bin-level smoke coverage and cross-platform smoke CI jobs for the packaged CLI entrypoints.
+
+### Reliability
+- Switched npm update detection to semver-aware prerelease comparison.
+
 ## 1.7.7 - 2026-03-06
 
 ### Security & Data Safety

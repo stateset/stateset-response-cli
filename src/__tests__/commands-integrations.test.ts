@@ -2,7 +2,10 @@ import fs from 'node:fs';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import inquirer from 'inquirer';
 import {
+  countConfiguredIntegrations,
   getIntegrationEnvStatus,
+  getIntegrationReadiness,
+  getIntegrationSnapshots,
   printIntegrationHealth,
   printIntegrationLimits,
   printIntegrationLogs,
@@ -73,7 +76,13 @@ const INTEGRATIONS = [
     description: 'Shopify integration',
     fields: [
       { key: 'apiKey', label: 'API key', envVars: ['SHOPIFY_API_KEY'], required: true },
-      { key: 'baseUrl', label: 'Base URL', envVars: ['SHOPIFY_BASE_URL'], required: false },
+      {
+        key: 'baseUrl',
+        label: 'Base URL',
+        envVars: ['SHOPIFY_BASE_URL'],
+        required: false,
+        defaultValue: 'https://shopify.default',
+      },
     ],
   },
   {
@@ -165,6 +174,38 @@ describe('commands-integrations', () => {
   it('prints warning when health target integration is missing', () => {
     printIntegrationHealth('/tmp/project', 'does-not-exist');
     expect(logSpy).toHaveBeenCalledWith('WARN:Integration not found: does-not-exist');
+  });
+
+  it('counts only meaningfully configured integrations', () => {
+    mockedLoadIntegrationsStore.mockReturnValue({
+      scope: 'local',
+      path: '/tmp/project/.stateset/integrations.json',
+      store: {
+        version: 1,
+        integrations: {
+          shopify: { enabled: true, config: { baseUrl: 'https://shopify.default' } },
+          shiphero: { enabled: true, config: { token: 'secret' } },
+        },
+      },
+    } as any);
+
+    expect(countConfiguredIntegrations('/tmp/project')).toBe(1);
+  });
+
+  it('classifies invalid snapshots distinctly from partial ones', () => {
+    mockedLoadIntegrationsStore.mockReturnValue({
+      scope: 'local',
+      path: '/tmp/project/.stateset/integrations.json',
+      store: {
+        version: 1,
+        integrations: {
+          shopify: { enabled: true, config: { apiKey: 'secret', baseUrl: 'not-a-url' } },
+        },
+      },
+    } as any);
+
+    const [snapshot] = getIntegrationSnapshots('/tmp/project', 'shopify');
+    expect(getIntegrationReadiness(snapshot)).toBe('invalid-config');
   });
 
   it('prints detailed health diagnostics with required coverage', () => {
@@ -282,7 +323,7 @@ describe('commands-integrations', () => {
         integrations: expect.objectContaining({
           shopify: expect.objectContaining({
             enabled: true,
-            config: { apiKey: 'new-key' },
+            config: expect.objectContaining({ apiKey: 'new-key' }),
           }),
           shiphero: expect.objectContaining({
             enabled: false,
@@ -344,7 +385,7 @@ describe('commands-integrations', () => {
         integrations: expect.objectContaining({
           shopify: expect.objectContaining({
             enabled: true,
-            config: { apiKey: 'env-shop-key' },
+            config: expect.objectContaining({ apiKey: 'env-shop-key' }),
           }),
         }),
       }),
@@ -405,7 +446,7 @@ describe('commands-integrations', () => {
         integrations: expect.objectContaining({
           shopify: expect.objectContaining({
             enabled: true,
-            config: { apiKey: 'env-shop-key' },
+            config: expect.objectContaining({ apiKey: 'env-shop-key' }),
           }),
         }),
       }),
@@ -440,7 +481,7 @@ describe('commands-integrations', () => {
       expect.objectContaining({
         integrations: expect.objectContaining({
           shopify: expect.objectContaining({
-            config: { apiKey: 'prompted-shop-key' },
+            config: expect.objectContaining({ apiKey: 'prompted-shop-key' }),
           }),
         }),
       }),

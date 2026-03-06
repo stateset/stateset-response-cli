@@ -63,9 +63,25 @@ jobs:
             coverage/lcov.info
           retention-days: 14
 
+  smoke-cross-platform:
+    name: Smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --omit=optional
+      - run: npm run build
+      - run: npm run smoke:bins
+
   build:
     name: Build
-    needs: [quality, tests, coverage]
+    needs: [quality, tests, coverage, smoke-cross-platform]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -75,3 +91,4 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      - run: npm run smoke:bins

@@ -17,11 +17,14 @@ vi.mock('../config.js', () => ({
 vi.mock('../integrations/http.js', () => ({
   requestText: vi.fn(async () => ({ status: 200, text: 'ok' })),
 }));
-vi.mock('../integrations/registry.js', () => ({
-  listIntegrations: vi.fn(() => [{ label: 'Shopify', id: 'shopify' }]),
-}));
 vi.mock('../cli/commands-integrations.js', () => ({
-  getIntegrationEnvStatus: vi.fn(() => ({ status: 'unset' })),
+  getIntegrationSnapshots: vi.fn(() => [
+    {
+      id: 'shopify',
+      label: 'Shopify',
+    },
+  ]),
+  getIntegrationReadiness: vi.fn(() => 'not-configured'),
 }));
 vi.mock('../session.js', () => ({
   getStateSetDir: vi.fn(() => '/mock/.stateset'),
@@ -66,6 +69,8 @@ vi.mock('node:fs', async (importOriginal) => {
 
 const { configExists, getAnthropicApiKey, getCurrentOrg } = await import('../config.js');
 const { requestText } = await import('../integrations/http.js');
+const { getIntegrationReadiness, getIntegrationSnapshots } =
+  await import('../cli/commands-integrations.js');
 
 const find = (checks: DoctorCheck[], name: string) => checks.find((c) => c.name === name);
 
@@ -146,6 +151,32 @@ describe('runDoctorChecks', () => {
     expect(find(checks, 'Shopify')).toMatchObject({
       status: 'warn',
       message: expect.stringContaining('not configured'),
+    });
+  });
+
+  it('passes integrations that are ready from persisted config', async () => {
+    vi.mocked(getIntegrationSnapshots).mockReturnValue([
+      {
+        id: 'shopify',
+        label: 'Shopify',
+      } as any,
+    ]);
+    vi.mocked(getIntegrationReadiness).mockReturnValue('ready');
+
+    const checks = await runDoctorChecks();
+    expect(find(checks, 'Shopify')).toMatchObject({
+      status: 'pass',
+      message: expect.stringContaining('configured'),
+    });
+  });
+
+  it('warns when integration config is invalid', async () => {
+    vi.mocked(getIntegrationReadiness).mockReturnValue('invalid-config');
+
+    const checks = await runDoctorChecks();
+    expect(find(checks, 'Shopify')).toMatchObject({
+      status: 'warn',
+      message: expect.stringContaining('invalid configuration'),
     });
   });
 

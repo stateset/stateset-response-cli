@@ -1,28 +1,23 @@
-# StateSet ResponseCLI Release Notes (v1.7.7)
+# StateSet ResponseCLI Release Notes (v1.7.8)
 
 ## Overview
 
-StateSet ResponseCLI `v1.7.7` hardens local state handling, tightens build and CI behavior, and removes a flaky MCP validation test path.
+StateSet ResponseCLI `v1.7.8` aligns integration readiness reporting with persisted configuration, hardens packaged CLI entrypoints, and adds release-level smoke coverage for the shipped binaries.
 
 ## Highlights
 
-### State and file safety
-- Hardened append-based session and audit writes against symlinked parent paths.
-- Made `/session cleanup` fail closed when session context cannot be read, instead of treating those sessions as empty.
-- Prevented corrupt platform-operations state from being silently reset and overwritten during later mutations.
+### Integration UX and diagnostics
+- Unified integration readiness around a single snapshot model that understands env, persisted store values, and defaults.
+- Fixed `response doctor` and the chat welcome banner so store-backed integrations are reported consistently instead of looking unconfigured.
+- Added targeted regression coverage for ready, partial, invalid, and default-only integration states.
 
-### Build and CI
-- Added a build-only TypeScript config so production builds exclude test files.
-- Added a cleaning build wrapper to avoid stale `dist/` output carrying old compiled tests forward.
-- Split CI into quality, matrix test, coverage, and build stages so coverage only runs once on Node 22.
+### Packaging and release safety
+- Moved published package bin targets to `.js` entrypoints while keeping compatibility wrappers for the legacy extensionless files.
+- Made Slack, WhatsApp, and gateway bins lazy-load optional runtime dependencies so `--help` and `--version` work without optional packages installed.
+- Added executable bin smoke coverage for the shipped package commands and wired it into CI, including cross-platform smoke jobs.
 
-### Test and tooling quality
-- Added and updated tests for:
-  - audit I/O hardening
-  - secure file append/write protection
-  - fail-closed session cleanup
-  - corrupt operations-store preservation
-- Fixed the flaky MCP server validation test by correcting the mocked module path and removing the stale `resetModules()` pattern.
+### Update handling
+- Replaced the hand-rolled update-version comparison with semver-aware prerelease handling so stable releases compare correctly against prerelease builds.
 
 ## CLI entry points
 
