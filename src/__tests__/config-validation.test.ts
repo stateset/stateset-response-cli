@@ -4,6 +4,7 @@ vi.mock('node:fs', () => ({
   default: {
     existsSync: vi.fn(() => true),
     readFileSync: vi.fn(),
+    lstatSync: vi.fn(),
     writeFileSync: vi.fn(),
     mkdirSync: vi.fn(),
     chmodSync: vi.fn(),
@@ -26,6 +27,15 @@ const mockedDecryptSecret = vi.mocked(secrets.decryptSecret);
 beforeEach(() => {
   vi.clearAllMocks();
   mockedFs.existsSync.mockReturnValue(true);
+  mockedFs.lstatSync.mockImplementation((target?: any) => {
+    const text = typeof target === 'string' ? target : '';
+    const isDir = text.endsWith('/.stateset') || text.endsWith('\\.stateset');
+    return {
+      isSymbolicLink: () => false,
+      isDirectory: () => isDir,
+      isFile: () => !isDir,
+    } as any;
+  });
   mockedDecryptSecret.mockImplementation((value: string) => value);
 });
 

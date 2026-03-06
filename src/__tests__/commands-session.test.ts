@@ -26,9 +26,29 @@ const mockEntries = [
   { role: 'user' as const, content: 'search target text', ts: '2025-01-02T00:00:00Z' },
 ];
 
-const { mockWriteFileSync } = vi.hoisted(() => ({
-  mockWriteFileSync: vi.fn(),
-}));
+const { mockWriteFileSync, mockPrompt, mockExistsSync, mockLstatSync, mockRenameSync } = vi.hoisted(
+  () => ({
+    mockWriteFileSync: vi.fn(),
+    mockPrompt: vi.fn(),
+    mockExistsSync: vi.fn(() => true),
+    mockLstatSync: vi.fn((_target?: unknown) => ({
+      isDirectory: () => false as boolean,
+      isSymbolicLink: () => false as boolean,
+      isFile: () => true as boolean,
+    })),
+    mockRenameSync: vi.fn(),
+  }),
+);
+
+vi.mock('inquirer', () => {
+  class MockSeparator {}
+  return {
+    default: {
+      prompt: (questions: unknown) => mockPrompt(questions),
+      Separator: MockSeparator,
+    },
+  };
+});
 
 vi.mock('../session.js', () => ({
   sanitizeSessionId: vi.fn((id: string) => id.replace(/[^a-zA-Z0-9_-]/g, '')),
@@ -66,13 +86,10 @@ vi.mock('node:fs', async () => {
     ...actual,
     default: {
       ...actual,
-      existsSync: vi.fn(() => true),
-      lstatSync: vi.fn(() => ({
-        isDirectory: () => false,
-        isSymbolicLink: () => false,
-      })),
+      existsSync: mockExistsSync,
+      lstatSync: mockLstatSync,
       realpathSync: vi.fn((p: string) => p),
-      renameSync: vi.fn(),
+      renameSync: mockRenameSync,
       rmSync: vi.fn(),
       writeFileSync: mockWriteFileSync,
     },
@@ -113,6 +130,13 @@ function createMockCtx(overrides: Partial<ChatContext> = {}): ChatContext {
 describe('handleSessionCommand', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrompt.mockResolvedValue({});
+    mockExistsSync.mockImplementation(() => true);
+    mockLstatSync.mockImplementation((target?: unknown) => ({
+      isDirectory: () => target === '/tmp',
+      isSymbolicLink: () => false,
+      isFile: () => target !== '/tmp',
+    }));
     mockReadSessionMeta.mockReturnValue({ ...mockMeta });
     mockReadSessionEntries.mockReturnValue([...mockEntries]);
     mockListSessionSummaries.mockReturnValue([...mockSessions]);
@@ -278,6 +302,40 @@ describe('handleSessionCommand', () => {
     ).toBe(true);
   });
 
+  it('/search applies since=1970-01-01 boundaries', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    mockListSessionSummaries.mockReturnValue([mockSessions[0]]);
+    mockReadSessionEntries.mockReturnValue([
+      { role: 'user' as const, content: 'target before epoch', ts: '1969-12-31T23:59:59Z' },
+      { role: 'user' as const, content: 'target at epoch', ts: '1970-01-01T00:00:00Z' },
+    ]);
+    const ctx = createMockCtx();
+    const result = await handleSessionCommand('/search target since=1970-01-01', ctx);
+    expect(result).toBe(true);
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) => typeof line === 'string' && line.includes('Matches for "target" (showing 1):'),
+      ),
+    ).toBe(true);
+  });
+
+  it('/search treats until=YYYY-MM-DD as inclusive end-of-day', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    mockListSessionSummaries.mockReturnValue([mockSessions[0]]);
+    mockReadSessionEntries.mockReturnValue([
+      { role: 'user' as const, content: 'target on day', ts: '2025-01-01T12:00:00Z' },
+      { role: 'user' as const, content: 'target after day', ts: '2025-01-02T00:00:00Z' },
+    ]);
+    const ctx = createMockCtx();
+    const result = await handleSessionCommand('/search target until=2025-01-01', ctx);
+    expect(result).toBe(true);
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) => typeof line === 'string' && line.includes('Matches for "target" (showing 1):'),
+      ),
+    ).toBe(true);
+  });
+
   it('/search role=user filters by role', async () => {
     const ctx = createMockCtx();
     const result = await handleSessionCommand('/search role=user hello', ctx);
@@ -405,6 +463,101 @@ describe('handleSessionCommand', () => {
     const result = await handleSessionCommand('/rename test-session', ctx);
     expect(result).toBe(true);
     expect(ctx.switchSession).not.toHaveBeenCalled();
+  });
+
+  it('/rename moves session directory and switches session when safe', async () => {
+    mockExistsSync.mockImplementation((target?: unknown) => {
+      const value = String(target ?? '');
+      if (value === '/tmp/sessions/new-session') return false;
+      if (value === '/tmp/sessions/test-session') return true;
+      if (value === '/tmp/sessions') return true;
+      return true;
+    });
+    mockLstatSync.mockImplementation((target?: unknown) => {
+      const value = String(target ?? '');
+      if (
+        value === '/tmp/sessions' ||
+        value === '/tmp/sessions/test-session' ||
+        value === '/tmp/sessions/new-session'
+      ) {
+        return {
+          isDirectory: () => true,
+          isSymbolicLink: () => false,
+          isFile: () => false,
+        };
+      }
+      return {
+        isDirectory: () => false,
+        isSymbolicLink: () => false,
+        isFile: () => true,
+      };
+    });
+    const ctx = createMockCtx({ sessionId: 'test-session' });
+
+    const result = await handleSessionCommand('/rename new-session', ctx);
+
+    expect(result).toBe(true);
+    expect(mockRenameSync).toHaveBeenCalledWith(
+      '/tmp/sessions/test-session',
+      '/tmp/sessions/new-session',
+    );
+    expect(ctx.switchSession).toHaveBeenCalledWith('new-session');
+  });
+
+  it('/rename rejects symlinked current session directory', async () => {
+    mockExistsSync.mockImplementation((target?: unknown) => {
+      const value = String(target ?? '');
+      if (value === '/tmp/sessions/new-session') return false;
+      if (value === '/tmp/sessions/test-session') return true;
+      if (value === '/tmp/sessions') return true;
+      return true;
+    });
+    mockLstatSync.mockImplementation((target?: unknown) => {
+      const value = String(target ?? '');
+      if (value === '/tmp/sessions') {
+        return {
+          isDirectory: () => true,
+          isSymbolicLink: () => false,
+          isFile: () => false,
+        };
+      }
+      if (value === '/tmp/sessions/test-session') {
+        return {
+          isDirectory: () => true,
+          isSymbolicLink: () => true,
+          isFile: () => false,
+        };
+      }
+      return {
+        isDirectory: () => false,
+        isSymbolicLink: () => false,
+        isFile: () => true,
+      };
+    });
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const ctx = createMockCtx({ sessionId: 'test-session' });
+
+    const result = await handleSessionCommand('/rename new-session', ctx);
+
+    expect(result).toBe(true);
+    expect(mockRenameSync).not.toHaveBeenCalled();
+    expect(ctx.switchSession).not.toHaveBeenCalled();
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) =>
+          typeof line === 'string' &&
+          line.includes('Current session directory must not be a symlink'),
+      ),
+    ).toBe(true);
+  });
+
+  it('/new resumes readline when prompt throws', async () => {
+    const ctx = createMockCtx();
+    mockPrompt.mockRejectedValueOnce(new Error('prompt failed'));
+
+    await expect(handleSessionCommand('/new', ctx)).rejects.toThrow('prompt failed');
+    expect(ctx.rl.pause).toHaveBeenCalledTimes(1);
+    expect(ctx.rl.resume).toHaveBeenCalledTimes(1);
   });
 
   // /session-meta

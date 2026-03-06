@@ -266,6 +266,31 @@ describe('handleChatCommand', () => {
     expect(ctx.sessionStore.clear).toHaveBeenCalled();
   });
 
+  it('/clear logs error and continues when session clear fails', async () => {
+    const ctx = createMockCtx();
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(ctx.sessionStore.clear).mockImplementation(() => {
+      throw new Error('disk full');
+    });
+
+    const result = await handleChatCommand('/clear', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(ctx.agent.clearHistory).toHaveBeenCalled();
+    expect(ctx.sessionStore.clear).toHaveBeenCalled();
+    expect(
+      consoleLogSpy.mock.calls.some(
+        ([line]) => typeof line === 'string' && line.includes('Conversation history cleared'),
+      ),
+    ).toBe(true);
+    expect(
+      consoleErrorSpy.mock.calls.some(
+        ([line]) => typeof line === 'string' && line.includes('Unable to clear session history'),
+      ),
+    ).toBe(true);
+  });
+
   it('/history shows message count', async () => {
     const ctx = createMockCtx();
     vi.spyOn(console, 'log').mockImplementation(() => {});

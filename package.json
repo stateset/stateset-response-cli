@@ -1,6 +1,6 @@
 {
   "name": "stateset-response-cli",
-  "version": "1.7.6",
+  "version": "1.7.7",
   "description": "CLI tool for managing the StateSet Response platform via AI agent",
   "license": "MIT",
   "type": "module",
@@ -28,7 +28,7 @@
     "RELEASE_NOTES.md"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "node scripts/build.mjs",
     "dev": "tsx src/cli.ts",
     "start": "node dist/cli.js",
     "test": "node --require ./scripts/node-compat.cjs ./node_modules/vitest/vitest.mjs run",
@@ -36,10 +36,10 @@
     "test:coverage": "node --require ./scripts/node-compat.cjs ./node_modules/vitest/vitest.mjs run --coverage",
     "test:coverage:core": "node --require ./scripts/node-compat.cjs ./node_modules/vitest/vitest.mjs run --coverage --config vitest.coverage-core.config.ts",
     "test:ci": "node --require ./scripts/node-compat.cjs ./node_modules/vitest/vitest.mjs run --coverage --reporter=junit --outputFile=test-results.xml",
-    "lint": "node --require ./scripts/node-compat.cjs ./node_modules/eslint/bin/eslint.js src/",
-    "lint:fix": "node --require ./scripts/node-compat.cjs ./node_modules/eslint/bin/eslint.js src/ --fix",
-    "format": "prettier --write 'src/**/*.ts'",
-    "format:check": "prettier --check 'src/**/*.ts'",
+    "lint": "node --require ./scripts/node-compat.cjs ./node_modules/eslint/bin/eslint.js src scripts eslint.config.js vitest.config.ts vitest.coverage-core.config.ts",
+    "lint:fix": "node --require ./scripts/node-compat.cjs ./node_modules/eslint/bin/eslint.js src scripts eslint.config.js vitest.config.ts vitest.coverage-core.config.ts --fix",
+    "format": "prettier --write \"src/**/*.ts\" \"scripts/**/*.{mjs,cjs}\" \"eslint.config.js\" \"vitest*.ts\" \"package.json\" \"tsconfig*.json\" \".github/workflows/*.yml\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"scripts/**/*.{mjs,cjs}\" \"eslint.config.js\" \"vitest*.ts\" \"package.json\" \"tsconfig*.json\" \".github/workflows/*.yml\"",
     "typecheck": "tsc --noEmit",
     "readme:check": "node scripts/check-readme-sync.mjs",
     "check:quick": "npm run readme:check && npm run typecheck && npm run lint && npm run format:check && npm test",

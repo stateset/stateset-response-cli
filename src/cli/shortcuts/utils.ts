@@ -16,7 +16,7 @@ import {
   printAuthHelp,
 } from '../../utils/display.js';
 import { parseToggleValue } from '../utils.js';
-import { resolveSafeOutputPath } from '../utils.js';
+import { resolveSafeOutputPath, writePrivateTextFile } from '../utils.js';
 import type { ChatContext } from '../types.js';
 import type {
   AnyPayload,
@@ -207,13 +207,17 @@ export function parseCommandArgs(tokens: string[]) {
       }
       continue;
     }
-    const value =
-      inlineValue !== null ? inlineValue : i + 1 < tokens.length ? tokens[i + 1] : undefined;
-    if (value === undefined) {
-      throw new Error(`Missing value for option --${key}.`);
+    if (inlineValue === null) {
+      const value = i + 1 < tokens.length ? tokens[i + 1] : undefined;
+      if (value === undefined || value.startsWith('--')) {
+        throw new Error(`Missing value for option --${key}.`);
+      }
+      options[key] = value;
+      i += 2;
+      continue;
     }
-    options[key] = inlineValue !== null ? inlineValue : value;
-    i += inlineValue === null ? 2 : 1;
+    options[key] = inlineValue;
+    i += 1;
   }
   return { options, positionals };
 }
@@ -779,10 +783,12 @@ export function readStateSetBundle(source: string): OrgExport {
 
 export function writeStateSetBundle(targetDir: string, payload: OrgExport): void {
   const dir = resolveStateSetDir(targetDir);
-  fs.writeFileSync(
+  writePrivateTextFile(
     path.join(dir, DEFAULT_STATESET_BUNDLE_FILE),
     JSON.stringify(payload, null, 2),
-    'utf-8',
+    {
+      label: 'StateSet bundle file',
+    },
   );
 
   const manifest: Record<string, unknown> = {
@@ -798,14 +804,18 @@ export function writeStateSetBundle(targetDir: string, payload: OrgExport): void
     ),
   };
 
-  fs.writeFileSync(
+  writePrivateTextFile(
     path.join(dir, DEFAULT_STATESET_CONFIG_FILE),
     JSON.stringify(manifest, null, 2),
-    'utf-8',
+    {
+      label: 'StateSet config file',
+    },
   );
 
   for (const [field, filename] of STATESET_RESOURCE_MAP) {
-    fs.writeFileSync(path.join(dir, filename), JSON.stringify(payload[field], null, 2), 'utf-8');
+    writePrivateTextFile(path.join(dir, filename), JSON.stringify(payload[field], null, 2), {
+      label: `StateSet resource file (${field})`,
+    });
   }
 }
 
@@ -828,7 +838,9 @@ export function writeTempStateSetBundle(payload: OrgExport, prefix: string): str
     ensureSnapshotDir(),
     `${prefix}-${nowSuffix()}-${Math.random().toString(36).slice(2, 8)}.json`,
   );
-  fs.writeFileSync(outputPath, JSON.stringify(payload, null, 2), 'utf-8');
+  writePrivateTextFile(outputPath, JSON.stringify(payload, null, 2), {
+    label: 'StateSet temp bundle file',
+  });
   return outputPath;
 }
 
@@ -970,7 +982,6 @@ export async function resolveSnapshotSourceForImport(
         // ignore
       }
     };
-    await exportOrg(pathForImport, { includeSecrets });
     return { path: pathForImport, source: 'current', cleanup };
   }
 
@@ -1092,6 +1103,7 @@ export async function runPlaceholder(name: string, logger: ShortcutLogger): Prom
 export { formatError, formatBytes, formatToolResult, formatTable, formatSuccess, formatWarning };
 export { parseToggleValue };
 export { resolveSafeOutputPath };
+export { writePrivateTextFile };
 export { exportOrg, importOrg };
 export type { ImportResult, OrgExport };
 export type { ChatContext };

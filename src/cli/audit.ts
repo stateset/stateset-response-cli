@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { sanitizeSessionId, getSessionsDir, getStateSetDir } from '../session.js';
-import { ensureDirExists } from './utils.js';
 import type { ToolAuditEntry, PromptHistoryEntry } from './types.js';
 import { readTextFile, MAX_TEXT_FILE_SIZE_BYTES } from '../utils/file-read.js';
+import { appendLineSecure } from '../utils/secure-file.js';
 
 export const REDACT_KEY_RE =
   /(secret|token|authorization|api[-_]?key|password|admin|email|phone|address|customer_email|customer_phone|customer_name|first_name|last_name)/i;
@@ -27,6 +27,11 @@ const INTEGRATION_TOOL_PREFIXES = [
   'shiphawk_',
   'zendesk_',
 ];
+
+const AUDIT_APPEND_OPTIONS = {
+  symlinkErrorPrefix: 'Refusing to write through symlinked audit file',
+  nonRegularFileErrorPrefix: 'Refusing to write audit data to non-regular file',
+} as const;
 
 function readSafeJsonl(filePath: string): string[] {
   try {
@@ -77,9 +82,8 @@ export function getToolAuditPath(sessionId: string): string {
 
 export function appendToolAudit(sessionId: string, entry: ToolAuditEntry): void {
   const filePath = getToolAuditPath(sessionId);
-  ensureDirExists(filePath);
   try {
-    fs.appendFileSync(filePath, JSON.stringify(entry) + '\n', { encoding: 'utf-8', mode: 0o600 });
+    appendLineSecure(filePath, JSON.stringify(entry) + '\n', AUDIT_APPEND_OPTIONS);
   } catch {
     // Non-fatal: audit persistence failure shouldn't crash the CLI
   }
@@ -108,9 +112,8 @@ export function getPromptHistoryPath(): string {
 
 export function appendPromptHistory(entry: PromptHistoryEntry): void {
   const filePath = getPromptHistoryPath();
-  ensureDirExists(filePath);
   try {
-    fs.appendFileSync(filePath, JSON.stringify(entry) + '\n', { encoding: 'utf-8', mode: 0o600 });
+    appendLineSecure(filePath, JSON.stringify(entry) + '\n', AUDIT_APPEND_OPTIONS);
   } catch {
     // Non-fatal: prompt history persistence failure shouldn't crash the CLI
   }
@@ -154,9 +157,8 @@ export function getIntegrationTelemetryPath(): string {
 
 export function appendIntegrationTelemetry(entry: ToolAuditEntry): void {
   const filePath = getIntegrationTelemetryPath();
-  ensureDirExists(filePath);
   try {
-    fs.appendFileSync(filePath, JSON.stringify(entry) + '\n', { encoding: 'utf-8', mode: 0o600 });
+    appendLineSecure(filePath, JSON.stringify(entry) + '\n', AUDIT_APPEND_OPTIONS);
   } catch {
     // Non-fatal: telemetry persistence failure shouldn't crash the CLI
   }

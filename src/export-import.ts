@@ -16,6 +16,7 @@ import {
 import { getCurrentOrg } from './config.js';
 import { readJsonFile } from './utils/file-read.js';
 import { getErrorMessage } from './lib/errors.js';
+import { writePrivateTextFileSecure } from './utils/secure-file.js';
 
 // ─── Secret Redaction ────────────────────────────────────────────────────────
 
@@ -184,17 +185,24 @@ export async function exportOrg(
   }
 
   try {
-    fs.writeFileSync(resolvedOutputPath, JSON.stringify(exportData, null, 2), {
-      encoding: 'utf-8',
-      mode: 0o600,
+    writePrivateTextFileSecure(resolvedOutputPath, JSON.stringify(exportData, null, 2), {
+      label: 'Export path',
     });
-    try {
-      fs.chmodSync(resolvedOutputPath, 0o600);
-    } catch {
-      // Best-effort on non-POSIX systems
-    }
   } catch (e) {
-    throw new Error(`Failed to write export file: ${getErrorMessage(e)}`);
+    const message = getErrorMessage(e);
+    if (
+      message.includes('Export path is a directory:') ||
+      message.includes('Export path must not be a symlink:') ||
+      message.includes('Export path must not include symlinks:') ||
+      message.includes('Export path parent directory must not be a symlink:') ||
+      message.includes('Export path parent directory is not a directory:') ||
+      message.includes('Export path must not be a symlink:') ||
+      message.includes('Export path must not be a directory:') ||
+      message.includes('Export path must be a regular file:')
+    ) {
+      throw e;
+    }
+    throw new Error(`Failed to write export file: ${message}`);
   }
   return exportData;
 }

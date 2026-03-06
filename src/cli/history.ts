@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { writePrivateTextFile } from './utils.js';
+import { appendLineSecure, ensurePrivateDirectory } from '../utils/secure-file.js';
 
 const HISTORY_DIR = path.join(os.homedir(), '.stateset');
 const HISTORY_FILE = path.join(HISTORY_DIR, 'input-history');
@@ -33,10 +35,14 @@ export function appendHistoryLine(line: string): void {
   }
 
   try {
-    if (!fs.existsSync(HISTORY_DIR)) {
-      fs.mkdirSync(HISTORY_DIR, { recursive: true });
-    }
-    fs.appendFileSync(HISTORY_FILE, trimmed + '\n', 'utf-8');
+    ensurePrivateDirectory(HISTORY_DIR, {
+      symlinkErrorPrefix: 'Refusing to use symlinked history directory',
+      nonDirectoryErrorPrefix: 'History directory path is not a directory',
+    });
+    appendLineSecure(HISTORY_FILE, trimmed + '\n', {
+      symlinkErrorPrefix: 'Refusing to append to symlinked history file',
+      nonRegularFileErrorPrefix: 'Refusing to append history to non-regular file',
+    });
   } catch {
     // Best-effort — don't break the CLI if history can't be written
   }
@@ -53,7 +59,10 @@ export function trimHistoryFile(): void {
     const lines = content.split('\n').filter(Boolean);
     if (lines.length <= MAX_HISTORY_LINES) return;
     const trimmed = lines.slice(-MAX_HISTORY_LINES);
-    fs.writeFileSync(HISTORY_FILE, trimmed.join('\n') + '\n', 'utf-8');
+    writePrivateTextFile(HISTORY_FILE, trimmed.join('\n') + '\n', {
+      label: 'Input history path',
+      atomic: true,
+    });
   } catch {
     // Best-effort
   }

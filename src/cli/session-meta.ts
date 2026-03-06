@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import crypto from 'node:crypto';
 import path from 'node:path';
 import {
   sanitizeSessionId,
@@ -9,7 +8,7 @@ import {
   type StoredMessage,
 } from '../session.js';
 import { getSessionExportPath, resolveExportFilePath } from '../utils/session-exports.js';
-import { ensureDirExists } from './utils.js';
+import { writePrivateTextFile } from './utils.js';
 import { readToolAudit } from './audit.js';
 import { readJsonFile, readTextFile, MAX_TEXT_FILE_SIZE_BYTES } from '../utils/file-read.js';
 import type { SessionMeta, SessionSummary, SessionExportEntry } from './types.js';
@@ -44,21 +43,8 @@ export function readSessionMeta(sessionDir: string): SessionMeta {
 
 export function writeSessionMeta(sessionDir: string, meta: SessionMeta): void {
   const metaPath = path.join(sessionDir, 'meta.json');
-  ensureDirExists(metaPath);
   const data = JSON.stringify(meta, null, 2);
-  const tmpPath = metaPath + `.tmp-${crypto.randomBytes(4).toString('hex')}`;
-  try {
-    fs.writeFileSync(tmpPath, data, { encoding: 'utf-8', mode: 0o600 });
-    fs.renameSync(tmpPath, metaPath);
-  } catch {
-    // Clean up temp file on failure, fall back to direct write
-    try {
-      fs.unlinkSync(tmpPath);
-    } catch {
-      /* best effort */
-    }
-    fs.writeFileSync(metaPath, data, 'utf-8');
-  }
+  writePrivateTextFile(metaPath, data, { label: 'Session metadata path', atomic: true });
 }
 
 export function listSessionSummaries(options?: { includeArchived?: boolean }): SessionSummary[] {

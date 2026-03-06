@@ -5,8 +5,20 @@ import { sanitizeSessionId } from '../session.js';
 import { formatError, formatSuccess, formatWarning, formatTable } from '../utils/display.js';
 import { getErrorMessage } from '../lib/errors.js';
 import type { ChatContext, CommandResult } from './types.js';
-import { parseToggleValue, hasCommand } from './utils.js';
+import { parseToggleValue, hasCommand, writePrivateTextFile } from './utils.js';
 import { readToolAudit, getToolAuditPath } from './audit.js';
+
+async function promptWithReadlinePaused<T extends Record<string, unknown>>(
+  ctx: ChatContext,
+  questions: Parameters<typeof inquirer.prompt>[0],
+): Promise<T> {
+  ctx.rl.pause();
+  try {
+    return (await inquirer.prompt(questions)) as T;
+  } finally {
+    ctx.rl.resume();
+  }
+}
 
 export async function handleAuditCommand(input: string, ctx: ChatContext): Promise<CommandResult> {
   // /audit — toggle or show audit status
@@ -124,8 +136,7 @@ export async function handleAuditCommand(input: string, ctx: ChatContext): Promi
       ctx.rl.prompt();
       return { handled: true };
     }
-    ctx.rl.pause();
-    const { confirmClear } = await inquirer.prompt([
+    const { confirmClear } = await promptWithReadlinePaused<{ confirmClear?: boolean }>(ctx, [
       {
         type: 'confirm',
         name: 'confirmClear',
@@ -133,7 +144,6 @@ export async function handleAuditCommand(input: string, ctx: ChatContext): Promi
         default: false,
       },
     ]);
-    ctx.rl.resume();
     if (!confirmClear) {
       console.log(formatWarning('Audit clear cancelled.'));
       console.log('');
@@ -141,7 +151,7 @@ export async function handleAuditCommand(input: string, ctx: ChatContext): Promi
       return { handled: true };
     }
     try {
-      fs.writeFileSync(auditPath, '', 'utf-8');
+      writePrivateTextFile(auditPath, '', { label: 'Audit log path' });
       console.log(formatSuccess(`Cleared audit log for "${target}".`));
     } catch (err) {
       console.error(formatError(getErrorMessage(err)));

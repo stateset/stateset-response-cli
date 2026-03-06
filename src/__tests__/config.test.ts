@@ -2,6 +2,7 @@ vi.mock('node:fs', () => ({
   default: {
     existsSync: vi.fn(),
     readFileSync: vi.fn(),
+    lstatSync: vi.fn(),
     statSync: vi.fn(),
     writeFileSync: vi.fn(),
     mkdirSync: vi.fn(),
@@ -28,6 +29,15 @@ const mockedFs = vi.mocked(fs);
 beforeEach(() => {
   mockedFs.existsSync.mockReturnValue(false);
   mockedFs.readFileSync.mockReturnValue('');
+  mockedFs.lstatSync.mockImplementation((target?: any) => {
+    const text = typeof target === 'string' ? target : '';
+    const isDir = text.endsWith('/.stateset') || text.endsWith('\\.stateset');
+    return {
+      isSymbolicLink: () => false,
+      isDirectory: () => isDir,
+      isFile: () => !isDir,
+    } as any;
+  });
   delete process.env.ANTHROPIC_API_KEY;
   delete process.env.STATESET_ALLOW_INSECURE_HTTP;
 });

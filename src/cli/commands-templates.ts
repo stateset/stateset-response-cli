@@ -7,6 +7,18 @@ import type { ChatContext, CommandResult } from './types.js';
 import { readPromptHistory, appendPromptHistory } from './audit.js';
 import { hasCommand } from './utils.js';
 
+async function promptWithReadlinePaused<T extends Record<string, unknown>>(
+  ctx: ChatContext,
+  questions: Parameters<typeof inquirer.prompt>[0],
+): Promise<T> {
+  ctx.rl.pause();
+  try {
+    return (await inquirer.prompt(questions)) as T;
+  } finally {
+    ctx.rl.resume();
+  }
+}
+
 export function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -276,8 +288,8 @@ export async function handleTemplateCommand(
 
     const variableValues: Record<string, string> = {};
     if (template.variables.length > 0) {
-      ctx.rl.pause();
-      const answers = await inquirer.prompt(
+      const answers = await promptWithReadlinePaused<Record<string, unknown>>(
+        ctx,
         template.variables.map((variable) => ({
           type: 'input',
           name: variable.name,
@@ -285,7 +297,6 @@ export async function handleTemplateCommand(
           default: variable.defaultValue ?? undefined,
         })),
       );
-      ctx.rl.resume();
       for (const variable of template.variables) {
         const value = String(answers[variable.name] ?? '').trim() || (variable.defaultValue ?? '');
         variableValues[variable.name] = value;
@@ -300,11 +311,9 @@ export async function handleTemplateCommand(
 
     console.log(chalk.gray('\n  Prompt template preview:'));
     console.log(chalk.gray(expanded));
-    ctx.rl.pause();
-    const { send } = await inquirer.prompt([
+    const { send } = await promptWithReadlinePaused<{ send?: boolean }>(ctx, [
       { type: 'confirm', name: 'send', message: 'Send this prompt?', default: true },
     ]);
-    ctx.rl.resume();
     if (!send) {
       console.log(formatWarning('Prompt cancelled.'));
       console.log('');

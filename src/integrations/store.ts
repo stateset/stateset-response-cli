@@ -4,6 +4,7 @@ import { getStateSetDir } from '../session.js';
 import { decryptConfigSecrets, encryptConfigSecrets } from '../lib/secrets.js';
 import { readJsonFile } from '../utils/file-read.js';
 import { type IntegrationId, getIntegrationSecretKeys } from './registry.js';
+import { writePrivateTextFileSecure } from '../utils/secure-file.js';
 
 export interface IntegrationEntry {
   enabled?: boolean;
@@ -51,14 +52,9 @@ function readStoreFile(filePath: string): IntegrationsStore | null {
 }
 
 function writeStoreFile(filePath: string, store: IntegrationsStore): void {
-  const dir = path.dirname(filePath);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  fs.writeFileSync(filePath, JSON.stringify(store, null, 2), { encoding: 'utf-8', mode: 0o600 });
-  try {
-    fs.chmodSync(filePath, 0o600);
-  } catch {
-    // Best-effort on non-POSIX systems
-  }
+  writePrivateTextFileSecure(filePath, JSON.stringify(store, null, 2), {
+    label: 'Integrations store path',
+  });
 }
 
 function decryptEntry(id: IntegrationId, entry: IntegrationEntry): IntegrationEntry {

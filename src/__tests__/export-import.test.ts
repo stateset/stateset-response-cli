@@ -12,6 +12,7 @@ const {
   mockReadFileSync,
   mockExistsSync,
   mockLstatSync,
+  mockMkdirSync,
   mockChmodSync,
 } = vi.hoisted(() => ({
   mockExecuteQuery: vi.fn(),
@@ -20,6 +21,7 @@ const {
   mockReadFileSync: vi.fn(),
   mockExistsSync: vi.fn(),
   mockLstatSync: vi.fn(),
+  mockMkdirSync: vi.fn(),
   mockChmodSync: vi.fn(),
 }));
 
@@ -45,12 +47,14 @@ vi.mock('node:fs', () => ({
     readFileSync: (...args: unknown[]) => mockReadFileSync(...args),
     existsSync: (...args: unknown[]) => mockExistsSync(...args),
     lstatSync: (...args: unknown[]) => mockLstatSync(...args),
+    mkdirSync: (...args: unknown[]) => mockMkdirSync(...args),
     chmodSync: (...args: unknown[]) => mockChmodSync(...args),
   },
   writeFileSync: (...args: unknown[]) => mockWriteFileSync(...args),
   readFileSync: (...args: unknown[]) => mockReadFileSync(...args),
   existsSync: (...args: unknown[]) => mockExistsSync(...args),
   lstatSync: (...args: unknown[]) => mockLstatSync(...args),
+  mkdirSync: (...args: unknown[]) => mockMkdirSync(...args),
   chmodSync: (...args: unknown[]) => mockChmodSync(...args),
 }));
 
@@ -93,11 +97,24 @@ function makeExportFile(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function setDefaultFsMockBehavior(): void {
+  mockExistsSync.mockImplementation(() => false);
+  mockLstatSync.mockImplementation(() => ({
+    isSymbolicLink: () => false,
+    isDirectory: () => false,
+    isFile: () => true,
+    size: 128,
+  }));
+  mockMkdirSync.mockImplementation(() => undefined);
+  mockChmodSync.mockImplementation(() => undefined);
+}
+
 // --- Tests -------------------------------------------------------------------
 
 describe('exportOrg', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    setDefaultFsMockBehavior();
   });
 
   it('calls GraphQL for all resource types and writes to file', async () => {
@@ -203,6 +220,35 @@ describe('exportOrg', () => {
     await expect(exportOrg('/tmp/export.json')).rejects.toThrow(/Failed to write export file/);
   });
 
+  it('rejects export when an ancestor directory is a symlink', async () => {
+    const payload = makeExportPayload();
+    mockExecuteQuery.mockResolvedValueOnce(payload);
+    mockExistsSync.mockImplementation((targetPath: unknown) => {
+      const value = String(targetPath);
+      return value === '/tmp' || value === '/tmp/symlinked';
+    });
+    mockLstatSync.mockImplementation((targetPath: unknown) => {
+      const value = String(targetPath);
+      if (value === '/tmp/symlinked') {
+        return {
+          isSymbolicLink: () => true,
+          isDirectory: () => true,
+          isFile: () => false,
+        };
+      }
+      return {
+        isSymbolicLink: () => false,
+        isDirectory: () => true,
+        isFile: () => false,
+      };
+    });
+
+    await expect(exportOrg('/tmp/symlinked/export.json')).rejects.toThrow(
+      /Export path must not include symlinks:/,
+    );
+    expect(mockWriteFileSync).not.toHaveBeenCalled();
+  });
+
   it('preserves secrets when includeSecrets is true', async () => {
     const payload = makeExportPayload({
       functions: [{ id: 'f1', name: 'Func1', api_key: 'super-secret-key', org_id: 'org-1' }],
@@ -219,6 +265,7 @@ describe('exportOrg', () => {
 describe('importOrg', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    setDefaultFsMockBehavior();
   });
 
   it('throws on invalid export file (missing version)', async () => {

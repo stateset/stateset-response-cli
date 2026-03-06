@@ -1,12 +1,9 @@
-import { webcrypto } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { defineConfig } from 'vitest/config';
 
-const globalRef = globalThis as typeof globalThis & {
-  crypto?: { getRandomValues?: unknown };
-};
-if (typeof globalRef.crypto?.getRandomValues !== 'function') {
-  globalRef.crypto = webcrypto as typeof globalRef.crypto;
-}
+const require = createRequire(import.meta.url);
+
+require('./scripts/runtime-compat.cjs');
 
 export default defineConfig({
   test: {

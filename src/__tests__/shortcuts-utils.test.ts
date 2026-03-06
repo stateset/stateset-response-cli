@@ -1,4 +1,15 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+const { mockExportOrg, mockImportOrg } = vi.hoisted(() => ({
+  mockExportOrg: vi.fn(async () => undefined),
+  mockImportOrg: vi.fn(async () => undefined),
+}));
+
+vi.mock('../export-import.js', () => ({
+  exportOrg: mockExportOrg,
+  importOrg: mockImportOrg,
+}));
+
 import {
   parseDateInput,
   stableStringify,
@@ -23,6 +34,7 @@ import {
   normalizeSnapshotRef,
   isCurrentSnapshotReference,
   isLatestSnapshotReference,
+  resolveSnapshotSourceForImport,
   parseDiffRefs,
   formatImportCounts,
   coerceResourceArray,
@@ -227,6 +239,10 @@ describe('parseCommandArgs', () => {
 
   it('throws for missing option value', () => {
     expect(() => parseCommandArgs(['--limit'])).toThrow('Missing value for option --limit.');
+  });
+
+  it('throws when option value is followed by another flag', () => {
+    expect(() => parseCommandArgs(['--from', '--yes'])).toThrow('Missing value for option --from.');
   });
 
   it('handles empty tokens', () => {
@@ -734,6 +750,26 @@ describe('isLatestSnapshotReference', () => {
 
   it('does not match others', () => {
     expect(isLatestSnapshotReference('current')).toBe(false);
+  });
+});
+
+// =============================================================================
+// resolveSnapshotSourceForImport
+// =============================================================================
+
+describe('resolveSnapshotSourceForImport', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('exports current snapshot exactly once for current reference', async () => {
+    const result = await resolveSnapshotSourceForImport('current', true);
+
+    expect(mockExportOrg).toHaveBeenCalledTimes(1);
+    expect(mockExportOrg).toHaveBeenCalledWith(expect.any(String), { includeSecrets: true });
+    expect(result.source).toBe('current');
+    expect(result.cleanup).toBeTypeOf('function');
+    result.cleanup?.();
   });
 });
 

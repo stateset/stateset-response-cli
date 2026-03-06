@@ -172,7 +172,11 @@ export async function handleChatCommand(input: string, ctx: ChatContext): Promis
   // /clear — clear conversation history
   if (hasCommand(input, '/clear')) {
     ctx.agent.clearHistory();
-    ctx.sessionStore.clear();
+    try {
+      ctx.sessionStore.clear();
+    } catch (error) {
+      console.error(formatError(`Unable to clear session history: ${getErrorMessage(error)}`));
+    }
     console.log(formatSuccess('Conversation history cleared.'));
     console.log('');
     ctx.rl.prompt();

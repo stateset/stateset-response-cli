@@ -3,6 +3,29 @@ import { handleAuditCommand } from '../cli/commands-audit.js';
 import type { ChatContext, ToolAuditEntry } from '../cli/types.js';
 
 const mockAuditEntries: ToolAuditEntry[] = [];
+const { mockPrompt, mockExistsSync, mockWriteFileSync } = vi.hoisted(() => ({
+  mockPrompt: vi.fn(),
+  mockExistsSync: vi.fn(() => false),
+  mockWriteFileSync: vi.fn(),
+}));
+
+vi.mock('inquirer', () => ({
+  default: {
+    prompt: (questions: unknown) => mockPrompt(questions),
+  },
+}));
+
+vi.mock('node:fs', async () => {
+  const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+  return {
+    ...actual,
+    default: {
+      ...actual,
+      existsSync: mockExistsSync,
+      writeFileSync: mockWriteFileSync,
+    },
+  };
+});
 
 vi.mock('../cli/audit.js', () => ({
   readToolAudit: vi.fn(() => mockAuditEntries),
@@ -25,7 +48,10 @@ function createMockCtx(overrides: Partial<ChatContext> = {}): ChatContext {
 
 describe('handleAuditCommand', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     mockAuditEntries.length = 0;
+    mockExistsSync.mockReturnValue(false);
+    mockPrompt.mockResolvedValue({});
   });
 
   afterEach(() => {
@@ -133,5 +159,15 @@ describe('handleAuditCommand', () => {
     const ctx = createMockCtx();
     const result = await handleAuditCommand('/audit-show errors', ctx);
     expect(result).toEqual({ handled: true });
+  });
+
+  it('/audit-clear resumes readline when prompt throws', async () => {
+    mockExistsSync.mockReturnValue(true);
+    mockPrompt.mockRejectedValueOnce(new Error('prompt failed'));
+    const ctx = createMockCtx();
+
+    await expect(handleAuditCommand('/audit-clear', ctx)).rejects.toThrow('prompt failed');
+    expect(ctx.rl.pause).toHaveBeenCalledTimes(1);
+    expect(ctx.rl.resume).toHaveBeenCalledTimes(1);
   });
 });

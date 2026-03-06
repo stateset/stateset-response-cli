@@ -3,6 +3,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('node:fs', () => ({
   default: {
     existsSync: vi.fn(() => false),
+    lstatSync: vi.fn(
+      (target?: any) =>
+        ({
+          isSymbolicLink: () => false,
+          isDirectory: () =>
+            typeof target === 'string' &&
+            (target.endsWith('/.stateset') || target.endsWith('\\.stateset')),
+          isFile: () =>
+            !(
+              typeof target === 'string' &&
+              (target.endsWith('/.stateset') || target.endsWith('\\.stateset'))
+            ),
+        }) as any,
+    ),
     readFileSync: vi.fn(),
     writeFileSync: vi.fn(),
     mkdirSync: vi.fn(),

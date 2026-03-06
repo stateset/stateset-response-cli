@@ -10,6 +10,7 @@ import {
   readBooleanEnv,
   hasCommand,
   resolveSafeOutputPath,
+  writePrivateTextFile,
 } from '../cli/utils.js';
 
 describe('parseToggleValue', () => {
@@ -226,5 +227,63 @@ describe('resolveSafeOutputPath', () => {
     });
 
     expect(resolved).toBe(path.resolve(outside));
+  });
+});
+
+describe('writePrivateTextFile', () => {
+  it('writes text content and creates missing parent directories', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'csr-private-write-'));
+    const target = path.join(root, 'nested', 'output.txt');
+
+    try {
+      writePrivateTextFile(target, 'hello world');
+      expect(fs.readFileSync(target, 'utf-8')).toBe('hello world');
+      expect(fs.existsSync(path.dirname(target))).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects existing directory output path', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'csr-private-write-'));
+    const targetDir = path.join(root, 'output-dir');
+    fs.mkdirSync(targetDir);
+
+    try {
+      expect(() => writePrivateTextFile(targetDir, 'x')).toThrow(/must not be a directory/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('rejects writing through symlink output path', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'csr-private-write-'));
+    const real = path.join(root, 'real.txt');
+    const link = path.join(root, 'link.txt');
+    fs.writeFileSync(real, 'seed', 'utf-8');
+    fs.symlinkSync(real, link);
+
+    try {
+      expect(() => writePrivateTextFile(link, 'x')).toThrow(/must not be a symlink/);
+      expect(fs.readFileSync(real, 'utf-8')).toBe('seed');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('rejects output path with symlink ancestor', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'csr-private-write-'));
+    const realDir = path.join(root, 'real');
+    const linkDir = path.join(root, 'link');
+    fs.mkdirSync(realDir);
+    fs.symlinkSync(realDir, linkDir);
+    const target = path.join(linkDir, 'nested', 'output.txt');
+
+    try {
+      expect(() => writePrivateTextFile(target, 'x')).toThrow(/must not include symlinks/);
+      expect(fs.existsSync(path.join(realDir, 'nested', 'output.txt'))).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });

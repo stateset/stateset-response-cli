@@ -1,10 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import crypto from 'node:crypto';
 import type Anthropic from '@anthropic-ai/sdk';
 import { readJsonFile, readTextFile, MAX_TEXT_FILE_SIZE_BYTES } from './utils/file-read.js';
 import { getErrorMessage } from './lib/errors.js';
+import {
+  appendLineSecure,
+  ensurePrivateDirectory,
+  writePrivateTextFileSecure,
+} from './utils/secure-file.js';
 
 export interface CleanupOptions {
   maxAgeDays?: number;
@@ -67,22 +71,10 @@ const MAX_SESSION_METADATA_FILE_SIZE_BYTES = MAX_TEXT_FILE_SIZE_BYTES;
 const seenSessionWarnings = new Set<string>();
 
 function ensureDir(dir: string): void {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    return;
-  }
-  const stats = fs.lstatSync(dir);
-  if (stats.isSymbolicLink()) {
-    throw new Error(`Refusing to use session directory symlink: ${dir}`);
-  }
-  if (!stats.isDirectory()) {
-    throw new Error(`Session directory path is not a directory: ${dir}`);
-  }
-  try {
-    fs.chmodSync(dir, 0o700);
-  } catch {
-    // Best-effort on non-POSIX systems.
-  }
+  ensurePrivateDirectory(dir, {
+    symlinkErrorPrefix: 'Refusing to use session directory symlink',
+    nonDirectoryErrorPrefix: 'Session directory path is not a directory',
+  });
 }
 
 function enforcePrivateFile(filePath: string): void {
@@ -95,16 +87,25 @@ function enforcePrivateFile(filePath: string): void {
   }
 }
 
-function readSafeSessionLines(filePath: string): string[] {
+interface SessionLinesReadResult {
+  lines: string[];
+  error?: unknown;
+}
+
+function tryReadSessionLines(filePath: string): SessionLinesReadResult {
   try {
     const content = readTextFile(filePath, {
       label: `session context`,
       maxBytes: MAX_SESSION_CONTEXT_FILE_SIZE_BYTES,
     });
-    return content.split(/\n/).filter(Boolean);
-  } catch {
-    return [];
+    return { lines: content.split(/\n/).filter(Boolean) };
+  } catch (error) {
+    return { lines: [], error };
   }
+}
+
+function readSafeSessionLines(filePath: string): string[] {
+  return tryReadSessionLines(filePath).lines;
 }
 
 function readSafeMeta(filePath: string): unknown {
@@ -192,10 +193,7 @@ export class SessionStore {
       ts: new Date().toISOString(),
     };
     try {
-      fs.appendFileSync(this.contextPath, JSON.stringify(entry) + '\n', {
-        encoding: 'utf-8',
-        mode: 0o600,
-      });
+      appendLineSecure(this.contextPath, JSON.stringify(entry) + '\n');
       enforcePrivateFile(this.contextPath);
     } catch (error) {
       // Non-fatal: session persistence failure shouldn't crash the CLI
@@ -214,10 +212,7 @@ export class SessionStore {
       return JSON.stringify(entry);
     });
     try {
-      fs.appendFileSync(this.contextPath, lines.join('\n') + '\n', {
-        encoding: 'utf-8',
-        mode: 0o600,
-      });
+      appendLineSecure(this.contextPath, lines.join('\n') + '\n');
       enforcePrivateFile(this.contextPath);
     } catch (error) {
       // Non-fatal: session persistence failure shouldn't crash the CLI
@@ -232,10 +227,7 @@ export class SessionStore {
       text: entry.text,
     };
     try {
-      fs.appendFileSync(this.logPath, JSON.stringify(payload) + '\n', {
-        encoding: 'utf-8',
-        mode: 0o600,
-      });
+      appendLineSecure(this.logPath, JSON.stringify(payload) + '\n');
       enforcePrivateFile(this.logPath);
     } catch (error) {
       // Non-fatal: log persistence failure shouldn't crash the CLI
@@ -258,24 +250,16 @@ export class SessionStore {
   }
 
   clear(): void {
-    // Atomic clear: write empty file to a temp path then rename, preventing
-    // partial writes from corrupting the file if the process is interrupted.
+    // Atomic clear: replace each file via temp+rename to prevent partial writes.
     for (const filePath of [this.contextPath, this.logPath]) {
       if (fs.existsSync(filePath)) {
-        const tmpPath = filePath + `.tmp-${crypto.randomBytes(4).toString('hex')}`;
         try {
-          fs.writeFileSync(tmpPath, '', { encoding: 'utf-8', mode: 0o600 });
-          fs.renameSync(tmpPath, filePath);
-        } catch {
-          // Clean up temp file on failure, fall back to direct write
-          try {
-            fs.unlinkSync(tmpPath);
-          } catch {
-            /* best effort */
-          }
-          fs.writeFileSync(filePath, '', { encoding: 'utf-8', mode: 0o600 });
+          writePrivateTextFileSecure(filePath, '', { label: 'Session file', atomic: true });
+          enforcePrivateFile(filePath);
+        } catch (error) {
+          // Non-fatal: clear failures should not crash the CLI.
+          warnSessionIssue('Clear session file', filePath, error);
         }
-        enforcePrivateFile(filePath);
       }
     }
   }
@@ -343,13 +327,15 @@ export function cleanupSessions(options: CleanupOptions = {}, sessionsDir?: stri
     // Check message count
     let messageCount = 0;
     if (fs.existsSync(contextPath)) {
-      try {
-        messageCount = readSafeSessionLines(contextPath).length;
-      } catch (error) {
-        // treat as empty
-        result.errors.push(`${entry.name}: unable to read context (${getErrorMessage(error)})`);
-        warnSessionIssue('Read session context', contextPath, error);
+      const readResult = tryReadSessionLines(contextPath);
+      if (readResult.error) {
+        result.errors.push(
+          `${entry.name}: unable to read context (${getErrorMessage(readResult.error)})`,
+        );
+        warnSessionIssue('Read session context', contextPath, readResult.error);
+        continue;
       }
+      messageCount = readResult.lines.length;
     }
     if (messageCount > 0) continue;
 
@@ -416,11 +402,11 @@ export function getSessionStorageStats(sessionsDir?: string): SessionStorageStat
     const contextPath = path.join(sessionDir, 'context.jsonl');
     let messageCount = 0;
     if (fs.existsSync(contextPath)) {
-      try {
-        messageCount = readSafeSessionLines(contextPath).length;
-      } catch (error) {
-        // treat as empty
-        warnSessionIssue('Read session context', contextPath, error);
+      const readResult = tryReadSessionLines(contextPath);
+      if (readResult.error) {
+        warnSessionIssue('Read session context', contextPath, readResult.error);
+      } else {
+        messageCount = readResult.lines.length;
       }
     }
     if (messageCount === 0) stats.emptySessions++;

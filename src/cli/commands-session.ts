@@ -17,9 +17,9 @@ import type { ChatContext } from './types.js';
 import {
   formatTimestamp,
   normalizeTag,
-  ensureDirExists,
   hasCommand,
   resolveSafeOutputPath,
+  writePrivateTextFile,
 } from './utils.js';
 import {
   readSessionMeta,
@@ -35,6 +35,42 @@ const MAX_SEARCH_ENTRIES = 5_000;
 const MAX_REGEX_PATTERN_LENGTH = 160;
 const MAX_REGEX_CONTENT_LENGTH = 12_000;
 const MAX_SEARCH_RUNTIME_MS = 2_000;
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+function isPathWithin(root: string, candidate: string): boolean {
+  const normalizedRoot = path.resolve(root);
+  const normalizedCandidate = path.resolve(candidate);
+  const relative = path.relative(normalizedRoot, normalizedCandidate);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function assertDirectoryForRename(dirPath: string, label: string): void {
+  if (!fs.existsSync(dirPath)) {
+    throw new Error(`${label} not found: ${dirPath}`);
+  }
+  const stats = fs.lstatSync(dirPath);
+  if (stats.isSymbolicLink()) {
+    throw new Error(`${label} must not be a symlink: ${dirPath}`);
+  }
+  if (!stats.isDirectory()) {
+    throw new Error(`${label} is not a directory: ${dirPath}`);
+  }
+}
+
+function parseSearchDateBound(value: string, mode: 'since' | 'until'): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  if (DATE_ONLY_PATTERN.test(trimmed)) {
+    const boundary = mode === 'since' ? `${trimmed}T00:00:00.000Z` : `${trimmed}T23:59:59.999Z`;
+    const parsedBoundary = Date.parse(boundary);
+    return Number.isFinite(parsedBoundary) ? parsedBoundary : null;
+  }
+
+  const parsed = Date.parse(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function isUnsafeRegexPattern(pattern: string): string | null {
   if (pattern.length > MAX_REGEX_PATTERN_LENGTH) {
     return `Regex pattern exceeds ${MAX_REGEX_PATTERN_LENGTH} characters`;
@@ -57,6 +93,18 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+async function promptWithReadlinePaused<T extends Record<string, unknown>>(
+  ctx: ChatContext,
+  questions: Parameters<typeof inquirer.prompt>[0],
+): Promise<T> {
+  ctx.rl.pause();
+  try {
+    return (await inquirer.prompt(questions)) as T;
+  } finally {
+    ctx.rl.resume();
+  }
 }
 
 export async function handleSessionCommand(input: string, ctx: ChatContext): Promise<boolean> {
@@ -176,8 +224,7 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
         .toISOString()
         .replace(/[-:.TZ]/g, '')
         .slice(0, 14)}`;
-      ctx.rl.pause();
-      const answer = await inquirer.prompt([
+      const answer = await promptWithReadlinePaused<{ sessionName?: string }>(ctx, [
         {
           type: 'input',
           name: 'sessionName',
@@ -185,7 +232,6 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
           default: defaultId,
         },
       ]);
-      ctx.rl.resume();
       nextId = String(answer.sessionName || '').trim();
     }
 
@@ -199,8 +245,7 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
     const sanitized = sanitizeSessionId(nextId);
     const sessionDir = path.join(getSessionsDir(), sanitized);
     if (fs.existsSync(sessionDir)) {
-      ctx.rl.pause();
-      const { proceed } = await inquirer.prompt([
+      const { proceed } = await promptWithReadlinePaused<{ proceed?: boolean }>(ctx, [
         {
           type: 'confirm',
           name: 'proceed',
@@ -208,7 +253,6 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
           default: false,
         },
       ]);
-      ctx.rl.resume();
       if (!proceed) {
         console.log(formatWarning('Session switch cancelled.'));
         console.log('');
@@ -217,7 +261,7 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
       }
     }
 
-    ctx.switchSession(sanitized);
+    await ctx.switchSession(sanitized);
     console.log('');
     ctx.rl.prompt();
     return true;
@@ -233,7 +277,6 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
       return true;
     }
 
-    ctx.rl.pause();
     const choices: Array<
       { name: string; value: string } | InstanceType<typeof inquirer.Separator>
     > = sessions.map((session) => ({
@@ -243,24 +286,21 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
     choices.push(new inquirer.Separator());
     choices.push({ name: 'Enter custom session id', value: '__custom__' });
 
-    const { selected } = await inquirer.prompt([
+    const { selected } = await promptWithReadlinePaused<{ selected?: string }>(ctx, [
       { type: 'list', name: 'selected', message: 'Resume session:', choices },
     ]);
-    ctx.rl.resume();
 
     if (selected === '__custom__') {
-      ctx.rl.pause();
-      const { customId } = await inquirer.prompt([
+      const { customId } = await promptWithReadlinePaused<{ customId?: string }>(ctx, [
         { type: 'input', name: 'customId', message: 'Session id:' },
       ]);
-      ctx.rl.resume();
       if (!customId || !String(customId).trim()) {
         console.log(formatWarning('Session id is required.'));
         console.log('');
         ctx.rl.prompt();
         return true;
       }
-      ctx.switchSession(String(customId));
+      await ctx.switchSession(String(customId));
       console.log('');
       ctx.rl.prompt();
       return true;
@@ -269,7 +309,7 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
     if (selected === ctx.sessionId) {
       console.log(formatSuccess(`Already on session: ${ctx.sessionId}`));
     } else {
-      ctx.switchSession(String(selected));
+      await ctx.switchSession(String(selected));
     }
     console.log('');
     ctx.rl.prompt();
@@ -304,8 +344,26 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
     }
 
     try {
-      fs.renameSync(currentDir, targetDir);
-      ctx.switchSession(sanitized);
+      const sessionsRoot = path.resolve(getSessionsDir());
+      const resolvedCurrentDir = path.resolve(currentDir);
+      const resolvedTargetDir = path.resolve(targetDir);
+      if (!isPathWithin(sessionsRoot, resolvedCurrentDir)) {
+        throw new Error(
+          `Current session directory must be within sessions root: ${resolvedCurrentDir}`,
+        );
+      }
+      if (!isPathWithin(sessionsRoot, resolvedTargetDir)) {
+        throw new Error(
+          `Target session directory must be within sessions root: ${resolvedTargetDir}`,
+        );
+      }
+      assertDirectoryForRename(sessionsRoot, 'Sessions directory');
+      assertDirectoryForRename(resolvedCurrentDir, 'Current session directory');
+      const targetParent = path.dirname(resolvedTargetDir);
+      assertDirectoryForRename(targetParent, 'Target session parent directory');
+
+      fs.renameSync(resolvedCurrentDir, resolvedTargetDir);
+      await ctx.switchSession(sanitized);
     } catch (err) {
       console.error(formatError(getErrorMessage(err)));
     }
@@ -327,8 +385,7 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
       return true;
     }
 
-    ctx.rl.pause();
-    const { confirmDelete } = await inquirer.prompt([
+    const { confirmDelete } = await promptWithReadlinePaused<{ confirmDelete?: boolean }>(ctx, [
       {
         type: 'confirm',
         name: 'confirmDelete',
@@ -336,7 +393,6 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
         default: false,
       },
     ]);
-    ctx.rl.resume();
     if (!confirmDelete) {
       console.log(formatWarning('Delete cancelled.'));
       console.log('');
@@ -347,7 +403,7 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
     try {
       fs.rmSync(targetDir, { recursive: true, force: true });
       if (target === ctx.sessionId) {
-        ctx.switchSession('default');
+        await ctx.switchSession('default');
       } else {
         console.log(formatSuccess(`Deleted session "${target}".`));
       }
@@ -567,8 +623,8 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
 
     let sinceMs: number | null = null;
     if (since) {
-      const parsed = Date.parse(since);
-      if (Number.isFinite(parsed)) {
+      const parsed = parseSearchDateBound(since, 'since');
+      if (parsed !== null) {
         sinceMs = parsed;
       } else {
         console.log(formatWarning('Invalid since date. Use YYYY-MM-DD.'));
@@ -579,8 +635,8 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
     }
     let untilMs: number | null = null;
     if (until) {
-      const parsed = Date.parse(until);
-      if (Number.isFinite(parsed)) {
+      const parsed = parseSearchDateBound(until, 'until');
+      if (parsed !== null) {
         untilMs = parsed;
       } else {
         console.log(formatWarning('Invalid until date. Use YYYY-MM-DD.'));
@@ -644,11 +700,11 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
           break;
         }
         if (roleFilter && entry.role !== roleFilter) continue;
-        if (sinceMs && entry.ts) {
+        if (sinceMs !== null && entry.ts) {
           const entryMs = Date.parse(entry.ts);
           if (Number.isFinite(entryMs) && entryMs < sinceMs) continue;
         }
-        if (untilMs && entry.ts) {
+        if (untilMs !== null && entry.ts) {
           const entryMs = Date.parse(entry.ts);
           if (Number.isFinite(entryMs) && entryMs > untilMs) continue;
         }
@@ -817,8 +873,7 @@ export async function handleSessionCommand(input: string, ctx: ChatContext): Pro
           allowOutside: allowUnsafePath,
           allowedRoots: [ctx.cwd, getStateSetDir()],
         });
-        ensureDirExists(resolved);
-        fs.writeFileSync(resolved, outputText, 'utf-8');
+        writePrivateTextFile(resolved, outputText, { label: 'Session meta output' });
         console.log(formatSuccess(`Session meta saved to ${resolved}`));
       } catch (err) {
         console.error(formatError(getErrorMessage(err)));

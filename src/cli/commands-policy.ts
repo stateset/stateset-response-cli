@@ -5,7 +5,7 @@ import { formatError, formatSuccess, formatWarning, formatTable } from '../utils
 import { getErrorMessage } from '../lib/errors.js';
 import type { ChatContext, CommandResult, PermissionDecision } from './types.js';
 import { getStateSetDir } from '../session.js';
-import { hasCommand, ensureDirExists, resolveSafeOutputPath } from './utils.js';
+import { hasCommand, resolveSafeOutputPath, writePrivateTextFile } from './utils.js';
 import {
   writePermissionStore,
   readPolicyOverridesDetailed,
@@ -14,11 +14,18 @@ import {
 } from './permissions.js';
 
 function writePrivateJson(filePath: string, value: unknown): void {
-  fs.writeFileSync(filePath, JSON.stringify(value, null, 2), { encoding: 'utf-8', mode: 0o600 });
+  writePrivateTextFile(filePath, JSON.stringify(value, null, 2), { label: 'Policy export target' });
+}
+
+async function promptWithReadlinePaused<T extends Record<string, unknown>>(
+  ctx: ChatContext,
+  questions: Parameters<typeof inquirer.prompt>[0],
+): Promise<T> {
+  ctx.rl.pause();
   try {
-    fs.chmodSync(filePath, 0o600);
-  } catch {
-    // Best-effort on non-POSIX systems.
+    return (await inquirer.prompt(questions)) as T;
+  } finally {
+    ctx.rl.resume();
   }
 }
 
@@ -45,8 +52,7 @@ export async function handlePolicyCommand(input: string, ctx: ChatContext): Prom
     }
 
     if (action === 'clear') {
-      ctx.rl.pause();
-      const { confirmClear } = await inquirer.prompt([
+      const { confirmClear } = await promptWithReadlinePaused<{ confirmClear?: boolean }>(ctx, [
         {
           type: 'confirm',
           name: 'confirmClear',
@@ -54,7 +60,6 @@ export async function handlePolicyCommand(input: string, ctx: ChatContext): Prom
           default: false,
         },
       ]);
-      ctx.rl.resume();
       if (!confirmClear) {
         console.log(formatWarning('Permissions clear cancelled.'));
         console.log('');
@@ -153,8 +158,7 @@ export async function handlePolicyCommand(input: string, ctx: ChatContext): Prom
     }
 
     if (action === 'clear') {
-      ctx.rl.pause();
-      const { confirmClear } = await inquirer.prompt([
+      const { confirmClear } = await promptWithReadlinePaused<{ confirmClear?: boolean }>(ctx, [
         {
           type: 'confirm',
           name: 'confirmClear',
@@ -162,7 +166,6 @@ export async function handlePolicyCommand(input: string, ctx: ChatContext): Prom
           default: false,
         },
       ]);
-      ctx.rl.resume();
       if (!confirmClear) {
         console.log(formatWarning('Policy clear cancelled.'));
         console.log('');
@@ -200,7 +203,6 @@ export async function handlePolicyCommand(input: string, ctx: ChatContext): Prom
               label: 'Policy export target',
               allowOutside: true,
             });
-        ensureDirExists(resolved);
         writePrivateJson(resolved, view);
         console.log(formatSuccess(`Policy overrides (${mode}) exported to ${resolved}`));
       } catch (err) {

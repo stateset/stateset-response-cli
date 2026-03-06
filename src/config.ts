@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { encryptSecret, decryptSecret, isEncrypted } from './lib/secrets.js';
 import { ConfigurationError, getErrorMessage } from './lib/errors.js';
 import { readJsonFile } from './utils/file-read.js';
+import { ensurePrivateDirectory, writePrivateTextFileSecure } from './utils/secure-file.js';
 
 export interface OrgConfig {
   name: string;
@@ -107,14 +108,10 @@ function tryDecryptConfigSecret(value: string, label: string): DecryptResult {
 }
 
 export function ensureConfigDir(): void {
-  if (!fs.existsSync(CONFIG_DIR)) {
-    fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
-  }
-  try {
-    fs.chmodSync(CONFIG_DIR, 0o700);
-  } catch {
-    // Best-effort on non-POSIX systems
-  }
+  ensurePrivateDirectory(CONFIG_DIR, {
+    symlinkErrorPrefix: 'Refusing to use symlinked config directory',
+    nonDirectoryErrorPrefix: 'Config directory path is not a directory',
+  });
 }
 
 export function configExists(): boolean {
@@ -253,17 +250,11 @@ export function saveConfig(config: StateSetConfig): void {
   }
 
   try {
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify(configToSave, null, 2), {
-      encoding: 'utf-8',
-      mode: 0o600,
+    writePrivateTextFileSecure(CONFIG_FILE, JSON.stringify(configToSave, null, 2), {
+      label: 'Config file path',
     });
   } catch (e) {
     throw new ConfigurationError(`Failed to write config file: ${getErrorMessage(e)}`);
-  }
-  try {
-    fs.chmodSync(CONFIG_FILE, 0o600);
-  } catch {
-    // Best-effort on non-POSIX systems
   }
 }
 

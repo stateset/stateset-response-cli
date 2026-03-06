@@ -127,6 +127,11 @@ export async function runAnalyticsCommand(
     }
   }
 
+  // Treat bare shorthand values (for example: 7d) as lookback windows for --from/--since.
+  if (fromInput) {
+    fromInput = parsePeriodRangeAsIso(fromInput) ?? fromInput;
+  }
+
   const dateRange = parseDateRange(fromInput, toInput);
   if (dateRange.warnings.length > 0) {
     for (const warning of dateRange.warnings) {

@@ -2,6 +2,7 @@ import { handleChatCommand } from './commands-chat.js';
 import { handleSessionCommand } from './commands-session.js';
 import { handleExportCommand } from './commands-export.js';
 import { handleShortcutCommand } from './commands-shortcuts.js';
+import { findCommand, registerAllCommands } from './command-registry.js';
 import type { ChatContext, CommandResult } from './types.js';
 import { formatError } from '../utils/display.js';
 import { getErrorMessage } from '../lib/errors.js';
@@ -10,6 +11,24 @@ import type { ExtensionCommand } from '../extensions.js';
 const isNonEmptyString = (value: unknown): value is string => {
   return typeof value === 'string' && value.trim().length > 0;
 };
+
+function normalizeSlashCommandAlias(input: string): string {
+  const trimmedStart = input.trimStart();
+  if (!trimmedStart.startsWith('/')) {
+    return input;
+  }
+
+  registerAllCommands();
+  const firstWhitespace = trimmedStart.search(/\s/);
+  const rawCommand = firstWhitespace === -1 ? trimmedStart : trimmedStart.slice(0, firstWhitespace);
+  const commandSuffix = firstWhitespace === -1 ? '' : trimmedStart.slice(firstWhitespace);
+  const commandDefinition = findCommand(rawCommand.toLowerCase());
+  if (!commandDefinition) {
+    return trimmedStart;
+  }
+
+  return `${commandDefinition.name}${commandSuffix}`;
+}
 
 /**
  * Route a slash command to the appropriate handler module.
@@ -23,12 +42,14 @@ const isNonEmptyString = (value: unknown): value is string => {
  * Returns `{ handled: false }` if no handler matched.
  */
 export async function routeSlashCommand(input: string, ctx: ChatContext): Promise<CommandResult> {
+  const routedInput = normalizeSlashCommandAlias(input);
+
   // Chat meta-commands: help, clear, history, extensions, reload,
   // apply, redact, usage, audit, permissions, policy, integrations,
   // model, skills, skill, prompts, prompt, attach, etc.
   let chatResult: CommandResult;
   try {
-    chatResult = await handleChatCommand(input, ctx);
+    chatResult = await handleChatCommand(routedInput, ctx);
   } catch (err) {
     console.error(formatError(getErrorMessage(err)));
     return { handled: true, needsPrompt: true };
@@ -52,7 +73,7 @@ export async function routeSlashCommand(input: string, ctx: ChatContext): Promis
   // Session commands: session, sessions, new, resume, rename, delete,
   // archive, unarchive, tag, search, session-meta
   try {
-    if (await handleSessionCommand(input, ctx)) {
+    if (await handleSessionCommand(routedInput, ctx)) {
       return { handled: true };
     }
   } catch (err) {
@@ -63,7 +84,7 @@ export async function routeSlashCommand(input: string, ctx: ChatContext): Promis
   // Export commands: export, export-list, export-show, export-open,
   // export-delete, export-prune
   try {
-    if (await handleExportCommand(input, ctx)) {
+    if (await handleExportCommand(routedInput, ctx)) {
       return { handled: true };
     }
   } catch (err) {
@@ -73,7 +94,7 @@ export async function routeSlashCommand(input: string, ctx: ChatContext): Promis
 
   // Shortcut commands: /rules, /kb, /agents, /channels, /convos, /status, /test, etc.
   try {
-    const shortcutResult = await handleShortcutCommand(input, ctx);
+    const shortcutResult = await handleShortcutCommand(routedInput, ctx);
     if (shortcutResult.handled) {
       return shortcutResult;
     }
@@ -82,7 +103,7 @@ export async function routeSlashCommand(input: string, ctx: ChatContext): Promis
     return { handled: true, needsPrompt: true };
   }
 
-  const trimmed = input.slice(1).trim();
+  const trimmed = routedInput.slice(1).trim();
   if (trimmed) {
     const [rawCommandName, ...restParts] = trimmed.split(/\s+/);
     const commandName = rawCommandName.slice(0, 64);

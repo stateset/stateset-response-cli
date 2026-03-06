@@ -14,13 +14,19 @@ vi.mock('../cli/commands-export.js', () => ({
   handleExportCommand: vi.fn(async () => false),
 }));
 
+vi.mock('../cli/commands-shortcuts.js', () => ({
+  handleShortcutCommand: vi.fn(async () => ({ handled: false })),
+}));
+
 import { handleChatCommand } from '../cli/commands-chat.js';
 import { handleSessionCommand } from '../cli/commands-session.js';
 import { handleExportCommand } from '../cli/commands-export.js';
+import { handleShortcutCommand } from '../cli/commands-shortcuts.js';
 
 const mockChat = vi.mocked(handleChatCommand);
 const mockSession = vi.mocked(handleSessionCommand);
 const mockExport = vi.mocked(handleExportCommand);
+const mockShortcut = vi.mocked(handleShortcutCommand);
 
 const ctx = {} as ChatContext;
 
@@ -30,6 +36,7 @@ describe('routeSlashCommand', () => {
     mockChat.mockResolvedValue({ handled: false });
     mockSession.mockResolvedValue(false);
     mockExport.mockResolvedValue(false);
+    mockShortcut.mockResolvedValue({ handled: false });
   });
 
   it('returns chat result when chat handler matches', async () => {
@@ -89,6 +96,78 @@ describe('routeSlashCommand', () => {
     expect(mockChat).toHaveBeenCalled();
     expect(mockSession).toHaveBeenCalled();
     expect(mockExport).toHaveBeenCalledWith('/export', ctx);
+  });
+
+  it('normalizes chat aliases to canonical command names', async () => {
+    mockChat.mockResolvedValue({ handled: true });
+
+    const result = await routeSlashCommand('/m sonnet', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(mockChat).toHaveBeenCalledWith('/model sonnet', ctx);
+    expect(mockSession).not.toHaveBeenCalled();
+    expect(mockExport).not.toHaveBeenCalled();
+    expect(mockShortcut).not.toHaveBeenCalled();
+  });
+
+  it('normalizes short help alias to canonical command names', async () => {
+    mockChat.mockResolvedValue({ handled: true });
+
+    const result = await routeSlashCommand('/h sessions', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(mockChat).toHaveBeenCalledWith('/help sessions', ctx);
+    expect(mockSession).not.toHaveBeenCalled();
+    expect(mockExport).not.toHaveBeenCalled();
+    expect(mockShortcut).not.toHaveBeenCalled();
+  });
+
+  it('normalizes session aliases to canonical command names', async () => {
+    mockSession.mockResolvedValue(true);
+
+    const result = await routeSlashCommand('/s all', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(mockChat).toHaveBeenCalledWith('/sessions all', ctx);
+    expect(mockSession).toHaveBeenCalledWith('/sessions all', ctx);
+    expect(mockExport).not.toHaveBeenCalled();
+    expect(mockShortcut).not.toHaveBeenCalled();
+  });
+
+  it('normalizes shortcut aliases to canonical command names', async () => {
+    mockShortcut.mockResolvedValue({ handled: true });
+
+    const result = await routeSlashCommand('/r list', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(mockChat).toHaveBeenCalledWith('/rules list', ctx);
+    expect(mockSession).toHaveBeenCalledWith('/rules list', ctx);
+    expect(mockExport).toHaveBeenCalledWith('/rules list', ctx);
+    expect(mockShortcut).toHaveBeenCalledWith('/rules list', ctx);
+  });
+
+  it('normalizes short agents alias to canonical command names', async () => {
+    mockShortcut.mockResolvedValue({ handled: true });
+
+    const result = await routeSlashCommand('/a list', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(mockChat).toHaveBeenCalledWith('/agents list', ctx);
+    expect(mockSession).toHaveBeenCalledWith('/agents list', ctx);
+    expect(mockExport).toHaveBeenCalledWith('/agents list', ctx);
+    expect(mockShortcut).toHaveBeenCalledWith('/agents list', ctx);
+  });
+
+  it('normalizes short status alias to canonical command names', async () => {
+    mockShortcut.mockResolvedValue({ handled: true });
+
+    const result = await routeSlashCommand('/st', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(mockChat).toHaveBeenCalledWith('/status', ctx);
+    expect(mockSession).toHaveBeenCalledWith('/status', ctx);
+    expect(mockExport).toHaveBeenCalledWith('/status', ctx);
+    expect(mockShortcut).toHaveBeenCalledWith('/status', ctx);
   });
 
   it('returns unhandled when no handler matches', async () => {
@@ -266,9 +345,13 @@ describe('routeSlashCommand', () => {
       callOrder.push('export');
       return false;
     });
+    mockShortcut.mockImplementation(async () => {
+      callOrder.push('shortcut');
+      return { handled: false };
+    });
 
     await routeSlashCommand('/anything', ctx);
-    expect(callOrder).toEqual(['chat', 'session', 'export']);
+    expect(callOrder).toEqual(['chat', 'session', 'export', 'shortcut']);
   });
 
   it('session returning false falls through to export', async () => {

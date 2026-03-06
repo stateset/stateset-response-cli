@@ -1,4 +1,3 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import type { ShortcutLogger, ShortcutRunner, TopLevelOptions } from './types.js';
 import { readJsonFile } from '../../utils/file-read.js';
@@ -13,6 +12,7 @@ import {
   buildTopLevelLogger,
   withAgentRunner,
   resolveSafeOutputPath,
+  writePrivateTextFile,
   parseToggleValue,
 } from './utils.js';
 
@@ -92,8 +92,9 @@ export async function runAgentsCommand(
     if (outputFile) {
       try {
         const outputPath = resolveSafeOutputPath(outputFile, { label: 'Agent export path' });
-        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-        fs.writeFileSync(outputPath, JSON.stringify(result.payload, null, 2), 'utf-8');
+        writePrivateTextFile(outputPath, JSON.stringify(result.payload, null, 2), {
+          label: 'Agent export path',
+        });
         logger.success(`Agent exported to ${outputPath}`);
       } catch (error) {
         logger.error(`Failed to write export file: ${getErrorMessage(error)}`);

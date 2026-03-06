@@ -1,5 +1,4 @@
 import path from 'node:path';
-import fs from 'node:fs';
 import type { AnyPayload, ShortcutLogger, ShortcutRunner, TopLevelOptions } from './types.js';
 import { readJsonFile } from '../../utils/file-read.js';
 import { getErrorMessage } from '../../lib/errors.js';
@@ -11,6 +10,7 @@ import {
   buildTopLevelLogger,
   withAgentRunner,
   resolveSafeOutputPath,
+  writePrivateTextFile,
   parseToggleValue,
 } from './utils.js';
 
@@ -182,8 +182,9 @@ export async function runRulesCommand(
     if (outputFile) {
       try {
         const outputPath = resolveSafeOutputPath(outputFile, { label: 'Rules export path' });
-        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-        fs.writeFileSync(outputPath, JSON.stringify(result.payload, null, 2), 'utf-8');
+        writePrivateTextFile(outputPath, JSON.stringify(result.payload, null, 2), {
+          label: 'Rules export path',
+        });
         logger.success(`Rules exported to ${outputPath}`);
       } catch (error) {
         logger.error(`Failed to write export file: ${getErrorMessage(error)}`);

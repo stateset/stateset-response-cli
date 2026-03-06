@@ -22,6 +22,11 @@ describe('checkForUpdate', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockFs.existsSync.mockReturnValue(false);
+    mockFs.lstatSync.mockReturnValue({
+      isFile: () => true,
+      isSymbolicLink: () => false,
+      size: 128,
+    } as any);
   });
 
   it('returns null when fetch fails', async () => {
@@ -80,5 +85,18 @@ describe('checkForUpdate', () => {
 
     const result = await checkForUpdate('1.7.4');
     expect(result).toBeNull();
+  });
+
+  it('returns null when cache path is a symlink', async () => {
+    mockFs.existsSync.mockReturnValue(true);
+    mockFs.lstatSync.mockReturnValue({
+      isFile: () => true,
+      isSymbolicLink: () => true,
+      size: 128,
+    } as any);
+
+    const result = await checkForUpdate('1.7.4');
+    expect(result).toBeNull();
+    expect(mockFs.readFileSync).not.toHaveBeenCalled();
   });
 });

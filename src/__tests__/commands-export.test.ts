@@ -11,6 +11,7 @@ const {
   mockGetSessionExportPath,
   mockReadTextFile,
   mockListExportFiles,
+  mockPrompt,
 } = vi.hoisted(() => ({
   mockWriteFileSync: vi.fn(),
   mockReadSessionEntries: vi.fn((_sessionId?: string) => [...mockEntries]),
@@ -22,6 +23,13 @@ const {
   mockListExportFiles: vi.fn(
     (_sessionId?: string) => [] as Array<{ name: string; updatedAtMs: number; size: number }>,
   ),
+  mockPrompt: vi.fn(),
+}));
+
+vi.mock('inquirer', () => ({
+  default: {
+    prompt: (questions: unknown) => mockPrompt(questions),
+  },
 }));
 
 const { mockExistsSync } = vi.hoisted(() => ({
@@ -75,7 +83,7 @@ import { handleExportCommand } from '../cli/commands-export.js';
 
 function createMockCtx(overrides: Partial<ChatContext> = {}): ChatContext {
   return {
-    rl: { prompt: vi.fn() } as any,
+    rl: { prompt: vi.fn(), pause: vi.fn(), resume: vi.fn() } as any,
     sessionId: 'test-session',
     cwd: '/tmp/test',
     ...overrides,
@@ -85,6 +93,7 @@ function createMockCtx(overrides: Partial<ChatContext> = {}): ChatContext {
 describe('handleExportCommand', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrompt.mockResolvedValue({});
     mockReadSessionEntries.mockReturnValue([...mockEntries]);
     mockExportSessionToMarkdown.mockReturnValue('# Session Export');
     mockGetSessionExportPath.mockReturnValue('/tmp/sessions/test-session/exports');
@@ -378,5 +387,17 @@ describe('handleExportCommand', () => {
     expect(mockWriteFileSync).toHaveBeenCalled();
     const written = mockWriteFileSync.mock.calls[0][1] as string;
     expect(JSON.parse(written)).toEqual(mockEntries);
+  });
+
+  it('/export-delete resumes readline when prompt throws', async () => {
+    mockExistsSync.mockReturnValue(true);
+    mockPrompt.mockRejectedValueOnce(new Error('prompt failed'));
+    const ctx = createMockCtx();
+
+    await expect(handleExportCommand('/export-delete report.md', ctx)).rejects.toThrow(
+      'prompt failed',
+    );
+    expect(ctx.rl.pause).toHaveBeenCalledTimes(1);
+    expect(ctx.rl.resume).toHaveBeenCalledTimes(1);
   });
 });

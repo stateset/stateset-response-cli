@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -50,6 +50,38 @@ describe('SessionStore.getStorageBytes', () => {
 
     expect(store.getStorageBytes()).toBe(150);
   });
+});
+
+describe('SessionStore append hardening', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ss-append-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'does not append through a symlinked context path',
+    () => {
+      const targetPath = path.join(tmpDir, 'target.log');
+      const linkPath = path.join(tmpDir, 'context.jsonl');
+      fs.writeFileSync(targetPath, 'seed\n', 'utf-8');
+      fs.symlinkSync(targetPath, linkPath);
+
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const store = Object.create(SessionStore.prototype) as SessionStore;
+      (store as any).contextPath = linkPath;
+      (store as any).logPath = path.join(tmpDir, 'log.jsonl');
+
+      store.appendMessage({ role: 'user', content: 'hello' });
+
+      expect(fs.readFileSync(targetPath, 'utf-8')).toBe('seed\n');
+      warnSpy.mockRestore();
+    },
+  );
 });
 
 describe('cleanupSessions', () => {
@@ -108,6 +140,25 @@ describe('cleanupSessions', () => {
     createSession('active', { messages: 5, ageDays: 60 });
     const result = cleanupSessions({ maxAgeDays: 30 }, tmpDir);
     expect(result.removed).toHaveLength(0);
+  });
+
+  it('does not delete unreadable old sessions', () => {
+    const sessDir = path.join(tmpDir, 'old-unreadable');
+    fs.mkdirSync(sessDir, { recursive: true });
+    const contextPath = path.join(sessDir, 'context.jsonl');
+    fs.writeFileSync(contextPath, 'x'.repeat(1_048_577), 'utf-8');
+    const past = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
+    fs.utimesSync(sessDir, past, past);
+    fs.utimesSync(contextPath, past, past);
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = cleanupSessions({ maxAgeDays: 30 }, tmpDir);
+    warnSpy.mockRestore();
+
+    expect(result.removed).toHaveLength(0);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toContain('old-unreadable: unable to read context');
+    expect(fs.existsSync(sessDir)).toBe(true);
   });
 });
 

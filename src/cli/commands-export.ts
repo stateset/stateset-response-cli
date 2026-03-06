@@ -8,7 +8,12 @@ import { formatSuccess, formatWarning, formatError, formatTable } from '../utils
 import { getErrorMessage } from '../lib/errors.js';
 import { readTextFile, MAX_TEXT_FILE_SIZE_BYTES } from '../utils/file-read.js';
 import type { ChatContext } from './types.js';
-import { formatTimestamp, ensureDirExists, hasCommand, resolveSafeOutputPath } from './utils.js';
+import {
+  formatTimestamp,
+  hasCommand,
+  resolveSafeOutputPath,
+  writePrivateTextFile,
+} from './utils.js';
 import {
   readSessionEntries,
   exportSessionToMarkdown,
@@ -26,12 +31,15 @@ function readExportPreview(filePath: string): string | null {
   }
 }
 
-function writePrivateFile(filePath: string, content: string): void {
-  fs.writeFileSync(filePath, content, { encoding: 'utf-8', mode: 0o600 });
+async function promptWithReadlinePaused<T extends Record<string, unknown>>(
+  ctx: ChatContext,
+  questions: Parameters<typeof inquirer.prompt>[0],
+): Promise<T> {
+  ctx.rl.pause();
   try {
-    fs.chmodSync(filePath, 0o600);
-  } catch {
-    // Best-effort on non-POSIX systems.
+    return (await inquirer.prompt(questions)) as T;
+  } finally {
+    ctx.rl.resume();
   }
 }
 
@@ -170,8 +178,7 @@ export async function handleExportCommand(input: string, ctx: ChatContext): Prom
       ctx.rl.prompt();
       return true;
     }
-    ctx.rl.pause();
-    const { confirmDelete } = await inquirer.prompt([
+    const { confirmDelete } = await promptWithReadlinePaused<{ confirmDelete?: boolean }>(ctx, [
       {
         type: 'confirm',
         name: 'confirmDelete',
@@ -179,7 +186,6 @@ export async function handleExportCommand(input: string, ctx: ChatContext): Prom
         default: false,
       },
     ]);
-    ctx.rl.resume();
     if (!confirmDelete) {
       console.log(formatWarning('Export delete cancelled.'));
       console.log('');
@@ -225,8 +231,7 @@ export async function handleExportCommand(input: string, ctx: ChatContext): Prom
     }
 
     const toDelete = files.slice(keep);
-    ctx.rl.pause();
-    const { confirmPrune } = await inquirer.prompt([
+    const { confirmPrune } = await promptWithReadlinePaused<{ confirmPrune?: boolean }>(ctx, [
       {
         type: 'confirm',
         name: 'confirmPrune',
@@ -234,7 +239,6 @@ export async function handleExportCommand(input: string, ctx: ChatContext): Prom
         default: false,
       },
     ]);
-    ctx.rl.resume();
     if (!confirmPrune) {
       console.log(formatWarning('Export prune cancelled.'));
       console.log('');
@@ -309,15 +313,18 @@ export async function handleExportCommand(input: string, ctx: ChatContext): Prom
             label: 'Export output',
             allowOutside: true,
           });
-      ensureDirExists(finalOutputPath);
       if (format === 'jsonl') {
         const lines = entries.map((entry) => JSON.stringify(entry));
-        writePrivateFile(finalOutputPath, lines.join('\n') + '\n');
+        writePrivateTextFile(finalOutputPath, lines.join('\n') + '\n', {
+          label: 'Export output',
+        });
       } else if (format === 'json') {
-        writePrivateFile(finalOutputPath, JSON.stringify(entries, null, 2));
+        writePrivateTextFile(finalOutputPath, JSON.stringify(entries, null, 2), {
+          label: 'Export output',
+        });
       } else {
         const markdown = exportSessionToMarkdown(targetSession, entries);
-        writePrivateFile(finalOutputPath, markdown);
+        writePrivateTextFile(finalOutputPath, markdown, { label: 'Export output' });
       }
       console.log(formatSuccess(`Exported ${entries.length} messages to ${finalOutputPath}`));
     } catch (err) {

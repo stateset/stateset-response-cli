@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import type { ShortcutRunner, ShortcutLogger } from '../cli/shortcuts/types.js';
 
 // ---- Helpers ----------------------------------------------------------------
@@ -25,6 +27,10 @@ function createMockLogger(): ShortcutLogger & {
     output: vi.fn(),
     done: vi.fn(),
   };
+}
+
+function createProjectTempDir(prefix = 'tmp-shortcuts-export-'): string {
+  return fs.mkdtempSync(path.join(process.cwd(), prefix));
 }
 
 // ---- Agents -----------------------------------------------------------------
@@ -93,6 +99,24 @@ describe('runAgentsCommand', () => {
     await runAgentsCommand(['get', 'a1'], runner, logger);
 
     expect(runner.callTool).toHaveBeenCalledWith('get_agent', { agent_id: 'a1' });
+  });
+
+  it('exports agent to output file', async () => {
+    const payload = { id: 'a1', agent_name: 'Bot' };
+    const runner = createMockRunner(payload);
+    const logger = createMockLogger();
+    const dir = createProjectTempDir();
+    const outputPath = path.join(dir, 'agent-export.json');
+
+    try {
+      await runAgentsCommand(['export', 'a1', outputPath], runner, logger);
+      expect(runner.callTool).toHaveBeenCalledWith('export_agent', { agent_id: 'a1' });
+      expect(fs.existsSync(outputPath)).toBe(true);
+      expect(JSON.parse(fs.readFileSync(outputPath, 'utf-8'))).toEqual(payload);
+      expect(logger.success).toHaveBeenCalledWith(expect.stringContaining(outputPath));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('warns on missing get agent id', async () => {
@@ -313,6 +337,27 @@ describe('runConvosCommand', () => {
     await runConvosCommand(['export'], runner, logger);
 
     expect(logger.warning).toHaveBeenCalledWith(expect.stringContaining('Usage'));
+  });
+
+  it('exports conversation to output file', async () => {
+    const payload = { uuid: 'conv-1', messages: [{ body: 'Hello' }] };
+    const runner = createMockRunner(payload);
+    const logger = createMockLogger();
+    const dir = createProjectTempDir();
+    const outputPath = path.join(dir, 'conversation-export.json');
+
+    try {
+      await runConvosCommand(['export', 'conv-1', outputPath], runner, logger);
+      expect(runner.callTool).toHaveBeenCalledWith(
+        'get_channel_with_messages',
+        expect.objectContaining({ uuid: 'conv-1' }),
+      );
+      expect(fs.existsSync(outputPath)).toBe(true);
+      expect(JSON.parse(fs.readFileSync(outputPath, 'utf-8'))).toEqual(payload);
+      expect(logger.success).toHaveBeenCalledWith(expect.stringContaining(outputPath));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('warns on missing replay conversation id', async () => {
@@ -787,6 +832,96 @@ describe('runAnalyticsCommand', () => {
     expect(metrics.get('Messages')).toBe('10 (all-time)');
     expect(metrics.get('Date range filtering')).toBe('applied');
   });
+
+  it('treats --from shorthand as a lookback window', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-03-01T00:00:00.000Z'));
+      const runner = {
+        callTool: vi.fn(async (tool: string) => {
+          if (tool === 'list_agents') return { payload: [] };
+          if (tool === 'list_rules') return { payload: [] };
+          if (tool === 'get_message_count') {
+            return { payload: { message_aggregate: { aggregate: { count: 2 } } } };
+          }
+          if (tool === 'list_channels') {
+            return {
+              payload: [
+                { created_at: '2026-02-25T12:00:00.000Z' },
+                { created_at: '2026-02-10T12:00:00.000Z' },
+              ],
+            };
+          }
+          if (tool === 'list_responses') {
+            return {
+              payload: [
+                { created_date: '2026-02-25T10:00:00.000Z' },
+                { created_date: '2026-02-08T10:00:00.000Z' },
+              ],
+            };
+          }
+          return { payload: [] };
+        }),
+      } as unknown as ShortcutRunner;
+      const logger = createMockLogger();
+
+      await runAnalyticsCommand(['summary', '--from', '7d'], runner, logger, true);
+
+      const payload = JSON.parse(String(logger.output.mock.calls[0]?.[0] || '{}')) as {
+        analytics: Array<{ metric: string; value: string }>;
+      };
+      const metrics = new Map(payload.analytics.map((entry) => [entry.metric, entry.value]));
+      expect(metrics.get('Channels')).toBe('1');
+      expect(metrics.get('Responses')).toBe('1');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('treats --since shorthand as a lookback window', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-03-01T00:00:00.000Z'));
+      const runner = {
+        callTool: vi.fn(async (tool: string) => {
+          if (tool === 'list_agents') return { payload: [] };
+          if (tool === 'list_rules') return { payload: [] };
+          if (tool === 'get_message_count') {
+            return { payload: { message_aggregate: { aggregate: { count: 2 } } } };
+          }
+          if (tool === 'list_channels') {
+            return {
+              payload: [
+                { created_at: '2026-02-24T12:00:00.000Z' },
+                { created_at: '2026-02-10T12:00:00.000Z' },
+              ],
+            };
+          }
+          if (tool === 'list_responses') {
+            return {
+              payload: [
+                { created_date: '2026-02-23T10:00:00.000Z' },
+                { created_date: '2026-02-09T10:00:00.000Z' },
+              ],
+            };
+          }
+          return { payload: [] };
+        }),
+      } as unknown as ShortcutRunner;
+      const logger = createMockLogger();
+
+      await runAnalyticsCommand(['summary', '--since', '7d'], runner, logger, true);
+
+      const payload = JSON.parse(String(logger.output.mock.calls[0]?.[0] || '{}')) as {
+        analytics: Array<{ metric: string; value: string }>;
+      };
+      const metrics = new Map(payload.analytics.map((entry) => [entry.metric, entry.value]));
+      expect(metrics.get('Channels')).toBe('1');
+      expect(metrics.get('Responses')).toBe('1');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 // ---- Rules ------------------------------------------------------------------
@@ -948,6 +1083,24 @@ describe('runRulesCommand', () => {
 
     expect(runner.callTool).toHaveBeenCalledWith('list_rules', expect.any(Object));
     expect(logger.success).toHaveBeenCalled();
+  });
+
+  it('exports rules to output file', async () => {
+    const payload = [{ id: 'r1' }, { id: 'r2' }];
+    const runner = createMockRunner(payload);
+    const logger = createMockLogger();
+    const dir = createProjectTempDir();
+    const outputPath = path.join(dir, 'rules-export.json');
+
+    try {
+      await runRulesCommand(['export', outputPath], runner, logger);
+      expect(runner.callTool).toHaveBeenCalledWith('list_rules', expect.any(Object));
+      expect(fs.existsSync(outputPath)).toBe(true);
+      expect(JSON.parse(fs.readFileSync(outputPath, 'utf-8'))).toEqual(payload);
+      expect(logger.success).toHaveBeenCalledWith(expect.stringContaining(outputPath));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('treats unknown action as rule id lookup', async () => {

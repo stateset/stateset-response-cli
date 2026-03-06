@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   escapeRegExp,
   applyConditionals,
@@ -6,15 +6,41 @@ import {
 } from '../cli/commands-templates.js';
 import type { ChatContext } from '../cli/types.js';
 
+const {
+  mockPrompt,
+  mockListPromptTemplates,
+  mockGetPromptTemplate,
+  mockGetPromptTemplateFile,
+  mockReadPromptHistory,
+  mockAppendPromptHistory,
+} = vi.hoisted(() => ({
+  mockPrompt: vi.fn(),
+  mockListPromptTemplates: vi.fn((_cwd?: string) => [] as Array<Record<string, unknown>>),
+  mockGetPromptTemplate: vi.fn(
+    (_name?: string, _cwd?: string) => null as Record<string, unknown> | null,
+  ),
+  mockGetPromptTemplateFile: vi.fn(
+    (_name?: string, _cwd?: string) => null as Record<string, unknown> | null,
+  ),
+  mockReadPromptHistory: vi.fn((_limit?: number) => [] as Array<Record<string, unknown>>),
+  mockAppendPromptHistory: vi.fn((_entry?: unknown) => undefined),
+}));
+
+vi.mock('inquirer', () => ({
+  default: {
+    prompt: (questions: unknown) => mockPrompt(questions),
+  },
+}));
+
 vi.mock('../resources.js', () => ({
-  listPromptTemplates: vi.fn(() => []),
-  getPromptTemplate: vi.fn(() => null),
-  getPromptTemplateFile: vi.fn(() => null),
+  listPromptTemplates: (cwd?: string) => mockListPromptTemplates(cwd),
+  getPromptTemplate: (name: string, cwd?: string) => mockGetPromptTemplate(name, cwd),
+  getPromptTemplateFile: (name: string, cwd?: string) => mockGetPromptTemplateFile(name, cwd),
 }));
 
 vi.mock('../cli/audit.js', () => ({
-  readPromptHistory: vi.fn(() => []),
-  appendPromptHistory: vi.fn(),
+  readPromptHistory: (limit?: number) => mockReadPromptHistory(limit),
+  appendPromptHistory: (entry: unknown) => mockAppendPromptHistory(entry),
 }));
 
 function createMockCtx(overrides: Partial<ChatContext> = {}): ChatContext {
@@ -85,6 +111,15 @@ describe('applyConditionals', () => {
 });
 
 describe('handleTemplateCommand', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPrompt.mockResolvedValue({});
+    mockListPromptTemplates.mockReturnValue([]);
+    mockGetPromptTemplate.mockReturnValue(null);
+    mockGetPromptTemplateFile.mockReturnValue(null);
+    mockReadPromptHistory.mockReturnValue([]);
+  });
+
   it('returns unhandled for non-template commands', async () => {
     const ctx = createMockCtx();
     expect(await handleTemplateCommand('/help', ctx)).toEqual({ handled: false });
@@ -164,5 +199,34 @@ describe('handleTemplateCommand', () => {
     expect(
       consoleSpy.mock.calls.some(([line]) => typeof line === 'string' && line.includes('Usage')),
     ).toBe(true);
+  });
+
+  it('/prompt resumes readline when variable prompt throws', async () => {
+    mockGetPromptTemplate.mockReturnValue({
+      name: 'followup',
+      content: 'Hello {{name}}',
+      variables: [{ name: 'name', defaultValue: 'friend' }],
+    });
+    mockPrompt.mockRejectedValueOnce(new Error('prompt failed'));
+    const ctx = createMockCtx();
+
+    await expect(handleTemplateCommand('/prompt followup', ctx)).rejects.toThrow('prompt failed');
+    expect(ctx.rl.pause).toHaveBeenCalledTimes(1);
+    expect(ctx.rl.resume).toHaveBeenCalledTimes(1);
+  });
+
+  it('/prompt resumes readline when send confirmation prompt throws', async () => {
+    mockGetPromptTemplate.mockReturnValue({
+      name: 'followup',
+      content: 'Hello',
+      variables: [],
+    });
+    mockPrompt.mockRejectedValueOnce(new Error('confirm failed'));
+    const ctx = createMockCtx();
+
+    await expect(handleTemplateCommand('/prompt followup', ctx)).rejects.toThrow('confirm failed');
+    expect(ctx.rl.pause).toHaveBeenCalledTimes(1);
+    expect(ctx.rl.resume).toHaveBeenCalledTimes(1);
+    expect(mockAppendPromptHistory).not.toHaveBeenCalled();
   });
 });

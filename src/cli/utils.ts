@@ -3,11 +3,17 @@ import path from 'node:path';
 import { formatError } from '../utils/display.js';
 import type { InlineFlags } from './types.js';
 import { getStateSetDir } from '../session.js';
+import { writePrivateTextFileSecure } from '../utils/secure-file.js';
 
 export interface SafeOutputPathOptions {
   allowedRoots?: string[];
   allowOutside?: boolean;
   label?: string;
+}
+
+export interface PrivateWriteOptions {
+  label?: string;
+  atomic?: boolean;
 }
 
 function safeRealpath(value: string): string | null {
@@ -109,6 +115,14 @@ export function ensureDirExists(filePath: string): void {
   } catch {
     // Best-effort on non-POSIX systems.
   }
+}
+
+export function writePrivateTextFile(
+  filePath: string,
+  content: string,
+  options: PrivateWriteOptions = {},
+): void {
+  writePrivateTextFileSecure(filePath, content, options);
 }
 
 export function resolveSafeOutputPath(

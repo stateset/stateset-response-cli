@@ -1,5 +1,3 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import chalk from 'chalk';
 import type { ShortcutLogger, ShortcutRunner, TopLevelOptions } from './types.js';
 import { DEFAULT_LIST_LIMIT, DEFAULT_LIST_OFFSET } from './types.js';
@@ -15,6 +13,7 @@ import {
   toPositiveInteger,
   printPayload,
   resolveSafeOutputJsonPath,
+  writePrivateTextFile,
   buildTopLevelLogger,
   withAgentRunner,
   formatToolResult,
@@ -160,8 +159,9 @@ export async function runConvosCommand(
           outputFile,
           `conversation-${conversationId}.json`,
         );
-        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-        fs.writeFileSync(outputPath, JSON.stringify(result.payload, null, 2), 'utf-8');
+        writePrivateTextFile(outputPath, JSON.stringify(result.payload, null, 2), {
+          label: 'Conversation export path',
+        });
         logger.success(`Conversation exported to ${outputPath}`);
       } catch (error) {
         logger.error(`Failed to export conversation: ${getErrorMessage(error)}`);

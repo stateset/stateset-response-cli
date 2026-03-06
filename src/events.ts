@@ -1,6 +1,5 @@
 import { Cron } from 'croner';
 import {
-  appendFileSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -25,6 +24,7 @@ import { buildSystemPrompt } from './prompt.js';
 import { loadMemory } from './memory.js';
 import { formatUsage } from './utils/display.js';
 import { readTextFile, MAX_TEXT_FILE_SIZE_BYTES } from './utils/file-read.js';
+import { appendLineSecure, ensurePrivateDirectory } from './utils/secure-file.js';
 import { getErrorMessage } from './lib/errors.js';
 
 const DEBOUNCE_MS = 100;
@@ -812,8 +812,13 @@ function logEventResult(entry: {
   usage: string | null;
 }) {
   const logDir = path.join(getStateSetDir(), 'events');
-  if (!existsSync(logDir)) {
-    mkdirSync(logDir, { recursive: true, mode: 0o700 });
+  try {
+    ensurePrivateDirectory(logDir, {
+      symlinkErrorPrefix: 'Refusing to use symlinked events log directory',
+      nonDirectoryErrorPrefix: 'Events log directory path is not a directory',
+    });
+  } catch {
+    return;
   }
 
   const logPath = path.join(logDir, 'log.jsonl');
@@ -828,7 +833,10 @@ function logEventResult(entry: {
   };
   const line = JSON.stringify(payload);
   try {
-    appendFileSync(logPath, line + '\n', { encoding: 'utf-8', mode: 0o600 });
+    appendLineSecure(logPath, line + '\n', {
+      symlinkErrorPrefix: 'Refusing to write through symlinked events log',
+      nonRegularFileErrorPrefix: 'Refusing to write events log to non-regular file',
+    });
   } catch {
     // ignore logging failures
   }

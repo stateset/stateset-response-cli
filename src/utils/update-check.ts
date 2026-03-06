@@ -3,10 +3,12 @@ import path from 'node:path';
 import os from 'node:os';
 import https from 'node:https';
 import chalk from 'chalk';
+import { ensurePrivateDirectory, writePrivateTextFileSecure } from './secure-file.js';
 
 const CACHE_DIR = path.join(os.homedir(), '.stateset');
 const CACHE_FILE = path.join(CACHE_DIR, '.update-check.json');
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const CACHE_MAX_BYTES = 4096;
 const FETCH_TIMEOUT_MS = 3000;
 const REGISTRY_URL = 'https://registry.npmjs.org/stateset-response-cli/latest';
 
@@ -18,6 +20,15 @@ interface CachedResult {
 function readCache(): CachedResult | null {
   try {
     if (!fs.existsSync(CACHE_FILE)) return null;
+    const stats = fs.lstatSync(CACHE_FILE);
+    if (
+      !stats.isFile() ||
+      stats.isSymbolicLink() ||
+      stats.size <= 0 ||
+      stats.size > CACHE_MAX_BYTES
+    ) {
+      return null;
+    }
     const raw = fs.readFileSync(CACHE_FILE, 'utf-8');
     const parsed = JSON.parse(raw) as CachedResult;
     if (typeof parsed.latestVersion !== 'string' || typeof parsed.checkedAt !== 'number') {
@@ -32,28 +43,14 @@ function readCache(): CachedResult | null {
 
 function writeCache(latestVersion: string): void {
   try {
-    if (!fs.existsSync(CACHE_DIR)) {
-      fs.mkdirSync(CACHE_DIR, { recursive: true, mode: 0o700 });
-    } else {
-      const dirStat = fs.lstatSync(CACHE_DIR);
-      if (!dirStat.isDirectory() || dirStat.isSymbolicLink()) {
-        return;
-      }
-    }
-    if (fs.existsSync(CACHE_FILE)) {
-      const fileStat = fs.lstatSync(CACHE_FILE);
-      if (!fileStat.isFile() || fileStat.isSymbolicLink()) {
-        return;
-      }
-    }
+    ensurePrivateDirectory(CACHE_DIR, {
+      symlinkErrorPrefix: 'Refusing to use symlinked update-check cache directory',
+      nonDirectoryErrorPrefix: 'Update-check cache directory path is not a directory',
+    });
     const data: CachedResult = { latestVersion, checkedAt: Date.now() };
-    fs.writeFileSync(CACHE_FILE, JSON.stringify(data), { encoding: 'utf-8', mode: 0o600 });
-    try {
-      fs.chmodSync(CACHE_DIR, 0o700);
-      fs.chmodSync(CACHE_FILE, 0o600);
-    } catch {
-      // Best-effort on non-POSIX systems.
-    }
+    writePrivateTextFileSecure(CACHE_FILE, JSON.stringify(data), {
+      label: 'Update-check cache file path',
+    });
   } catch {
     // Best-effort
   }

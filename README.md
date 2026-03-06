@@ -3,7 +3,7 @@
 AI-powered CLI for managing the [StateSet ResponseCX](https://response.cx) platform. Chat with an AI agent that can manage your agents, rules, skills, knowledge base, channels, messages, and more — all from the terminal.
 
 Includes optional WhatsApp and Slack gateways for connecting your agent to messaging platforms.
-Current version: `1.7.6`.
+Current version: `1.7.7`.
 
 ## Features
 
@@ -677,7 +677,7 @@ The CLI can load local context files, skills, and prompt templates from `~/.stat
 - `/sessions tag=refunds` filters by tag
 - `/archive [session]` and `/unarchive [session]` toggle archived state
 - `/tag list|add|remove <tag> [session]` manages session tags
-- `/search <text> [all] [role=user|assistant] [since=YYYY-MM-DD] [until=YYYY-MM-DD] [regex=/pattern/i] [limit=50]` searches session transcripts
+- `/search <text> [all] [role=user|assistant] [since=YYYY-MM-DD] [until=YYYY-MM-DD] [regex=/pattern/i] [limit=100]` searches session transcripts
 - Session exports are stored in `~/.stateset/sessions/<session>/exports`
 - `/export-list [session]` lists exports, `/export-show <file> [session]` previews them
 - `/export-delete <file> [session]` deletes an export; `/export-prune [session] keep=5` keeps the newest files

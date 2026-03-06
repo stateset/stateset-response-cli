@@ -3,11 +3,15 @@ import type { ChatContext } from '../cli/types.js';
 
 const {
   mockWriteFileSync,
+  mockPrompt,
+  mockWritePermissionStore,
   mockReadPolicyOverridesDetailed,
   mockReadPolicyFile,
   mockWritePolicyOverrides,
 } = vi.hoisted(() => ({
   mockWriteFileSync: vi.fn(),
+  mockPrompt: vi.fn(),
+  mockWritePermissionStore: vi.fn(),
   mockReadPolicyOverridesDetailed: vi.fn((_cwd?: string) => ({
     localPath: '/tmp/project/.stateset/policies.json',
     globalPath: '/tmp/stateset/policies.json',
@@ -24,6 +28,12 @@ const {
 }));
 
 const mockLoadExtensions = vi.fn();
+
+vi.mock('inquirer', () => ({
+  default: {
+    prompt: (questions: unknown) => mockPrompt(questions),
+  },
+}));
 
 vi.mock('node:fs', async () => {
   const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
@@ -51,7 +61,7 @@ vi.mock('../cli/permissions.js', () => ({
   writePolicyOverrides: (cwd: string, data: Record<string, unknown>) =>
     mockWritePolicyOverrides(cwd, data),
   readPolicyFile: (path: string) => mockReadPolicyFile(path),
-  writePermissionStore: vi.fn(),
+  writePermissionStore: (...args: unknown[]) => mockWritePermissionStore(...args),
   readPermissionStore: vi.fn(() => ({ toolHooks: {} })),
   getPolicyOverridesPath: vi.fn((cwd: string) => `${cwd}/.stateset/policies.json`),
   parsePolicyFile: vi.fn((_filePath: string) => ({ toolHooks: {} })),
@@ -77,6 +87,8 @@ function createMockCtx(overrides: Partial<ChatContext> = {}): ChatContext {
 describe('handlePolicyCommand', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrompt.mockResolvedValue({});
+    mockWritePermissionStore.mockClear();
     mockWriteFileSync.mockClear();
     mockReadPolicyOverridesDetailed.mockReturnValue({
       localPath: '/tmp/project/.stateset/policies.json',
@@ -216,6 +228,16 @@ describe('handlePolicyCommand', () => {
     expect(
       consoleSpy.mock.calls.some(([line]) => typeof line === 'string' && line.includes('Usage')),
     ).toBe(true);
+  });
+
+  it('/permissions clear resumes readline when prompt throws', async () => {
+    const ctx = createMockCtx();
+    mockPrompt.mockRejectedValueOnce(new Error('prompt failed'));
+
+    await expect(handlePolicyCommand('/permissions clear', ctx)).rejects.toThrow('prompt failed');
+    expect(ctx.rl.pause).toHaveBeenCalledTimes(1);
+    expect(ctx.rl.resume).toHaveBeenCalledTimes(1);
+    expect(mockWritePermissionStore).not.toHaveBeenCalled();
   });
 
   it('/policy list shows merged overrides', async () => {
@@ -358,6 +380,15 @@ describe('handlePolicyCommand', () => {
         ([line]) => typeof line === 'string' && line.includes('exported to'),
       ),
     ).toBe(true);
+  });
+
+  it('/policy clear resumes readline when prompt throws', async () => {
+    const ctx = createMockCtx();
+    mockPrompt.mockRejectedValueOnce(new Error('prompt failed'));
+
+    await expect(handlePolicyCommand('/policy clear', ctx)).rejects.toThrow('prompt failed');
+    expect(ctx.rl.pause).toHaveBeenCalledTimes(1);
+    expect(ctx.rl.resume).toHaveBeenCalledTimes(1);
   });
 
   it('/policy with unknown action shows usage', async () => {

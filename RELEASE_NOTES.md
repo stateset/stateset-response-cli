@@ -1,30 +1,28 @@
-# StateSet ResponseCLI Release Notes (v1.7.6)
+# StateSet ResponseCLI Release Notes (v1.7.7)
 
 ## Overview
 
-StateSet ResponseCLI `v1.7.6` hardens authentication and file-write security paths while improving runtime safety and resilience for integrations.
+StateSet ResponseCLI `v1.7.7` hardens local state handling, tightens build and CI behavior, and removes a flaky MCP validation test path.
 
 ## Highlights
 
-### Security hardening
-- Enforced HTTP(S)-only validation for device verification URLs in auth flow.
-- Updated Windows browser opening path to avoid shell interpretation risks.
-- Hardened local policy/permission/export/cache writes:
-  - reject symlinked write targets
-  - enforce stricter file mode defaults (`0600`) with directory mode tightening (`0700`)
-  - apply safer output-path validation for policy/export destinations
+### State and file safety
+- Hardened append-based session and audit writes against symlinked parent paths.
+- Made `/session cleanup` fail closed when session context cannot be read, instead of treating those sessions as empty.
+- Prevented corrupt platform-operations state from being silently reset and overwritten during later mutations.
 
-### Runtime reliability
-- Fatal global error handlers now force process termination after logging, preventing continued execution in an undefined state.
-- Gorgias integration now uses the retrying HTTP helper for better transient failure handling.
+### Build and CI
+- Added a build-only TypeScript config so production builds exclude test files.
+- Added a cleaning build wrapper to avoid stale `dist/` output carrying old compiled tests forward.
+- Split CI into quality, matrix test, coverage, and build stages so coverage only runs once on Node 22.
 
-### Test coverage
+### Test and tooling quality
 - Added and updated tests for:
-  - unsafe device verification URL rejection
-  - unhandled-rejection exit behavior
-  - symlink-safe policy write protections
-  - secure write options in export/policy command paths
-  - Gorgias retry-helper request path
+  - audit I/O hardening
+  - secure file append/write protection
+  - fail-closed session cleanup
+  - corrupt operations-store preservation
+- Fixed the flaky MCP server validation test by correcting the mocked module path and removing the stale `resetModules()` pattern.
 
 ## CLI entry points
 

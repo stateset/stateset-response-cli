@@ -4,6 +4,7 @@ const {
   mockExistsSync,
   mockReadFileSync,
   mockWriteFileSync,
+  mockWritePrivateTextFile,
   mockMkdirSync,
   mockReaddirSync,
   mockStatSync,
@@ -13,6 +14,7 @@ const {
   mockExistsSync: vi.fn((_path?: any) => false as boolean),
   mockReadFileSync: vi.fn((_path?: any, _opts?: any) => '' as any),
   mockWriteFileSync: vi.fn((_path?: any, _data?: any) => undefined as any),
+  mockWritePrivateTextFile: vi.fn((_path?: any, _data?: any, _opts?: any) => undefined as any),
   mockMkdirSync: vi.fn((_path?: any, _opts?: any) => undefined as any),
   mockReaddirSync: vi.fn((_path?: any, _opts?: any) => [] as any[]),
   mockStatSync: vi.fn((_path?: any) => ({}) as any),
@@ -51,8 +53,8 @@ vi.mock('../utils/session-exports.js', () => ({
   ),
 }));
 
-vi.mock('./utils.js', () => ({
-  ensureDirExists: vi.fn(),
+vi.mock('../cli/utils.js', () => ({
+  writePrivateTextFile: mockWritePrivateTextFile,
 }));
 
 import {
@@ -93,16 +95,13 @@ describe('writeSessionMeta', () => {
     vi.clearAllMocks();
   });
 
-  it('writes JSON-stringified meta to meta.json atomically', () => {
+  it('writes JSON-stringified meta via secure atomic writer', () => {
     writeSessionMeta('/tmp/test-sessions/sess-1', { tags: ['vip'] });
-    // Atomic write: writeFileSync to temp file, then renameSync to target
-    expect(mockWriteFileSync).toHaveBeenCalledTimes(1);
-    expect(mockRenameSync).toHaveBeenCalledTimes(1);
-    const written = mockWriteFileSync.mock.calls[0][1] as string;
+    expect(mockWritePrivateTextFile).toHaveBeenCalledTimes(1);
+    const [targetPath, written, options] = mockWritePrivateTextFile.mock.calls[0];
+    expect(targetPath).toBe('/tmp/test-sessions/sess-1/meta.json');
     expect(JSON.parse(written)).toEqual({ tags: ['vip'] });
-    // Verify rename target is meta.json
-    const renameTarget = mockRenameSync.mock.calls[0][1] as string;
-    expect(renameTarget).toBe('/tmp/test-sessions/sess-1/meta.json');
+    expect(options).toEqual({ label: 'Session metadata path', atomic: true });
   });
 });
 

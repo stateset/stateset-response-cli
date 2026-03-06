@@ -1,12 +1,9 @@
-import { webcrypto } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { defineConfig } from 'vitest/config';
 
-const globalRef = globalThis as typeof globalThis & {
-  crypto?: { getRandomValues?: unknown };
-};
-if (typeof globalRef.crypto?.getRandomValues !== 'function') {
-  globalRef.crypto = webcrypto as typeof globalRef.crypto;
-}
+const require = createRequire(import.meta.url);
+
+require('./scripts/runtime-compat.cjs');
 
 /**
  * Core unit-coverage profile:
@@ -18,7 +15,21 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     setupFiles: ['src/__tests__/setup-env.ts'],
-    include: ['src/**/*.test.ts'],
+    include: [
+      'src/__tests__/arg-utils.test.ts',
+      'src/__tests__/circuit-breaker.test.ts',
+      'src/__tests__/format.test.ts',
+      'src/__tests__/integration-limit.test.ts',
+      'src/__tests__/integration-loop.test.ts',
+      'src/__tests__/integration-shipfusion.test.ts',
+      'src/__tests__/integration-shiphawk.test.ts',
+      'src/__tests__/integration-shipstation.test.ts',
+      'src/__tests__/integration-shopify.test.ts',
+      'src/__tests__/integration-zendesk.test.ts',
+      'src/__tests__/memory.test.ts',
+      'src/__tests__/redact.test.ts',
+      'src/__tests__/registry.test.ts',
+    ],
     testTimeout: 10000,
     coverage: {
       all: true,
@@ -29,7 +40,6 @@ export default defineConfig({
         'src/memory.ts',
         'src/lib/circuit-breaker.ts',
         'src/cli/arg-utils.ts',
-        'src/cli/shortcuts/types.ts',
         'src/integrations/format.ts',
         'src/integrations/limit.ts',
         'src/integrations/loop.ts',

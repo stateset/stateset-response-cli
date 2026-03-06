@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { getStateSetDir } from '../session.js';
 import { readJsonFile } from '../utils/file-read.js';
 import { getErrorMessage } from '../lib/errors.js';
+import { writePrivateTextFile } from './utils.js';
 
 const STORE_VERSION = 1;
 const STORE_NAME = 'platform-operations.json';
@@ -75,6 +76,11 @@ interface RawOperationsStore {
   alerts?: unknown;
   deployments?: unknown;
 }
+
+type RawStoreLoadResult =
+  | { kind: 'missing' }
+  | { kind: 'loaded'; raw: RawOperationsStore }
+  | { kind: 'error'; message: string };
 
 function resolveStorePath(): string {
   return path.join(getStateSetDir(), STORE_NAME);
@@ -220,16 +226,20 @@ function normalizeDate(value: unknown): string | null {
   return new Date(parsed).toISOString();
 }
 
-function loadRawStore(pathName: string): RawOperationsStore | null {
-  if (!fs.existsSync(pathName)) return null;
+function loadRawStore(pathName: string): RawStoreLoadResult {
+  if (!fs.existsSync(pathName)) {
+    return { kind: 'missing' };
+  }
   try {
     const raw = readJsonFile(pathName, {
       label: 'platform operations store',
       expectObject: true,
     }) as RawOperationsStore;
-    return raw || null;
-  } catch {
-    return null;
+    return raw && typeof raw === 'object'
+      ? { kind: 'loaded', raw }
+      : { kind: 'error', message: 'platform operations store is not a JSON object.' };
+  } catch (error) {
+    return { kind: 'error', message: getErrorMessage(error) };
   }
 }
 
@@ -258,10 +268,15 @@ function readStore(pathName: string): PlatformOperationsStore {
     deployments: [],
   };
 
-  const raw = loadRawStore(pathName);
-  if (!raw || typeof raw !== 'object') {
+  const loadResult = loadRawStore(pathName);
+  if (loadResult.kind === 'missing') {
     return fallback;
   }
+  if (loadResult.kind === 'error') {
+    throw new Error(`Unable to read platform operations state: ${loadResult.message}`);
+  }
+
+  const raw = loadResult.raw;
 
   const webhooks = Array.isArray(raw.webhooks)
     ? (raw.webhooks.map(normalizeWebhook).filter(Boolean) as PlatformWebhook[])
@@ -288,11 +303,10 @@ function readStore(pathName: string): PlatformOperationsStore {
 
 function writeStore(pathName: string, store: PlatformOperationsStore): void {
   try {
-    const parent = path.dirname(pathName);
-    if (!fs.existsSync(parent)) {
-      fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
-    }
-    fs.writeFileSync(pathName, JSON.stringify(store, null, 2), 'utf-8');
+    writePrivateTextFile(pathName, JSON.stringify(store, null, 2), {
+      label: 'Platform operations store path',
+      atomic: true,
+    });
   } catch (error) {
     throw new Error(`Unable to persist platform operations state: ${getErrorMessage(error)}`);
   }

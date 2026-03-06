@@ -19,6 +19,19 @@ const mockFs = vi.mocked(fs);
 describe('history', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockFs.lstatSync.mockImplementation((target?: any) => {
+      const text = typeof target === 'string' ? target : '';
+      const isDir = text.endsWith('/.stateset') || text.endsWith('\\.stateset');
+      return {
+        isSymbolicLink: () => false,
+        isDirectory: () => isDir,
+        isFile: () => !isDir,
+      } as any;
+    });
+    mockFs.fstatSync.mockReturnValue({
+      isFile: () => true,
+    } as any);
+    mockFs.openSync.mockReturnValue(42 as any);
   });
 
   describe('getHistoryFilePath', () => {
@@ -64,16 +77,17 @@ describe('history', () => {
     it('appends trimmed line to file', () => {
       mockFs.existsSync.mockReturnValue(true);
       appendHistoryLine('  hello  ');
-      expect(mockFs.appendFileSync).toHaveBeenCalledWith(
-        expect.stringContaining('input-history'),
-        'hello\n',
-        'utf-8',
-      );
+      expect(mockFs.openSync).toHaveBeenCalled();
+      expect(mockFs.openSync.mock.calls[0]?.[0]).toEqual(expect.stringContaining('input-history'));
+      expect(mockFs.openSync.mock.calls[0]?.[2]).toBe(0o600);
+      expect(mockFs.writeSync).toHaveBeenCalledWith(42, 'hello\n', undefined, 'utf-8');
+      expect(mockFs.closeSync).toHaveBeenCalledWith(42);
     });
 
     it('skips empty lines', () => {
       appendHistoryLine('   ');
-      expect(mockFs.appendFileSync).not.toHaveBeenCalled();
+      expect(mockFs.openSync).not.toHaveBeenCalled();
+      expect(mockFs.writeSync).not.toHaveBeenCalled();
     });
 
     it('skips /exit and /quit', () => {
@@ -81,7 +95,8 @@ describe('history', () => {
       appendHistoryLine('/quit');
       appendHistoryLine('exit');
       appendHistoryLine('quit');
-      expect(mockFs.appendFileSync).not.toHaveBeenCalled();
+      expect(mockFs.openSync).not.toHaveBeenCalled();
+      expect(mockFs.writeSync).not.toHaveBeenCalled();
     });
 
     it('creates directory if needed', () => {
@@ -113,6 +128,9 @@ describe('history', () => {
       expect(mockFs.writeFileSync).toHaveBeenCalled();
       const written = mockFs.writeFileSync.mock.calls[0][1] as string;
       expect(written.split('\n').filter(Boolean).length).toBe(500);
+      expect(mockFs.writeFileSync.mock.calls[0][2]).toEqual(
+        expect.objectContaining({ encoding: 'utf-8', mode: 0o600 }),
+      );
     });
   });
 });

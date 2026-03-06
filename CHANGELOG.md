@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.7.7 - 2026-03-06
+
+### Security & Data Safety
+- Hardened append-based session and audit writes against symlinked parent paths.
+- Made `/session cleanup` fail closed so unreadable or oversized session context files are preserved instead of being treated as empty.
+- Prevented corrupt platform-operations state from being silently reset and overwritten on the next mutation.
+
+### Build & CI
+- Added a build-only TypeScript config so production builds exclude test files.
+- Centralized Node/Vitest compatibility shims into a single shared runtime bootstrap.
+- Split CI into dedicated quality, matrix test, coverage, and build stages to avoid rerunning coverage on every Node version.
+
+### Tests
+- Fixed the flaky MCP server validation test by removing the stale module-reset pattern and correcting its mocked GraphQL client path.
+- Added regression tests for audit I/O hardening, secure file writes, session cleanup fail-closed behavior, and operations-store corruption handling.
+
 ## 1.7.6 - 2026-03-05
 
 ### Security

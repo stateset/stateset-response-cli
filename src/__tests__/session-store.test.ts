@@ -4,7 +4,11 @@ const {
   mockExistsSync,
   mockReadFileSync,
   mockWriteFileSync,
-  mockAppendFileSync,
+  mockOpenSync,
+  mockFstatSync,
+  mockWriteSync,
+  mockCloseSync,
+  mockFchmodSync,
   mockMkdirSync,
   mockLstatSync,
   mockChmodSync,
@@ -14,7 +18,16 @@ const {
   mockExistsSync: vi.fn((_path?: any) => false as boolean),
   mockReadFileSync: vi.fn((_path?: any, _opts?: any) => '' as any),
   mockWriteFileSync: vi.fn((_path?: any, _data?: any) => undefined as any),
-  mockAppendFileSync: vi.fn((_path?: any, _data?: any) => undefined as any),
+  mockOpenSync: vi.fn((_path?: any, _flags?: any, _mode?: any) => 123 as any),
+  mockFstatSync: vi.fn(
+    (_fd?: any) =>
+      ({
+        isFile: () => true,
+      }) as any,
+  ),
+  mockWriteSync: vi.fn((_fd?: any, _line?: any, _position?: any, _encoding?: any) => 0 as any),
+  mockCloseSync: vi.fn((_fd?: any) => undefined as any),
+  mockFchmodSync: vi.fn((_fd?: any, _mode?: any) => undefined as any),
   mockMkdirSync: vi.fn((_path?: any, _opts?: any) => undefined as any),
   mockLstatSync: vi.fn(
     (_path?: any) =>
@@ -35,10 +48,20 @@ const { mockReadTextFile, mockReadJsonFile } = vi.hoisted(() => ({
 
 vi.mock('node:fs', () => ({
   default: {
+    constants: {
+      O_APPEND: 0x0008,
+      O_CREAT: 0x0040,
+      O_WRONLY: 0x0001,
+      O_NOFOLLOW: 0x20000,
+    },
     existsSync: mockExistsSync,
     readFileSync: mockReadFileSync,
     writeFileSync: mockWriteFileSync,
-    appendFileSync: mockAppendFileSync,
+    openSync: mockOpenSync,
+    fstatSync: mockFstatSync,
+    writeSync: mockWriteSync,
+    closeSync: mockCloseSync,
+    fchmodSync: mockFchmodSync,
     mkdirSync: mockMkdirSync,
     lstatSync: mockLstatSync,
     chmodSync: mockChmodSync,
@@ -65,6 +88,11 @@ describe('SessionStore', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockExistsSync.mockReturnValue(false);
+    mockOpenSync.mockReturnValue(123);
+    mockFstatSync.mockReturnValue({
+      isFile: () => true,
+    } as any);
+    mockWriteSync.mockReturnValue(0);
     mockReadTextFile.mockReturnValue('');
     mockReadJsonFile.mockReturnValue(null);
     warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -146,8 +174,10 @@ describe('SessionStore', () => {
       const store = new SessionStore('sess-1');
       store.appendMessage({ role: 'user', content: 'test message' });
 
-      expect(mockAppendFileSync).toHaveBeenCalledTimes(1);
-      const written = mockAppendFileSync.mock.calls[0][1] as string;
+      expect(mockOpenSync).toHaveBeenCalledTimes(1);
+      expect(mockWriteSync).toHaveBeenCalledTimes(1);
+      expect(mockCloseSync).toHaveBeenCalledTimes(1);
+      const written = mockWriteSync.mock.calls[0][1] as string;
       expect(written).toMatch(/\n$/);
       const parsed = JSON.parse(written.trim());
       expect(parsed.role).toBe('user');
@@ -157,7 +187,7 @@ describe('SessionStore', () => {
 
     it('logs warning once when append fails', () => {
       const store = new SessionStore('sess-1');
-      mockAppendFileSync.mockImplementation(() => {
+      mockOpenSync.mockImplementation(() => {
         throw new Error('disk full');
       });
 
@@ -175,21 +205,23 @@ describe('SessionStore', () => {
     it('appends multiple messages; does nothing for empty array', () => {
       const store = new SessionStore('sess-1');
       store.appendMessages([]);
-      expect(mockAppendFileSync).not.toHaveBeenCalled();
+      expect(mockOpenSync).not.toHaveBeenCalled();
+      expect(mockWriteSync).not.toHaveBeenCalled();
 
       store.appendMessages([
         { role: 'user', content: 'one' },
         { role: 'assistant', content: 'two' },
       ]);
-      expect(mockAppendFileSync).toHaveBeenCalledTimes(1);
-      const written = mockAppendFileSync.mock.calls[0][1] as string;
+      expect(mockOpenSync).toHaveBeenCalledTimes(1);
+      expect(mockWriteSync).toHaveBeenCalledTimes(1);
+      const written = mockWriteSync.mock.calls[0][1] as string;
       const lines = written.trim().split('\n');
       expect(lines).toHaveLength(2);
     });
 
     it('warns when batch append fails', () => {
       const store = new SessionStore('sess-1');
-      mockAppendFileSync.mockImplementation(() => {
+      mockOpenSync.mockImplementation(() => {
         throw new Error('permission denied');
       });
 
@@ -206,8 +238,9 @@ describe('SessionStore', () => {
       const store = new SessionStore('sess-1');
       store.appendLog({ ts: '2025-01-01T00:00:00Z', role: 'user', text: 'hello' });
 
-      expect(mockAppendFileSync).toHaveBeenCalledTimes(1);
-      const written = mockAppendFileSync.mock.calls[0][1] as string;
+      expect(mockOpenSync).toHaveBeenCalledTimes(1);
+      expect(mockWriteSync).toHaveBeenCalledTimes(1);
+      const written = mockWriteSync.mock.calls[0][1] as string;
       const parsed = JSON.parse(written.trim());
       expect(parsed.role).toBe('user');
       expect(parsed.text).toBe('hello');
@@ -215,7 +248,7 @@ describe('SessionStore', () => {
 
     it('warns when log append fails', () => {
       const store = new SessionStore('sess-1');
-      mockAppendFileSync.mockImplementation(() => {
+      mockOpenSync.mockImplementation(() => {
         throw new Error('read-only fs');
       });
 
@@ -228,7 +261,26 @@ describe('SessionStore', () => {
   describe('clear', () => {
     it('clears both files when they exist', () => {
       const store = new SessionStore('sess-1');
-      mockExistsSync.mockReturnValue(true);
+      mockExistsSync.mockImplementation((targetPath?: unknown) => {
+        const value = String(targetPath ?? '');
+        return value.endsWith('/context.jsonl') || value.endsWith('/log.jsonl');
+      });
+      mockLstatSync.mockImplementation((targetPath?: unknown) => {
+        const value = String(targetPath ?? '');
+        if (value.endsWith('/context.jsonl') || value.endsWith('/log.jsonl')) {
+          return {
+            isSymbolicLink: () => false,
+            isDirectory: () => false,
+            isFile: () => true,
+          } as any;
+        }
+        return {
+          isSymbolicLink: () => false,
+          isDirectory: () => true,
+          isFile: () => false,
+        } as any;
+      });
+
       store.clear();
       // Atomic clear: writes to temp file then renames for each file
       expect(mockWriteFileSync).toHaveBeenCalledTimes(2);
@@ -240,6 +292,37 @@ describe('SessionStore', () => {
       mockExistsSync.mockReturnValue(false);
       store.clear();
       expect(mockWriteFileSync).not.toHaveBeenCalled();
+    });
+
+    it('logs warning and continues when a clear write fails', () => {
+      const store = new SessionStore('sess-1');
+      mockExistsSync.mockImplementation((targetPath?: unknown) => {
+        const value = String(targetPath ?? '');
+        return value.endsWith('/context.jsonl') || value.endsWith('/log.jsonl');
+      });
+      mockLstatSync.mockImplementation((targetPath?: unknown) => {
+        const value = String(targetPath ?? '');
+        if (value.endsWith('/context.jsonl') || value.endsWith('/log.jsonl')) {
+          return {
+            isSymbolicLink: () => false,
+            isDirectory: () => false,
+            isFile: () => true,
+          } as any;
+        }
+        return {
+          isSymbolicLink: () => false,
+          isDirectory: () => true,
+          isFile: () => false,
+        } as any;
+      });
+      mockWriteFileSync.mockImplementation(() => {
+        throw new Error('disk full');
+      });
+
+      expect(() => store.clear()).not.toThrow();
+      expect(mockRenameSync).not.toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledTimes(2);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Clear session file failed'));
     });
   });
 });
