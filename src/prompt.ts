@@ -1,8 +1,8 @@
-import { BASE_SYSTEM_PROMPT } from './agent.js';
 import { getCurrentOrg } from './config.js';
 import { getIntegrationFlagsFromEnv, isIntegrationConfigured } from './integrations/config.js';
 import { INTEGRATION_DEFINITIONS } from './integrations/registry.js';
 import { getStateSetDir } from './session.js';
+import { BASE_SYSTEM_PROMPT } from './system-prompt.js';
 import { getSkill, loadContextFiles, loadSystemPromptFiles } from './resources.js';
 
 /**

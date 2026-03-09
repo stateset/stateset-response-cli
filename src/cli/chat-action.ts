@@ -12,7 +12,6 @@ import { StateSetAgent } from '../agent.js';
 import { SessionStore, sanitizeSessionId } from '../session.js';
 import { buildSystemPrompt } from '../prompt.js';
 import { loadMemory } from '../memory.js';
-import { buildUserContent } from '../attachments.js';
 import fs from 'node:fs';
 import {
   printWelcome,
@@ -20,10 +19,6 @@ import {
   formatError,
   formatSuccess,
   formatWarning,
-  formatElapsed,
-  formatToolCall,
-  formatToolResultInline,
-  formatUsage,
   formatRelativeTime,
 } from '../utils/display.js';
 import { ExtensionManager } from '../extensions.js';
@@ -31,126 +26,30 @@ import { logger } from '../lib/logger.js';
 import { metrics } from '../lib/metrics.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { extractInlineFlags, readBooleanEnv } from './utils.js';
-import type { ChatContext, ToolAuditEntry, CommandResult, PermissionStore } from './types.js';
-import { MarkdownStreamRenderer } from '../utils/markdown-stream.js';
-import { renderMarkdown } from '../utils/markdown.js';
+import type { ChatContext, CommandResult } from './types.js';
 import { smartCompleter } from './completer.js';
 import { loadInputHistory, appendHistoryLine, trimHistoryFile } from './history.js';
 import { checkForUpdate } from '../utils/update-check.js';
-
-const SIGINT_GRACE_MS = 2000;
 import { readSessionMeta, listSessionSummaries } from './session-meta.js';
-import {
-  sanitizeToolArgs,
-  appendToolAudit,
-  appendIntegrationTelemetry,
-  isIntegrationToolName,
-  isRateLimitedResult,
-} from './audit.js';
-import { readPermissionStore, writePermissionStore, makeHookPermissionKey } from './permissions.js';
+import { readPermissionStore } from './permissions.js';
 import {
   countConfiguredIntegrations,
   printIntegrationStatus,
   runIntegrationsSetup,
 } from './commands-integrations.js';
+import { buildToolHookContext, promptForPermissionChoice, runChatTurn } from './chat-turn.js';
 import { routeSlashCommand } from './command-router.js';
-import { getCommandNames, registerAllCommands } from './command-registry.js';
-import inquirer from 'inquirer';
+import { registerAllCommands } from './command-registry.js';
+import { getSlashCommandSuggestions, resolveSlashInputAction } from './slash-routing.js';
 
-export type SlashRouteAction = 'send' | 'prompt' | 'handled' | 'ignore';
+export {
+  getSlashCommandSuggestions,
+  resolveSlashInputAction,
+  resolveSlashRouteAction,
+} from './slash-routing.js';
+export type { SlashInputAction, SlashRouteAction } from './slash-routing.js';
 
-export function resolveSlashRouteAction(routeResult: CommandResult): SlashRouteAction {
-  if (routeResult.handled !== true) return 'ignore';
-
-  if (typeof routeResult.sendMessage === 'string' && routeResult.sendMessage.trim().length > 0) {
-    return 'send';
-  }
-
-  if (routeResult.needsPrompt === true) {
-    return 'prompt';
-  }
-
-  if (routeResult.needsPrompt !== undefined && routeResult.needsPrompt !== false) {
-    return 'prompt';
-  }
-
-  return 'handled';
-}
-
-export type SlashInputAction = 'send' | 'prompt' | 'handled' | 'exit' | 'unhandled';
-
-/** Lazily computed from the command registry. */
-let _knownSlashCommands: string[] | null = null;
-function getKnownSlashCommands(): string[] {
-  if (_knownSlashCommands === null) {
-    _knownSlashCommands = getCommandNames();
-  }
-  return _knownSlashCommands;
-}
-
-function levenshteinDistance(a: string, b: string): number {
-  if (a === b) return 0;
-  if (a.length === 0) return b.length;
-  if (b.length === 0) return a.length;
-
-  const matrix: number[][] = Array.from({ length: a.length + 1 }, () =>
-    Array.from({ length: b.length + 1 }, () => 0),
-  );
-  for (let i = 0; i <= a.length; i++) matrix[i][0] = i;
-  for (let j = 0; j <= b.length; j++) matrix[0][j] = j;
-
-  for (let i = 1; i <= a.length; i++) {
-    for (let j = 1; j <= b.length; j++) {
-      if (a[i - 1] === b[j - 1]) {
-        matrix[i][j] = matrix[i - 1][j - 1];
-      } else {
-        matrix[i][j] = 1 + Math.min(matrix[i - 1][j], matrix[i][j - 1], matrix[i - 1][j - 1]);
-      }
-    }
-  }
-  return matrix[a.length][b.length];
-}
-
-export function getSlashCommandSuggestions(
-  input: string,
-  extensionCommands: string[] = [],
-): string[] {
-  const command = input.split(/\s+/)[0] ?? '';
-  if (!command.startsWith('/')) return [];
-  if (command.length <= 1) return [];
-
-  const normalizedExtensions = extensionCommands.map((name) =>
-    name.startsWith('/') ? name : `/${name}`,
-  );
-  const knownCommands = Array.from(new Set([...getKnownSlashCommands(), ...normalizedExtensions]));
-
-  const exactPrefix = knownCommands.filter((value) => value.startsWith(command));
-  if (exactPrefix.length > 0) {
-    return exactPrefix.slice(0, 6);
-  }
-
-  return knownCommands
-    .map((candidate) => ({
-      candidate,
-      distance: levenshteinDistance(command, candidate),
-    }))
-    .filter((entry) => entry.distance <= 3)
-    .sort((a, b) => a.distance - b.distance || a.candidate.localeCompare(b.candidate))
-    .slice(0, 3)
-    .map((entry) => entry.candidate);
-}
-
-export function resolveSlashInputAction(
-  input: string,
-  routeResult: CommandResult,
-): SlashInputAction {
-  const routeAction = resolveSlashRouteAction(routeResult);
-  if (routeAction === 'send') return 'send';
-  if (routeAction === 'prompt') return 'prompt';
-  if (routeAction === 'handled') return 'handled';
-  if (input === '/exit' || input === '/quit') return 'exit';
-  return 'unhandled';
-}
+const SIGINT_GRACE_MS = 2000;
 
 export interface ChatOptions {
   model?: string;
@@ -173,8 +72,6 @@ export interface OneShotPromptOptions extends ChatOptions {
   message: string;
 }
 
-type PermissionChoice = 'allow_once' | 'allow_always' | 'deny_once' | 'deny_always';
-
 interface ChatRuntime {
   orgId: string;
   apiKey: string;
@@ -187,34 +84,6 @@ interface ChatRuntime {
   cwd: string;
   activeSkills: string[];
   extensions: ExtensionManager;
-}
-
-interface ChatTurnOptions {
-  agent: StateSetAgent;
-  extensions: ExtensionManager;
-  sessionId: string;
-  sessionStore: SessionStore;
-  cwd: string;
-  activeSkills: string[];
-  input: string;
-  pendingAttachments: string[];
-  showUsage: boolean;
-  auditEnabled: boolean;
-  auditIncludeExcerpt: boolean;
-  permissionStore: PermissionStore;
-  allowApply: boolean;
-  redactEmails: boolean;
-  requestPermissionChoice?: (details: {
-    hookName: string;
-    toolName: string;
-    reason?: string;
-  }) => Promise<PermissionChoice>;
-  showSpinner?: boolean;
-}
-
-interface ChatTurnResult {
-  pendingAttachments: string[];
-  success: boolean;
 }
 
 async function readStreamText(stream: NodeJS.ReadableStream): Promise<string> {
@@ -262,40 +131,6 @@ export async function resolveOneShotInput(options: OneShotInputOptions): Promise
   }
 
   return stdinText;
-}
-
-async function promptForPermissionChoice(
-  details: {
-    hookName: string;
-    toolName: string;
-    reason?: string;
-  },
-  controls?: {
-    pause?: () => void;
-    resume?: () => void;
-  },
-): Promise<PermissionChoice> {
-  controls?.pause?.();
-  try {
-    const answer = await inquirer.prompt<{ choice: PermissionChoice }>([
-      {
-        type: 'list',
-        name: 'choice',
-        message: details.reason
-          ? `Extension hook "${details.hookName}" denied tool "${details.toolName}": ${details.reason}`
-          : `Extension hook "${details.hookName}" denied tool "${details.toolName}".`,
-        choices: [
-          { name: 'Allow once', value: 'allow_once' },
-          { name: 'Always allow', value: 'allow_always' },
-          { name: 'Deny once', value: 'deny_once' },
-          { name: 'Always deny', value: 'deny_always' },
-        ],
-      },
-    ]);
-    return answer.choice;
-  } finally {
-    controls?.resume?.();
-  }
 }
 
 async function initializeChatRuntime(
@@ -408,266 +243,6 @@ function printExtensionStartupWarnings(extensions: ExtensionManager): void {
     chalk.gray('  Tip: keep project extensions enabled only when running trusted repositories.'),
   );
   console.log('');
-}
-
-function buildToolHookContext(options: {
-  cwd: string;
-  sessionId: string;
-  sessionStore: SessionStore;
-  allowApply: boolean;
-  redactEmails: boolean;
-  extensions: ExtensionManager;
-}) {
-  const meta = readSessionMeta(options.sessionStore.getSessionDir());
-  const tags = Array.isArray(meta.tags)
-    ? meta.tags.filter((tag): tag is string => typeof tag === 'string')
-    : [];
-  return {
-    cwd: options.cwd,
-    sessionId: options.sessionId,
-    sessionTags: tags,
-    allowApply: options.allowApply,
-    redact: options.redactEmails,
-    policy: options.extensions.getPolicyOverrides ? options.extensions.getPolicyOverrides() : {},
-    log: (message: string) => console.log(message),
-    success: (message: string) => console.log(formatSuccess(message)),
-    warn: (message: string) => console.log(formatWarning(message)),
-    error: (message: string) => console.error(formatError(message)),
-  };
-}
-
-async function runChatTurn(options: ChatTurnOptions): Promise<ChatTurnResult> {
-  let pendingAttachments = [...options.pendingAttachments];
-  metrics.increment('chat.userMessages');
-  const startTime = Date.now();
-  const thinkSpinner =
-    options.showSpinner === false
-      ? null
-      : ora({ text: chalk.gray('Thinking...'), spinner: 'dots' }).start();
-
-  let firstText = true;
-  let usageLine = '';
-  let toolCallCount = 0;
-  const mdStream = new MarkdownStreamRenderer();
-
-  const stopSpinner = () => {
-    if (firstText && thinkSpinner) {
-      thinkSpinner.stop();
-    }
-    firstText = false;
-  };
-
-  try {
-    const memory = loadMemory(options.sessionId);
-    options.agent.setSystemPrompt(
-      buildSystemPrompt({
-        sessionId: options.sessionId,
-        memory,
-        cwd: options.cwd,
-        activeSkills: options.activeSkills,
-      }),
-    );
-
-    let userContent: string | Parameters<typeof options.agent.chat>[0] = options.input;
-    if (pendingAttachments.length > 0) {
-      const { content, warnings } = buildUserContent(options.input, pendingAttachments, {
-        cwd: options.cwd,
-      });
-      pendingAttachments = [];
-      userContent = content;
-      if (warnings.length > 0) {
-        for (const warning of warnings) {
-          console.log(formatWarning(warning));
-        }
-      }
-    }
-
-    const response = await options.agent.chat(userContent, {
-      onText: (delta) => {
-        stopSpinner();
-        const rendered = mdStream.push(delta);
-        if (rendered) {
-          process.stdout.write(rendered);
-        }
-      },
-      onToolCall: (name, args) => {
-        stopSpinner();
-        toolCallCount += 1;
-        const prefix = toolCallCount > 1 ? chalk.gray(`[step ${toolCallCount}] `) : '';
-        console.log(prefix + formatToolCall(name, args));
-      },
-      onToolCallStart: async (name, args) => {
-        try {
-          const hookContext = buildToolHookContext({
-            cwd: options.cwd,
-            sessionId: options.sessionId,
-            sessionStore: options.sessionStore,
-            allowApply: options.allowApply,
-            redactEmails: options.redactEmails,
-            extensions: options.extensions,
-          });
-
-          let decision = await options.extensions.runToolHooks({ name, args }, hookContext);
-
-          if (decision?.action === 'deny' && decision.hookName) {
-            const hookKey = makeHookPermissionKey(decision.hookName, name);
-            const stored = options.permissionStore.toolHooks[hookKey];
-
-            if (stored === 'allow') {
-              decision = { action: 'allow', args };
-            } else if (stored === 'deny') {
-              decision = {
-                action: 'deny',
-                reason: decision.reason,
-                hookName: decision.hookName,
-              };
-            } else if (options.requestPermissionChoice) {
-              const choice = await options.requestPermissionChoice({
-                hookName: decision.hookName,
-                toolName: name,
-                reason: decision.reason,
-              });
-
-              if (choice === 'allow_once') {
-                decision = { action: 'allow', args };
-              } else if (choice === 'allow_always') {
-                options.permissionStore.toolHooks[hookKey] = 'allow';
-                writePermissionStore(options.permissionStore);
-                decision = { action: 'allow', args };
-              } else if (choice === 'deny_always') {
-                options.permissionStore.toolHooks[hookKey] = 'deny';
-                writePermissionStore(options.permissionStore);
-                decision = {
-                  action: 'deny',
-                  reason: decision.reason,
-                  hookName: decision.hookName,
-                };
-              } else {
-                decision = {
-                  action: 'deny',
-                  reason: decision.reason,
-                  hookName: decision.hookName,
-                };
-              }
-            }
-          }
-
-          const callEntry: ToolAuditEntry = {
-            ts: new Date().toISOString(),
-            type: 'tool_call',
-            session: options.sessionId,
-            name,
-            args: sanitizeToolArgs(
-              decision?.action === 'allow' && decision.args ? decision.args : args,
-            ),
-            decision: decision?.action || 'allow',
-            reason: decision && 'reason' in decision ? decision.reason : undefined,
-          };
-
-          if (options.auditEnabled) {
-            appendToolAudit(options.sessionId, callEntry);
-          }
-          if (isIntegrationToolName(name)) {
-            appendIntegrationTelemetry(callEntry);
-          }
-
-          return decision;
-        } catch (err) {
-          console.error(formatError(getErrorMessage(err)));
-          return undefined;
-        }
-      },
-      onToolCallEnd: (result) => {
-        console.log(formatToolResultInline(result.name, result.durationMs, result.isError));
-        options.extensions
-          .runToolResultHooks(
-            result,
-            buildToolHookContext({
-              cwd: options.cwd,
-              sessionId: options.sessionId,
-              sessionStore: options.sessionStore,
-              allowApply: options.allowApply,
-              redactEmails: options.redactEmails,
-              extensions: options.extensions,
-            }),
-          )
-          .catch((err) => {
-            console.error(formatError(getErrorMessage(err)));
-          });
-
-        if (options.auditEnabled) {
-          const entry: ToolAuditEntry = {
-            ts: new Date().toISOString(),
-            type: 'tool_result',
-            session: options.sessionId,
-            name: result.name,
-            durationMs: result.durationMs,
-            isError: result.isError,
-            resultLength: result.resultText.length,
-          };
-          if (options.auditIncludeExcerpt) {
-            entry.resultExcerpt = result.resultText.slice(0, 500);
-          }
-          appendToolAudit(options.sessionId, entry);
-        }
-
-        if (isIntegrationToolName(result.name)) {
-          const entry: ToolAuditEntry = {
-            ts: new Date().toISOString(),
-            type: 'tool_result',
-            session: options.sessionId,
-            name: result.name,
-            durationMs: result.durationMs,
-            isError: result.isError,
-            resultLength: result.resultText.length,
-            reason:
-              result.isError && isRateLimitedResult(result.resultText) ? 'rate_limited' : undefined,
-          };
-          appendIntegrationTelemetry(entry);
-        }
-      },
-      onUsage: (usage) => {
-        if (options.showUsage) {
-          usageLine = formatUsage(usage);
-        }
-      },
-    });
-
-    const flushed = mdStream.flush();
-    if (flushed) {
-      process.stdout.write(flushed);
-    }
-
-    if (firstText && response) {
-      console.log(renderMarkdown(response));
-    }
-
-    const elapsed = Date.now() - startTime;
-    console.log(formatElapsed(elapsed));
-    if (usageLine) {
-      console.log(usageLine);
-    }
-
-    const trimInfo = options.agent.getLastTrimInfo();
-    if (trimInfo?.trimmed) {
-      console.log(
-        chalk.yellow(
-          `  Context trimmed: oldest messages dropped (${trimInfo.messagesBefore} → ${trimInfo.messagesAfter}). Use /context for details.`,
-        ),
-      );
-    }
-
-    return { pendingAttachments, success: true };
-  } catch (e: unknown) {
-    if (thinkSpinner) {
-      thinkSpinner.stop();
-    }
-    const msg = getErrorMessage(e);
-    if (msg !== 'Request cancelled') {
-      console.log('\n' + formatError(msg));
-    }
-    return { pendingAttachments, success: false };
-  }
 }
 
 export function getWelcomeIntegrationCount(cwd: string = process.cwd()): number {

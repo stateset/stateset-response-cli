@@ -201,7 +201,6 @@ export function smartCompleter(
   if (!line.startsWith('/')) return [[], line];
 
   const parts = line.split(/\s+/);
-  const command = parts[0];
 
   // Still typing the command name
   if (parts.length === 1) {

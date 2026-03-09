@@ -3,7 +3,7 @@
 AI-powered CLI for managing the [StateSet ResponseCX](https://response.cx) platform. Chat with an AI agent that can manage your agents, rules, skills, knowledge base, channels, messages, and more — all from the terminal.
 
 Includes optional WhatsApp and Slack gateways for connecting your agent to messaging platforms.
-Current version: `1.9.0`.
+Current version: `1.9.1`.
 
 ## Features
 
@@ -131,70 +131,114 @@ Use `response ask` when you want a single answer with the normal session, attach
 
 **Session commands (key):**
 
-Use `/help` for the full list. Highlights below.
+<!-- BEGIN GENERATED COMMAND REFERENCE -->
+Use `/help` for the full list. This reference is generated from [`src/cli/command-registry.ts`](src/cli/command-registry.ts) via `npm run readme:sync`.
 
 **Core**
 
-- `/help` Show available commands
-- `/clear` Reset conversation history
-- `/history` Show conversation turn count
-- `/model <name>` Switch model (sonnet, haiku, opus) or full model ID
-- `/attach <path>` Attach file/image to next message
+- `/help [command|category]` Show help (optionally for a specific command or category) Aliases: `/commands`, `/h`.
+- `/clear` Reset conversation history Aliases: `/c`.
+- `/history` Show conversation turn count Aliases: `/hist`.
+- `/model <name>` Switch model (sonnet, haiku, opus) Aliases: `/m`.
+- `/usage on|off` Enable or disable usage summaries
+- `/metrics [json] [reset]` Show session metrics, token usage, and tool breakdown
+- `/attach <path>` Attach a file or image to the next message
 - `/attachments` List staged attachments
 - `/attach-clear` Clear staged attachments
-- `exit` End the session
+- `/context` Show context window usage
+- `/retry` Retry the last user message
 
-**Safety**
+**Safety & Policy**
 
 - `/apply on|off` Enable or disable write operations
+- `/agentic on|off` Enable or disable structured MCP metadata
 - `/redact on|off` Enable or disable PII redaction
-- `/usage on|off` Toggle usage summaries
-- `/audit on|off [detail]` Toggle tool audit logging (+ result excerpts)
+- `/audit on|off [detail]` Toggle tool audit logging (optional excerpts)
 - `/audit-show [session] [tool=name] [errors] [limit=20]` Show recent audit entries
-- `/audit-clear [session]` Clear a session audit log
-- `/permissions [list|clear]` Show or clear stored tool-hook decisions
+- `/audit-clear [session]` Clear audit log for a session
+- `/permissions [list|clear]` List or clear stored permissions
+- `/policy list|set|unset|clear|edit|init|import` Manage policy overrides
+- `/policy export [local|global] [out=path] [--unsafe-path]` Export policy overrides
+- `/policy import <path> [merge|replace]` Import policy overrides from JSON
+
+**Integrations**
+
+- `/integrations` Show integration status
+- `/integrations status` Alias for /integrations
+- `/integrations setup [integration]` Run integration setup wizard
+- `/integrations health [integration] [--detailed]` Show integration readiness and config health
+- `/integrations limits [integration]` Show integration call/error and rate-limit telemetry
+- `/integrations logs [integration] [--last 20]` Show recent integration audit events
 
 **Sessions**
 
+- `/session stats` Show session storage statistics
+- `/session cleanup [days=30] [--dry-run]` Remove empty sessions older than N days
 - `/session` Show current session info
-- `/sessions [all]` List sessions (add `all` to include archived)
+- `/sessions [all] [tag=tag]` List sessions (optionally include archived or filter by tag) Aliases: `/s`.
 - `/new [name]` Start a new session
 - `/resume <name>` Resume a saved session
 - `/archive [name]` Archive a session
 - `/unarchive [name]` Unarchive a session
-- `/tag list|add|remove <tag> [session]` Manage session tags
-- `/search <text> [all] [role=...] [since=YYYY-MM-DD] [until=YYYY-MM-DD] [regex=/.../] [limit=100]` Search transcripts
-- `/rename <new-id>` Rename the current session
+- `/rename <name>` Rename the current session
 - `/delete [name]` Delete a session
+- `/tag list|add|remove <tag> [session]` Manage session tags
+- `/search <text> [all] [role=user|assistant] [since=YYYY-MM-DD] [until=YYYY-MM-DD] [regex=/.../] [limit=100]` Search session transcripts (scans up to 5000 entries)
+- `/session-meta [session] [json|md] [out=path] [--unsafe-path]` Show or export session metadata
+
+**Shortcut Commands**
+
+- `/rules [get|list|create|toggle|delete|import|export|agent|<id>]` Manage agent rules Aliases: `/r`.
+- `/kb [search|add|delete|scroll|list|info]` Manage KB entries
+- `/agents [list|get|create|switch|export|import|bootstrap|<id>]` Manage agents Aliases: `/a`.
+- `/channels [list|create|messages|<id>]` Manage conversation channels
+- `/convos [get|recent|search|count|export|replay|tag|<id>]` Inspect conversations
+- `/conversations [get|recent|search|count|export|replay|tag|<id>]` Alias for /convos
+- `/messages [list|get|search|count|create|annotate|delete|<id>]` Manage messages
+- `/responses [list|search|count|get|rate|<id>]` Inspect and rate responses
+- `/status` Show platform status summary Aliases: `/st`.
+- `/stats` Show analytics summary (supports positional window: 7d/30d/90d)
+- `/analytics` Show analytics summaries (supports positional window: 7d/30d/90d)
+- `/snapshot [list|create|show]` Manage local snapshots
+- `/bulk [export|import]` Bulk import/export workflows
+- `/pull [dir]` Pull remote config into a directory
+- `/push [source]` Push a local config file or directory
+- `/validate [source]` Validate local state-set payload
+- `/watch [dir]` Watch .stateset for changes and sync
+- `/webhooks [list|create|test|logs|delete]` Manage webhook subscriptions
+- `/alerts [list|get|create|delete]` Manage alert rules
+- `/monitor [status|live]` Watch live platform metrics
+- `/test [message...] [--agent <agent-id>]` Run a non-persistent test message
+- `/diff` Show config diff
+- `/deploy` Push snapshot-backed changes (--schedule/--approve)
+- `/rollback` Rollback config changes (--schedule/--approve)
+- `/deployments` Inspect deployment history and scheduled jobs
 
 **Exports**
 
-- `/export [session] [md|json|jsonl] [path]` Export a session transcript
+- `/export [session] [md|json|jsonl] [path] [--unsafe-path]` Export session to markdown/json/jsonl
 - `/export-list [session]` List export files for a session
-- `/export-show <file> [session] [head=40]` Preview an export
-- `/export-open <file> [session]` Show an export file path
-- `/export-delete <file> [session]` Delete an export
+- `/export-show <file> [session] [head=40]` Preview an export file
+- `/export-open <file> [session]` Show export file path
+- `/export-delete <file> [session]` Delete an export file
 - `/export-prune [session] keep=5` Delete older exports
-- `/session-meta [session] [json|md] [out=path]` Session metadata summary
 
-**Prompts**
+**Prompts & Skills**
 
 - `/prompts` List prompt templates
 - `/prompt <name>` Fill and send a prompt template
 - `/prompt-history` Show recent prompt templates
-- `/prompt-validate <name|all>` Validate prompt templates
-
-**Skills**
-
+- `/prompt-validate [name|all]` Validate prompt templates
 - `/skills` List available skills
-- `/skill <name>` Activate a skill
+- `/skill <name>` Activate a skill for this session
 - `/skill-clear` Clear active skills
 
 **Extensions**
 
 - `/extensions` List loaded extensions
 - `/reload` Reload extensions
-- `/policy list|set|unset|clear|edit|init|import|export` Manage policy overrides
+- `/exit /quit` End the session Aliases: `/quit`.
+<!-- END GENERATED COMMAND REFERENCE -->
 
 Multi-line input is supported — end a line with `\` to continue on the next line. Press `Ctrl+C` to cancel the current request.
 

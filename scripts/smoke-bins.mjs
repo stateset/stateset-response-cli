@@ -70,6 +70,24 @@ const cases = [
     expect: [],
   },
   {
+    name: 'response chat --help',
+    bin: bins.response,
+    args: ['chat', '--help'],
+    expect: [],
+  },
+  {
+    name: 'response init --help',
+    bin: bins.response,
+    args: ['init', '--help'],
+    expect: [],
+  },
+  {
+    name: 'response config path',
+    bin: bins.response,
+    args: ['config', 'path'],
+    expect: [],
+  },
+  {
     name: 'response-gateway --help',
     bin: bins['response-gateway'],
     args: ['--help'],

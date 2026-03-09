@@ -1,10 +1,11 @@
 import path from 'node:path';
 import type Anthropic from '@anthropic-ai/sdk';
-import { BASE_SYSTEM_PROMPT, StateSetAgent, type AssistantTurnInfo } from '../../agent.js';
+import { StateSetAgent, type AssistantTurnInfo } from '../../agent.js';
 import { getRuntimeContext } from '../../config.js';
 import { getErrorMessage } from '../../lib/errors.js';
 import { readJsonFile, readTextFile } from '../../utils/file-read.js';
 import type { SessionStore } from '../../session.js';
+import { BASE_SYSTEM_PROMPT } from '../../system-prompt.js';
 
 const WRITE_TOOL_PREFIXES = [
   'create_',

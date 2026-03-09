@@ -19,6 +19,7 @@ jobs:
           node-version: 22
           cache: npm
           registry-url: https://registry.npmjs.org
+      - run: npm run release:check-version -- "${{ github.event.release.tag_name }}"
       - run: npm ci
       - run: npm run check
       - run: npm run build

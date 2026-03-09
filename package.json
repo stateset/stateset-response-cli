@@ -1,6 +1,6 @@
 {
   "name": "stateset-response-cli",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "description": "CLI tool for managing the StateSet Response platform via AI agent",
   "license": "MIT",
   "type": "module",
@@ -37,12 +37,14 @@
     "test:coverage": "node --require ./scripts/node-compat.cjs ./node_modules/vitest/vitest.mjs run --coverage",
     "test:coverage:core": "node --require ./scripts/node-compat.cjs ./node_modules/vitest/vitest.mjs run --coverage --config vitest.coverage-core.config.ts",
     "test:ci": "node --require ./scripts/node-compat.cjs ./node_modules/vitest/vitest.mjs run --coverage --reporter=junit --outputFile=test-results.xml",
-    "lint": "node --require ./scripts/node-compat.cjs ./node_modules/eslint/bin/eslint.js src scripts eslint.config.js vitest.config.ts vitest.coverage-core.config.ts",
-    "lint:fix": "node --require ./scripts/node-compat.cjs ./node_modules/eslint/bin/eslint.js src scripts eslint.config.js vitest.config.ts vitest.coverage-core.config.ts --fix",
+    "lint": "node --require ./scripts/node-compat.cjs ./node_modules/eslint/bin/eslint.js src scripts eslint.config.js vitest.config.ts vitest.coverage-core.config.ts --max-warnings=0",
+    "lint:fix": "node --require ./scripts/node-compat.cjs ./node_modules/eslint/bin/eslint.js src scripts eslint.config.js vitest.config.ts vitest.coverage-core.config.ts --fix --max-warnings=0",
     "format": "prettier --write \"src/**/*.ts\" \"scripts/**/*.{mjs,cjs}\" \"eslint.config.js\" \"vitest*.ts\" \"package.json\" \"tsconfig*.json\" \".github/workflows/*.yml\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"scripts/**/*.{mjs,cjs}\" \"eslint.config.js\" \"vitest*.ts\" \"package.json\" \"tsconfig*.json\" \".github/workflows/*.yml\"",
     "typecheck": "tsc --noEmit",
-    "readme:check": "node scripts/check-readme-sync.mjs",
+    "readme:sync": "node --no-warnings --loader tsx scripts/check-readme-sync.mjs --write",
+    "readme:check": "node --no-warnings --loader tsx scripts/check-readme-sync.mjs --check",
+    "release:check-version": "node scripts/check-release-version.mjs",
     "check:quick": "npm run readme:check && npm run typecheck && npm run lint && npm run format:check && npm test",
     "check": "npm run readme:check && npm run typecheck && npm run lint && npm run format:check && npm run test:coverage && npm run test:coverage:core",
     "lint-staged": "node --require ./scripts/node-compat.cjs ./node_modules/lint-staged/bin/lint-staged.js",
@@ -50,7 +52,7 @@
   },
   "lint-staged": {
     "*.ts": [
-      "node --require ./scripts/node-compat.cjs ./node_modules/eslint/bin/eslint.js --fix",
+      "node --require ./scripts/node-compat.cjs ./node_modules/eslint/bin/eslint.js --fix --max-warnings=0",
       "prettier --write"
     ]
   },
