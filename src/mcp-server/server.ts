@@ -70,6 +70,7 @@ interface IntegrationEntry {
   /** One or more register functions to call with (server, config, flags).
    *  Each register function has its own typed config parameter (ShopifyConfig, etc.).
    *  Runtime type safety is ensured by the getConfig/register pairing. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- runtime getConfig/register pairing ensures type safety
   register: Array<(server: McpServer, config: any, flags: IntegrationFlags) => void>;
 }
 

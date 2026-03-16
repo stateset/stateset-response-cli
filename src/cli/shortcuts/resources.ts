@@ -1,6 +1,12 @@
 import chalk from 'chalk';
 import type { ShortcutLogger, ShortcutRunner, TopLevelOptions } from './types.js';
-import { DEFAULT_LIST_LIMIT, DEFAULT_LIST_OFFSET } from './types.js';
+import {
+  DEFAULT_LIST_LIMIT,
+  DEFAULT_LIST_OFFSET,
+  FETCH_ALL_LIMIT,
+  MAX_LIST_OFFSET,
+  MAX_EXPORT_LIMIT,
+} from './types.js';
 import { getErrorMessage } from '../../lib/errors.js';
 import {
   toLines,
@@ -31,8 +37,8 @@ export async function runChannelsCommand(
   const action = positionals[0]?.toLowerCase() || null;
 
   if (!action || action === 'list') {
-    const limit = toPositiveInteger(options.limit, DEFAULT_LIST_LIMIT, 1000);
-    const offset = toPositiveInteger(options.offset, DEFAULT_LIST_OFFSET, 100000);
+    const limit = toPositiveInteger(options.limit, DEFAULT_LIST_LIMIT, FETCH_ALL_LIMIT);
+    const offset = toPositiveInteger(options.offset, DEFAULT_LIST_OFFSET, MAX_LIST_OFFSET);
     const result = await runner.callTool('list_channels', {
       limit,
       offset,
@@ -93,7 +99,7 @@ export async function runConvosCommand(
 
   if (action === 'recent' || action === 'list') {
     const limit = toPositiveInteger(options.limit, DEFAULT_LIST_LIMIT, 200);
-    const offset = toPositiveInteger(options.offset, DEFAULT_LIST_OFFSET, 100000);
+    const offset = toPositiveInteger(options.offset, DEFAULT_LIST_OFFSET, MAX_LIST_OFFSET);
     const result = await runner.callTool('list_channels', { limit, offset });
     printPayload(logger, 'Recent conversations', result.payload, json);
     return;
@@ -148,7 +154,7 @@ export async function runConvosCommand(
       return;
     }
     const outputFile = positionals[2];
-    const limit = toPositiveInteger(options.limit, 1000, 2000);
+    const limit = toPositiveInteger(options.limit, FETCH_ALL_LIMIT, MAX_EXPORT_LIMIT);
     const result = await runner.callTool('get_channel_with_messages', {
       uuid: conversationId,
       message_limit: limit,
@@ -178,7 +184,7 @@ export async function runConvosCommand(
       logger.warning('Usage: /convos replay <conversation-id> [--limit N]');
       return;
     }
-    const limit = toPositiveInteger(options.limit, 500, 2000);
+    const limit = toPositiveInteger(options.limit, 500, MAX_EXPORT_LIMIT);
     const result = await runner.callTool('get_channel_with_messages', {
       uuid: conversationId,
       message_limit: limit,

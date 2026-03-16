@@ -1,5 +1,6 @@
 import path from 'node:path';
 import type { ShortcutLogger, ShortcutRunner, TopLevelOptions } from './types.js';
+import { FETCH_ALL_LIMIT } from './types.js';
 import { readJsonFile } from '../../utils/file-read.js';
 import { getErrorMessage } from '../../lib/errors.js';
 import {
@@ -124,7 +125,7 @@ export async function runAgentsCommand(
     if (Object.keys(updatePayload).length > 0) {
       if (all) {
         const agentsResult = await runner.callTool<unknown[]>('list_agents', {
-          limit: 1000,
+          limit: FETCH_ALL_LIMIT,
           offset: 0,
         });
         const agentRows = Array.isArray(agentsResult.payload) ? agentsResult.payload : [];

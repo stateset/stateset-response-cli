@@ -1,5 +1,11 @@
 import type { ShortcutLogger, ShortcutRunner, TopLevelOptions, AnalyticsRows } from './types.js';
-import { DEFAULT_LIST_OFFSET } from './types.js';
+import {
+  DEFAULT_LIST_OFFSET,
+  FETCH_ALL_LIMIT,
+  ANALYTICS_RULES_LIMIT,
+  ANALYTICS_CHANNELS_LIMIT,
+  MAX_LIST_OFFSET,
+} from './types.js';
 import {
   toLines,
   parseCommandArgs,
@@ -72,8 +78,8 @@ export async function runStatusCommand(
     messageCountResult,
     kbInfoResult,
   ] = await Promise.all([
-    runner.callTool('list_agents', { limit: 1000 }),
-    runner.callTool('list_rules', { limit: 1000 }),
+    runner.callTool('list_agents', { limit: FETCH_ALL_LIMIT }),
+    runner.callTool('list_rules', { limit: FETCH_ALL_LIMIT }),
     runner.callTool('get_channel_count', {}),
     runner.callTool('get_response_count', {}),
     runner.callTool('get_message_count', {}),
@@ -163,8 +169,8 @@ export async function runAnalyticsCommand(
 
   if (action === 'summary' || action === 'stats') {
     const [agentsResult, rulesResult, messageCountResult] = await Promise.all([
-      runner.callTool('list_agents', { limit: 1000 }),
-      runner.callTool('list_rules', { limit: 1000 }),
+      runner.callTool('list_agents', { limit: FETCH_ALL_LIMIT }),
+      runner.callTool('list_rules', { limit: FETCH_ALL_LIMIT }),
       runner.callTool('get_message_count', {}),
     ]);
     const agentCount = Array.isArray(agentsResult.payload) ? agentsResult.payload.length : 0;
@@ -234,12 +240,12 @@ export async function runAnalyticsCommand(
         const [rulesResult, channelsResult] = await Promise.all([
           runner.callTool<unknown[]>('get_agent_rules', {
             agent_id: agentId,
-            limit: 10000,
+            limit: ANALYTICS_RULES_LIMIT,
             offset: 0,
           }),
           runner.callTool<unknown[]>('list_channels', {
             agent_id: agentId,
-            limit: 5000,
+            limit: ANALYTICS_CHANNELS_LIMIT,
             offset: 0,
           }),
         ]);
@@ -268,7 +274,7 @@ export async function runAnalyticsCommand(
 
   if (action === 'conversations' || action === 'conversation' || action === 'channels') {
     const limit = toPositiveInteger(options.limit, 20, 500);
-    const offset = toNonNegativeInteger(options.offset, DEFAULT_LIST_OFFSET, 100000);
+    const offset = toNonNegativeInteger(options.offset, DEFAULT_LIST_OFFSET, MAX_LIST_OFFSET);
     const result = await runner.callTool<unknown[]>('list_channels', { limit, offset });
     const items = Array.isArray(result.payload) ? result.payload : [];
     const filteredItems =
@@ -292,7 +298,7 @@ export async function runAnalyticsCommand(
 
   if (action === 'responses') {
     const limit = toPositiveInteger(options.limit, 20, 500);
-    const offset = toNonNegativeInteger(options.offset, DEFAULT_LIST_OFFSET, 100000);
+    const offset = toNonNegativeInteger(options.offset, DEFAULT_LIST_OFFSET, MAX_LIST_OFFSET);
     const result = await runner.callTool<unknown[]>('list_responses', { limit, offset });
     const items = Array.isArray(result.payload) ? result.payload : [];
     const filteredItems =

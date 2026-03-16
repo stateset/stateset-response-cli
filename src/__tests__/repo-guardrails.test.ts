@@ -80,8 +80,8 @@ describe('check-readme-sync.mjs', () => {
   it('passes against the repository README', () => {
     const result = runNodeScript([
       '--no-warnings',
-      '--loader',
-      'tsx',
+      '--import',
+      'tsx/esm',
       'scripts/check-readme-sync.mjs',
       '--check',
     ]);
@@ -119,7 +119,7 @@ describe('check-readme-sync.mjs', () => {
     );
 
     const writeResult = runNodeScript(
-      ['--no-warnings', '--loader', 'tsx', 'scripts/check-readme-sync.mjs', '--write'],
+      ['--no-warnings', '--import', 'tsx/esm', 'scripts/check-readme-sync.mjs', '--write'],
       {
         env: {
           STATESET_PACKAGE_PATH: tempPackagePath,
@@ -135,7 +135,7 @@ describe('check-readme-sync.mjs', () => {
     expect(updatedReadme).toContain('/policy export [local|global] [out=path] [--unsafe-path]');
 
     const checkResult = runNodeScript(
-      ['--no-warnings', '--loader', 'tsx', 'scripts/check-readme-sync.mjs', '--check'],
+      ['--no-warnings', '--import', 'tsx/esm', 'scripts/check-readme-sync.mjs', '--check'],
       {
         env: {
           STATESET_PACKAGE_PATH: tempPackagePath,

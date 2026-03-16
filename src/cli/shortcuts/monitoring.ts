@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import { getErrorMessage } from '../../lib/errors.js';
 import type { ShortcutLogger, ShortcutRunner, TopLevelOptions, MonitorSnapshot } from './types.js';
+import { FETCH_ALL_LIMIT } from './types.js';
 import {
   toLines,
   parseCommandArgs,
@@ -341,21 +342,25 @@ async function collectMonitorSnapshot(
     inProgressChannelsResult,
     recentChannelsResult,
   ] = await Promise.all([
-    runner.callTool('list_agents', { limit: 1000 }),
-    runner.callTool('list_rules', { limit: 1000 }),
+    runner.callTool('list_agents', { limit: FETCH_ALL_LIMIT }),
+    runner.callTool('list_rules', { limit: FETCH_ALL_LIMIT }),
     runner.callTool('get_response_count', {}),
     runner.callTool('get_message_count', {}),
     runner.callTool('kb_get_collection_info', {}),
     isAgentScope
       ? runner.callTool('list_channels', { ...scopedFilter, limit: listLimit })
       : runner.callTool('get_channel_count', {}),
-    runner.callTool('list_channels', { ...scopedFilter, status: 'open', limit: 1000 }),
+    runner.callTool('list_channels', { ...scopedFilter, status: 'open', limit: FETCH_ALL_LIMIT }),
     runner.callTool('list_channels', {
       ...scopedFilter,
       status: 'needs_attention',
-      limit: 1000,
+      limit: FETCH_ALL_LIMIT,
     }),
-    runner.callTool('list_channels', { ...scopedFilter, status: 'in_progress', limit: 1000 }),
+    runner.callTool('list_channels', {
+      ...scopedFilter,
+      status: 'in_progress',
+      limit: FETCH_ALL_LIMIT,
+    }),
     runner.callTool('list_channels', { ...scopedFilter, limit: recentChannelsLimit }),
   ]);
 

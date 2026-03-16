@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.9.1 - 2026-03-16
+
+### Fixes
+
+- Fixed Node.js `--loader` deprecation by migrating to `--import tsx/esm` for README sync scripts.
+- Enabled `@typescript-eslint/no-explicit-any` for production source files.
+
+### Testing
+
+- Added comprehensive MCP tool tests for all 40 tool modules (agents, rules, skills, channels, and all integrations).
+- Added gateway session management, command handling, and lifecycle tests for Slack and WhatsApp.
+- Extracted hardcoded pagination limits into named constants across CLI shortcut modules.
+
 ## 1.9.0 - 2026-03-06
 
 ### Agent Iteration & Debugging

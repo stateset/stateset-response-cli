@@ -155,6 +155,21 @@ export const DEFAULT_STATESET_DIR_OPTIONS = [
 
 export const DEFAULT_LIST_LIMIT = 50;
 export const DEFAULT_LIST_OFFSET = 0;
+
+/** Limit used when fetching "all" records for bulk operations (rules, agents, monitoring). */
+export const FETCH_ALL_LIMIT = 1000;
+
+/** Maximum offset allowed for paginated list commands. */
+export const MAX_LIST_OFFSET = 100_000;
+
+/** Limit for fetching per-agent rules in analytics breakdowns. */
+export const ANALYTICS_RULES_LIMIT = 10_000;
+
+/** Limit for fetching per-agent channels in analytics breakdowns. */
+export const ANALYTICS_CHANNELS_LIMIT = 5_000;
+
+/** Maximum number of messages/records for export or replay operations. */
+export const MAX_EXPORT_LIMIT = 2_000;
 export const DEFAULT_SNAPSHOT_DIR = path.resolve(process.cwd(), '.stateset', 'snapshots');
 export const DEFAULT_SNAPSHOT_PREFIX = 'snapshot';
 export const SNAPSHOT_RESOURCE_FIELDS = [

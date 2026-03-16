@@ -37,6 +37,8 @@ import type {
 import {
   DEFAULT_LIST_LIMIT,
   DEFAULT_LIST_OFFSET,
+  FETCH_ALL_LIMIT,
+  MAX_LIST_OFFSET,
   DEFAULT_SNAPSHOT_DIR,
   DEFAULT_SNAPSHOT_PREFIX,
   DEFAULT_STATESET_DIR,
@@ -301,8 +303,8 @@ export function toNonNegativeInteger(
 export function parseListArgs(tokens: string[]) {
   const { options, positionals } = parseCommandArgs(tokens);
   return {
-    limit: toPositiveInteger(options.limit, DEFAULT_LIST_LIMIT, 1000),
-    offset: toNonNegativeInteger(options.offset, DEFAULT_LIST_OFFSET, 100000),
+    limit: toPositiveInteger(options.limit, DEFAULT_LIST_LIMIT, FETCH_ALL_LIMIT),
+    offset: toNonNegativeInteger(options.offset, DEFAULT_LIST_OFFSET, MAX_LIST_OFFSET),
     options,
     positionals,
   };

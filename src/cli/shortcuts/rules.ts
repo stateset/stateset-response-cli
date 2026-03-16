@@ -1,5 +1,6 @@
 import path from 'node:path';
 import type { AnyPayload, ShortcutLogger, ShortcutRunner, TopLevelOptions } from './types.js';
+import { FETCH_ALL_LIMIT } from './types.js';
 import { readJsonFile } from '../../utils/file-read.js';
 import { getErrorMessage } from '../../lib/errors.js';
 import {
@@ -104,7 +105,10 @@ export async function runRulesCommand(
     const targetState = action === 'enable';
     const tagFilter = (options.tag || options.tags || '').trim().toLowerCase();
     const agentFilter = (options.agent || options.agent_id || '').trim();
-    const list = await runner.callTool<unknown[]>('list_rules', { limit: 1000, offset: 0 });
+    const list = await runner.callTool<unknown[]>('list_rules', {
+      limit: FETCH_ALL_LIMIT,
+      offset: 0,
+    });
     const rows = Array.isArray(list.payload) ? list.payload : [];
     const matches = rows
       .map((entry) => asStringRecord(entry))
@@ -162,7 +166,10 @@ export async function runRulesCommand(
         return;
       }
     } else {
-      const list = await runner.callTool<unknown[]>('list_rules', { limit: 1000, offset: 0 });
+      const list = await runner.callTool<unknown[]>('list_rules', {
+        limit: FETCH_ALL_LIMIT,
+        offset: 0,
+      });
       const rows = list.payload as unknown[];
       const target = rows.find((entry) => asStringRecord(entry).id === ruleId);
       const current = asStringRecord(target).activated;
@@ -198,7 +205,10 @@ export async function runRulesCommand(
       logger.warning('Usage: /rules get <rule-id>');
       return;
     }
-    const list = await runner.callTool<unknown[]>('list_rules', { limit: 1000, offset: 0 });
+    const list = await runner.callTool<unknown[]>('list_rules', {
+      limit: FETCH_ALL_LIMIT,
+      offset: 0,
+    });
     const rows = list.payload as unknown[];
     const target = rows.find((entry) => asStringRecord(entry).id === ruleId);
     if (!target) {
@@ -238,7 +248,7 @@ export async function runRulesCommand(
 
   if (action === 'export') {
     const outputFile = positionals[1];
-    const result = await runner.callTool('list_rules', { limit: 1000, offset: 0 });
+    const result = await runner.callTool('list_rules', { limit: FETCH_ALL_LIMIT, offset: 0 });
     if (outputFile) {
       try {
         const outputPath = resolveSafeOutputPath(outputFile, { label: 'Rules export path' });
@@ -256,7 +266,10 @@ export async function runRulesCommand(
   }
 
   const targetId = action;
-  const list = await runner.callTool<unknown[]>('list_rules', { limit: 1000, offset: 0 });
+  const list = await runner.callTool<unknown[]>('list_rules', {
+    limit: FETCH_ALL_LIMIT,
+    offset: 0,
+  });
   const rows = list.payload as unknown[];
   const target = rows.find((entry) => asStringRecord(entry).id === targetId);
   if (!target) {
