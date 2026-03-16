@@ -38,10 +38,10 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - uses: github/codeql-action/init@v3
+      - uses: github/codeql-action/init@v4
         with:
           languages: javascript-typescript
           queries: security-and-quality
       - run: npm ci
       - run: npm run build
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/analyze@v4
