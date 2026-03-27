@@ -165,6 +165,9 @@ export interface WelcomeOptions {
   integrationCount?: number;
   sessionMessageCount?: number;
   allowApply?: boolean;
+  dryRun?: boolean;
+  engineConnected?: boolean;
+  profile?: string;
 }
 
 export function printWelcome(
@@ -186,8 +189,17 @@ export function printWelcome(
   if (options?.allowApply) {
     infoParts.push('Writes: enabled');
   }
+  if (options?.dryRun) {
+    infoParts.push('Dry-run: on');
+  }
+  if (options?.engineConnected) {
+    infoParts.push('Engine: connected');
+  }
   if (infoParts.length > 0) {
     console.log(chalk.gray(`  ${infoParts.join(' | ')}`));
+  }
+  if (options?.profile && options.profile !== 'default') {
+    console.log(chalk.gray(`  Profile: ${options.profile}`));
   }
   if (options?.sessionMessageCount !== undefined && options.sessionMessageCount > 0) {
     console.log(chalk.gray(`  Resuming session (${options.sessionMessageCount} messages)`));
@@ -204,6 +216,8 @@ export function printWelcome(
   console.log(chalk.cyan('    /kb         ') + chalk.gray('Knowledge base'));
   console.log(chalk.cyan('    /status     ') + chalk.gray('Platform overview'));
   console.log(chalk.cyan('    /apply on   ') + chalk.gray('Enable write operations'));
+  console.log(chalk.cyan('    /cost       ') + chalk.gray('Show session cost estimate'));
+  console.log(chalk.cyan('    /whoami     ') + chalk.gray('Full session dashboard'));
   console.log(
     chalk.cyan('    /model      ') +
       chalk.gray(`Switch model (${getModelAliasText('list').replace(/,\s*/g, '/')})`),
@@ -270,6 +284,45 @@ export function formatToolResultInline(name: string, durationMs: number, isError
   const icon = isError ? chalk.red('✗') : chalk.green('✓');
   const dur = durationMs < 1000 ? `${durationMs}ms` : `${(durationMs / 1000).toFixed(1)}s`;
   return `  ${icon} ${chalk.gray(name)} ${chalk.gray(`(${dur})`)}`;
+}
+
+export interface SessionSummaryData {
+  sessionId: string;
+  model: string;
+  durationMs: number;
+  tokenUsage: { inputTokens: number; outputTokens: number };
+  totalCost: number;
+  toolCallCount: number;
+  messageCount: number;
+}
+
+export function printSessionSummary(data: SessionSummaryData): void {
+  const dur = formatDuration(data.durationMs);
+  const tokens = data.tokenUsage.inputTokens + data.tokenUsage.outputTokens;
+  const exchanges = Math.ceil(data.messageCount / 2);
+
+  console.log('');
+  console.log(chalk.bold('  Session Summary'));
+  console.log(chalk.gray(`  Session:    ${data.sessionId}`));
+  console.log(chalk.gray(`  Model:      ${data.model}`));
+  console.log(chalk.gray(`  Duration:   ${dur}`));
+  console.log(
+    chalk.gray(
+      `  Tokens:     ${tokens.toLocaleString()} (${data.tokenUsage.inputTokens.toLocaleString()} in / ${data.tokenUsage.outputTokens.toLocaleString()} out)`,
+    ),
+  );
+  if (data.totalCost > 0) {
+    console.log(
+      chalk.gray(
+        `  Est. cost:  $${data.totalCost < 0.01 ? data.totalCost.toFixed(4) : data.totalCost.toFixed(2)}`,
+      ),
+    );
+  }
+  console.log(chalk.gray(`  Exchanges:  ${exchanges}`));
+  if (data.toolCallCount > 0) {
+    console.log(chalk.gray(`  Tool calls: ${data.toolCallCount}`));
+  }
+  console.log('');
 }
 
 export function printAuthHelp(): void {

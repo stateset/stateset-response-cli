@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.9.2 - 2026-03-27
+
+### CLI Reliability
+
+- Standardized structured JSON output for config and export commands so `--json` behavior is more predictable in automation.
+- Tightened shared output helpers for success, warning, and error payloads across JSON and minimal modes.
+
+### Quality
+
+- Cleared lint blockers in the new test coverage and removed dead imports that were keeping the worktree from a clean quality gate.
+- Added regression coverage for JSON-mode config/export commands and kept the full Node 20 verification path green.
+
 ## 1.9.1 - 2026-03-16
 
 ### Fixes

@@ -794,6 +794,12 @@ const CONFIG_CHECKERS: Record<IntegrationId, () => unknown> = {
   shipfusion: getShipFusionConfigFromEnv,
   shiphawk: getShipHawkConfigFromEnv,
   zendesk: getZendeskConfigFromEnv,
+  engine: () => {
+    // Lazy import to avoid circular dependency at module load time
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require('../config.js') as { getWorkflowEngineConfig: () => unknown };
+    return mod.getWorkflowEngineConfig();
+  },
 };
 
 /** Returns true if the integration's config getter returns a truthy value without throwing. */

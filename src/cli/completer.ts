@@ -171,6 +171,15 @@ function completeArgs(parts: string[], cwd: string): string[] {
     case '/tag':
       return filterPrefix(TAG_SUBS, partial);
 
+    case '/engine':
+      return filterPrefix(
+        ['setup', 'status', 'brands', 'onboard', 'health', 'templates', 'dlq'],
+        partial,
+      );
+
+    case '/workflows':
+      return filterPrefix(['list', 'start', 'status', 'cancel', 'retry'], partial);
+
     case '/prompt':
       return filterPrefix(getPromptTemplateNames(cwd), partial);
 

@@ -13,6 +13,7 @@ import { requestText } from '../integrations/http.js';
 import { getIntegrationReadiness, getIntegrationSnapshots } from './commands-integrations.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { getStateSetDir, getSessionStorageStats, cleanupSessions } from '../session.js';
+import { getWorkflowEngineConfig } from '../config.js';
 
 export interface DoctorCheck {
   name: string;
@@ -306,6 +307,34 @@ function checkDiskSpace(): DoctorCheck {
 // Main check runner
 // ---------------------------------------------------------------------------
 
+async function checkWorkflowEngine(): Promise<DoctorCheck> {
+  const config = getWorkflowEngineConfig();
+  if (!config) {
+    return {
+      name: 'Workflow Engine',
+      status: 'warn',
+      message: 'Workflow engine not configured (optional)',
+    };
+  }
+
+  try {
+    const { EngineClient } = await import('../lib/engine-client.js');
+    const client = new EngineClient(config);
+    await client.health();
+    return {
+      name: 'Workflow Engine',
+      status: 'pass',
+      message: `Workflow engine connected (${config.url})`,
+    };
+  } catch (err) {
+    return {
+      name: 'Workflow Engine',
+      status: 'fail',
+      message: `Workflow engine unreachable: ${getErrorMessage(err)}`,
+    };
+  }
+}
+
 export async function runDoctorChecks(): Promise<DoctorCheck[]> {
   const checks: DoctorCheck[] = [];
 
@@ -332,7 +361,82 @@ export async function runDoctorChecks(): Promise<DoctorCheck[]> {
   checks.push(checkKnowledgeBase());
   checks.push(checkDiskSpace());
 
+  try {
+    checks.push(await checkWorkflowEngine());
+  } catch {
+    checks.push({
+      name: 'Workflow Engine',
+      status: 'warn',
+      message: 'Could not check workflow engine',
+    });
+  }
+
+  checks.push(checkMetricsStorageSize());
+  checks.push(checkSessionIntegrity());
+
   return checks;
+}
+
+function checkMetricsStorageSize(): DoctorCheck {
+  try {
+    const metricsDir = `${getStateSetDir()}/metrics`;
+    if (!fs.existsSync(metricsDir)) {
+      return {
+        name: 'Metrics Storage',
+        status: 'pass',
+        message: 'Metrics directory not yet created',
+      };
+    }
+    let totalSize = 0;
+    const entries = fs.readdirSync(metricsDir);
+    for (const entry of entries) {
+      try {
+        const stat = fs.statSync(`${metricsDir}/${entry}`);
+        totalSize += stat.size;
+      } catch {
+        // skip
+      }
+    }
+    const sizeMb = totalSize / (1024 * 1024);
+    if (sizeMb > 100) {
+      return {
+        name: 'Metrics Storage',
+        status: 'warn',
+        message: `Metrics directory is ${sizeMb.toFixed(0)}MB. Consider pruning old session metrics.`,
+      };
+    }
+    return {
+      name: 'Metrics Storage',
+      status: 'pass',
+      message: `Metrics storage: ${entries.length} files (${sizeMb.toFixed(1)}MB)`,
+    };
+  } catch {
+    return { name: 'Metrics Storage', status: 'pass', message: 'Metrics storage check skipped' };
+  }
+}
+
+function checkSessionIntegrity(): DoctorCheck {
+  try {
+    const stats = getSessionStorageStats();
+    if (stats.emptySessions > 10) {
+      return {
+        name: 'Session Integrity',
+        status: 'warn',
+        message: `${stats.emptySessions} empty sessions found. Run "/session cleanup" to remove stale sessions.`,
+      };
+    }
+    return {
+      name: 'Session Integrity',
+      status: 'pass',
+      message: `${stats.totalSessions} sessions (${stats.emptySessions} empty)`,
+    };
+  } catch {
+    return {
+      name: 'Session Integrity',
+      status: 'pass',
+      message: 'Session integrity check skipped',
+    };
+  }
 }
 
 export function registerDoctorCommand(program: Command): void {

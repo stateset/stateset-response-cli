@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { handleConfigCommand } from '../cli/commands-config.js';
+import { setOutputMode } from '../lib/output.js';
 import type { ChatContext } from '../cli/types.js';
 
 vi.mock('../memory.js', () => ({
@@ -53,10 +54,12 @@ describe('handleConfigCommand', () => {
 
   beforeEach(() => {
     vi.restoreAllMocks();
+    setOutputMode('pretty');
     originalStructuredMetadata = process.env.STATESET_MCP_STRUCTURED_TOOL_RESULTS;
   });
 
   afterEach(() => {
+    setOutputMode('pretty');
     if (originalStructuredMetadata === undefined) {
       delete process.env.STATESET_MCP_STRUCTURED_TOOL_RESULTS;
     } else {
@@ -77,6 +80,24 @@ describe('handleConfigCommand', () => {
     const result = await handleConfigCommand('/apply', ctx);
     expect(result).toEqual({ handled: true });
     expect(ctx.rl.prompt).toHaveBeenCalled();
+  });
+
+  it('/apply emits structured JSON when output mode is json', async () => {
+    setOutputMode('json');
+    const stdoutWrite = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
+    const ctx = createMockCtx({ allowApply: true });
+
+    const result = await handleConfigCommand('/apply', ctx);
+
+    expect(result).toEqual({ handled: true });
+    const payload = JSON.parse(String(stdoutWrite.mock.calls[0][0]).trim());
+    expect(payload).toMatchObject({
+      status: 'ok',
+      message: 'Writes enabled: yes',
+      command: 'apply',
+      enabled: true,
+      usage: '/apply on|off',
+    });
   });
 
   it('/apply on enables writes', async () => {

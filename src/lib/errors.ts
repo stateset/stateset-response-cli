@@ -9,6 +9,20 @@
 
 import { logger } from './logger.js';
 
+/**
+ * Process exit codes for structured error classification.
+ */
+export const EXIT_CODES = {
+  SUCCESS: 0,
+  USER_ERROR: 1,
+  OPERATIONAL: 2,
+  INTERNAL: 3,
+  TIMEOUT: 4,
+  CANCELLED: 5,
+} as const;
+
+export type ExitCode = (typeof EXIT_CODES)[keyof typeof EXIT_CODES];
+
 let isExiting = false;
 
 const onUncaughtException = (error: unknown) => {
@@ -58,6 +72,7 @@ export class StateSetError extends Error {
   readonly code: string;
   readonly statusCode: number;
   readonly retryable: boolean;
+  readonly exitCode: ExitCode;
   readonly context?: Record<string, unknown>;
 
   constructor(
@@ -66,30 +81,39 @@ export class StateSetError extends Error {
     statusCode: number = 500,
     retryable: boolean = false,
     context?: Record<string, unknown>,
+    exitCode?: ExitCode,
   ) {
     super(message);
     this.name = 'StateSetError';
     this.code = code;
     this.statusCode = statusCode;
     this.retryable = retryable;
+    this.exitCode = exitCode ?? (retryable ? EXIT_CODES.OPERATIONAL : EXIT_CODES.INTERNAL);
     this.context = context;
 
-    // Maintain proper stack trace
     if (Error.captureStackTrace) {
       Error.captureStackTrace(this, this.constructor);
     }
   }
 
   /**
-   * Convert to JSON-serializable object
+   * Return actionable suggestions for recovering from this error.
+   * Subclasses can override for domain-specific hints.
    */
+  getSuggestions(): string[] {
+    return [];
+  }
+
   toJSON(): Record<string, unknown> {
+    const suggestions = this.getSuggestions();
     return {
       name: this.name,
       message: this.message,
       code: this.code,
       statusCode: this.statusCode,
       retryable: this.retryable,
+      exitCode: this.exitCode,
+      ...(suggestions.length > 0 && { suggestions }),
       ...(this.context && { context: this.context }),
     };
   }
@@ -100,8 +124,12 @@ export class StateSetError extends Error {
  */
 export class ValidationError extends StateSetError {
   constructor(message: string, context?: Record<string, unknown>) {
-    super(message, 'VALIDATION_ERROR', 400, false, context);
+    super(message, 'VALIDATION_ERROR', 400, false, context, EXIT_CODES.USER_ERROR);
     this.name = 'ValidationError';
+  }
+
+  getSuggestions(): string[] {
+    return ['Check that all required fields are provided and correctly formatted.'];
   }
 }
 
@@ -110,8 +138,15 @@ export class ValidationError extends StateSetError {
  */
 export class AuthenticationError extends StateSetError {
   constructor(message: string, context?: Record<string, unknown>) {
-    super(message, 'AUTH_ERROR', 401, false, context);
+    super(message, 'AUTH_ERROR', 401, false, context, EXIT_CODES.USER_ERROR);
     this.name = 'AuthenticationError';
+  }
+
+  getSuggestions(): string[] {
+    return [
+      'Run "response auth login" to set up your credentials.',
+      'Check that your API key or CLI token is valid and not expired.',
+    ];
   }
 }
 
@@ -120,8 +155,12 @@ export class AuthenticationError extends StateSetError {
  */
 export class AuthorizationError extends StateSetError {
   constructor(message: string, context?: Record<string, unknown>) {
-    super(message, 'FORBIDDEN', 403, false, context);
+    super(message, 'FORBIDDEN', 403, false, context, EXIT_CODES.USER_ERROR);
     this.name = 'AuthorizationError';
+  }
+
+  getSuggestions(): string[] {
+    return ['Verify your account has the required permissions for this operation.'];
   }
 }
 
@@ -130,8 +169,12 @@ export class AuthorizationError extends StateSetError {
  */
 export class NotFoundError extends StateSetError {
   constructor(message: string, context?: Record<string, unknown>) {
-    super(message, 'NOT_FOUND', 404, false, context);
+    super(message, 'NOT_FOUND', 404, false, context, EXIT_CODES.USER_ERROR);
     this.name = 'NotFoundError';
+  }
+
+  getSuggestions(): string[] {
+    return ['Check the resource ID or name. Use list commands to see available resources.'];
   }
 }
 
@@ -140,7 +183,7 @@ export class NotFoundError extends StateSetError {
  */
 export class ConflictError extends StateSetError {
   constructor(message: string, context?: Record<string, unknown>) {
-    super(message, 'CONFLICT', 409, false, context);
+    super(message, 'CONFLICT', 409, false, context, EXIT_CODES.USER_ERROR);
     this.name = 'ConflictError';
   }
 }
@@ -152,9 +195,16 @@ export class RateLimitError extends StateSetError {
   readonly retryAfterMs?: number;
 
   constructor(message: string, retryAfterMs?: number, context?: Record<string, unknown>) {
-    super(message, 'RATE_LIMIT', 429, true, context);
+    super(message, 'RATE_LIMIT', 429, true, context, EXIT_CODES.OPERATIONAL);
     this.name = 'RateLimitError';
     this.retryAfterMs = retryAfterMs;
+  }
+
+  getSuggestions(): string[] {
+    if (this.retryAfterMs) {
+      return [`Wait ${Math.ceil(this.retryAfterMs / 1000)}s and try again.`];
+    }
+    return ['Wait a moment and try again.'];
   }
 }
 
@@ -163,8 +213,16 @@ export class RateLimitError extends StateSetError {
  */
 export class NetworkError extends StateSetError {
   constructor(message: string, context?: Record<string, unknown>) {
-    super(message, 'NETWORK_ERROR', 503, true, context);
+    super(message, 'NETWORK_ERROR', 503, true, context, EXIT_CODES.OPERATIONAL);
     this.name = 'NetworkError';
+  }
+
+  getSuggestions(): string[] {
+    return [
+      'Check your internet connection.',
+      'Verify the endpoint URL is correct (run "response config show").',
+      'Run "response doctor" for diagnostics.',
+    ];
   }
 }
 
@@ -173,8 +231,12 @@ export class NetworkError extends StateSetError {
  */
 export class TimeoutError extends StateSetError {
   constructor(message: string, context?: Record<string, unknown>) {
-    super(message, 'TIMEOUT', 504, true, context);
+    super(message, 'TIMEOUT', 504, true, context, EXIT_CODES.TIMEOUT);
     this.name = 'TimeoutError';
+  }
+
+  getSuggestions(): string[] {
+    return ['The operation timed out. Try again or check service status.'];
   }
 }
 
@@ -183,8 +245,12 @@ export class TimeoutError extends StateSetError {
  */
 export class ServiceUnavailableError extends StateSetError {
   constructor(message: string, context?: Record<string, unknown>) {
-    super(message, 'SERVICE_UNAVAILABLE', 503, true, context);
+    super(message, 'SERVICE_UNAVAILABLE', 503, true, context, EXIT_CODES.OPERATIONAL);
     this.name = 'ServiceUnavailableError';
+  }
+
+  getSuggestions(): string[] {
+    return ['The service is temporarily unavailable. Try again in a few minutes.'];
   }
 }
 
@@ -193,8 +259,16 @@ export class ServiceUnavailableError extends StateSetError {
  */
 export class ConfigurationError extends StateSetError {
   constructor(message: string, context?: Record<string, unknown>) {
-    super(message, 'CONFIG_ERROR', 500, false, context);
+    super(message, 'CONFIG_ERROR', 500, false, context, EXIT_CODES.USER_ERROR);
     this.name = 'ConfigurationError';
+  }
+
+  getSuggestions(): string[] {
+    return [
+      'Run "response auth login" to configure credentials.',
+      'Run "response config show" to inspect your configuration.',
+      'Run "response doctor" for diagnostics.',
+    ];
   }
 }
 
@@ -203,8 +277,24 @@ export class ConfigurationError extends StateSetError {
  */
 export class InternalError extends StateSetError {
   constructor(message: string, context?: Record<string, unknown>) {
-    super(message, 'INTERNAL_ERROR', 500, false, context);
+    super(message, 'INTERNAL_ERROR', 500, false, context, EXIT_CODES.INTERNAL);
     this.name = 'InternalError';
+  }
+
+  getSuggestions(): string[] {
+    return [
+      'This is an unexpected error. Please report it at https://github.com/stateset/response-cli/issues.',
+    ];
+  }
+}
+
+/**
+ * Cancelled errors - user cancelled the operation
+ */
+export class CancelledError extends StateSetError {
+  constructor(message: string = 'Operation cancelled', context?: Record<string, unknown>) {
+    super(message, 'CANCELLED', 499, false, context, EXIT_CODES.CANCELLED);
+    this.name = 'CancelledError';
   }
 }
 
@@ -341,4 +431,28 @@ export function getUserMessage(error: unknown): string {
   }
 
   return 'An unexpected error occurred.';
+}
+
+/**
+ * Get the user-friendly message with appended recovery suggestions.
+ */
+export function getUserMessageWithSuggestions(error: unknown): string {
+  const msg = getUserMessage(error);
+  if (error instanceof StateSetError) {
+    const suggestions = error.getSuggestions();
+    if (suggestions.length > 0) {
+      return `${msg}\n\nSuggestions:\n${suggestions.map((s) => `  - ${s}`).join('\n')}`;
+    }
+  }
+  return msg;
+}
+
+/**
+ * Get the exit code for an error. Returns INTERNAL for non-StateSet errors.
+ */
+export function getExitCode(error: unknown): ExitCode {
+  if (error instanceof StateSetError) {
+    return error.exitCode;
+  }
+  return EXIT_CODES.INTERNAL;
 }

@@ -8,6 +8,8 @@ import { type ModelId, DEFAULT_MODEL } from './config.js';
 import { INTEGRATION_DEFINITIONS } from './integrations/registry.js';
 import { isRetryable, getErrorMessage } from './lib/errors.js';
 import { metrics } from './lib/metrics.js';
+import { resolveFallbackModel } from './lib/model-fallback.js';
+import { logger } from './lib/logger.js';
 import { BASE_SYSTEM_PROMPT } from './system-prompt.js';
 
 const THIS_FILE = fileURLToPath(import.meta.url);
@@ -305,6 +307,10 @@ export class StateSetAgent {
     return this.conversationHistory.length;
   }
 
+  getHistory(): Anthropic.MessageParam[] {
+    return this.conversationHistory;
+  }
+
   getMaxHistoryMessages(): number {
     return MAX_HISTORY_MESSAGES;
   }
@@ -450,6 +456,29 @@ export class StateSetAgent {
         if (err instanceof Error && err.name === 'AbortError') {
           throw new Error('Request cancelled');
         }
+
+        // Surface authentication errors clearly
+        const errWithStatus = err as Error & { status?: number; error?: { type?: string } };
+        if (errWithStatus.status === 401 || errWithStatus.error?.type === 'authentication_error') {
+          throw new Error(
+            'Anthropic API key is invalid or expired. Check your ANTHROPIC_API_KEY or run "response auth login".',
+          );
+        }
+
+        // Attempt model fallback on availability errors (429, 503, 529, overloaded)
+        const fallbackModel = resolveFallbackModel(this.model, err);
+        if (fallbackModel) {
+          const previousModel = this.model;
+          this.model = fallbackModel;
+          logger.warn(`Falling back from ${previousModel} to ${fallbackModel}`);
+          callbacks?.onText?.(
+            `\n[Model ${previousModel} unavailable, switching to ${fallbackModel}]\n`,
+          );
+          // Retry with new model — the while loop will handle it
+          this.abortController = null;
+          continue;
+        }
+
         throw err;
       } finally {
         this.abortController = null;
@@ -641,9 +670,47 @@ export class StateSetAgent {
   private trimHistory(): void {
     const before = this.conversationHistory.length;
     if (before > MAX_HISTORY_MESSAGES) {
+      const dropped = this.conversationHistory.slice(0, before - MAX_HISTORY_MESSAGES);
+
+      // Generate a brief summary of dropped messages to preserve context
+      const summaryParts: string[] = [];
+      let userMsgCount = 0;
+      let assistantMsgCount = 0;
+      const toolNames = new Set<string>();
+      for (const msg of dropped) {
+        if (msg.role === 'user') userMsgCount++;
+        else if (msg.role === 'assistant') {
+          assistantMsgCount++;
+          if (Array.isArray(msg.content)) {
+            for (const block of msg.content) {
+              if (typeof block === 'object' && block !== null && 'type' in block) {
+                const typed = block as { type: string; name?: string };
+                if (typed.type === 'tool_use' && typed.name) {
+                  toolNames.add(typed.name);
+                }
+              }
+            }
+          }
+        }
+      }
+      summaryParts.push(
+        `[Context trimmed: ${dropped.length} earlier messages removed (${userMsgCount} user, ${assistantMsgCount} assistant).`,
+      );
+      if (toolNames.size > 0) {
+        summaryParts.push(`Tools used: ${[...toolNames].slice(0, 10).join(', ')}.`);
+      }
+      summaryParts.push('Continuing from recent context.]');
+
       this.conversationHistory = normalizeToolHistory(
         this.conversationHistory.slice(-MAX_HISTORY_MESSAGES),
       );
+
+      // Inject summary as a system-like user message at the start
+      this.conversationHistory.unshift({
+        role: 'user',
+        content: summaryParts.join(' '),
+      });
+
       this.lastTrimInfo = {
         trimmed: true,
         messagesBefore: before,
@@ -665,8 +732,27 @@ export class StateSetAgent {
    * Calls an MCP tool with automatic retry for transient errors.
    * Retries up to MAX_TOOL_RETRIES times with exponential backoff.
    */
+  /**
+   * Attempt to reconnect the MCP transport after a connection drop.
+   * Returns true if reconnection succeeded.
+   */
+  private async tryReconnect(): Promise<boolean> {
+    logger.warn('MCP connection lost, attempting reconnect...');
+    metrics.recordConnectionEvent({ type: 'error', error: 'connection_lost' });
+    try {
+      await this.disconnect();
+      await this.connect();
+      logger.info('MCP reconnected successfully');
+      return true;
+    } catch (err) {
+      logger.error('MCP reconnect failed', { error: getErrorMessage(err) });
+      return false;
+    }
+  }
+
   private async callToolWithRetry(name: string, args: Record<string, unknown>) {
     let lastError: unknown;
+    let reconnected = false;
     for (let attempt = 0; attempt <= MAX_TOOL_RETRIES; attempt++) {
       try {
         return await this.mcpClient.callTool({ name, arguments: args });
@@ -674,6 +760,16 @@ export class StateSetAgent {
         lastError = err;
         const isMcpTransport =
           err instanceof Error && (/EPIPE|closed|transport/i.test(err.message) || isRetryable(err));
+
+        // On transport error, try reconnecting once before retrying
+        if (isMcpTransport && !reconnected && this.transport === null) {
+          const ok = await this.tryReconnect();
+          if (ok) {
+            reconnected = true;
+            continue; // Retry with new connection (don't increment attempt)
+          }
+        }
+
         if (!isMcpTransport || attempt === MAX_TOOL_RETRIES) throw err;
         await new Promise((resolve) =>
           setTimeout(resolve, RETRY_BASE_DELAY_MS * Math.pow(2, attempt)),

@@ -60,6 +60,7 @@ import {
   runTopLevelMonitor,
 } from './shortcuts/monitoring.js';
 import { runTestCommand, runTopLevelTest } from './shortcuts/test.js';
+import { runDriftCommand } from './shortcuts/drift.js';
 
 export async function handleShortcutCommand(input: string, ctx: ChatContext) {
   const logger = buildSlashLogger(ctx);
@@ -254,6 +255,11 @@ export async function handleShortcutCommand(input: string, ctx: ChatContext) {
     }
     if (command === '/diff') {
       await runDiffCommand(tokens, logger, slashOptions);
+      logger.done();
+      return { handled: true };
+    }
+    if (command === '/drift') {
+      await runDriftCommand(ctx.agent.callTool.bind(ctx.agent), logger, Boolean(slashOptions.json));
       logger.done();
       return { handled: true };
     }

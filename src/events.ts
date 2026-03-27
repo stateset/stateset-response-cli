@@ -42,7 +42,14 @@ const WATCHER_RESTART_DELAY_MS = 2000;
 export type ResponseEvent =
   | { type: 'immediate'; text: string; session?: string }
   | { type: 'one-shot'; text: string; at: string; session?: string }
-  | { type: 'periodic'; text: string; schedule: string; timezone: string; session?: string };
+  | { type: 'periodic'; text: string; schedule: string; timezone: string; session?: string }
+  | {
+      type: 'workflow';
+      brandSlug: string;
+      eventType: string;
+      payload: Record<string, unknown>;
+      idempotencyKey?: string;
+    };
 
 /** Configuration for the events runner: model override, fallback session, and output flags. */
 export interface EventsRunnerOptions {
@@ -70,6 +77,27 @@ export function parseEvent(content: string, filename: string): ResponseEvent {
     throw new Error(`Invalid event data in ${filename}`);
   }
   const data = raw as Record<string, unknown>;
+
+  // Workflow events don't require 'text' field
+  if (data.type === 'workflow') {
+    if (typeof data.brandSlug !== 'string') {
+      throw new Error(`Missing 'brandSlug' for workflow event in ${filename}`);
+    }
+    if (typeof data.eventType !== 'string') {
+      throw new Error(`Missing 'eventType' for workflow event in ${filename}`);
+    }
+    const payload =
+      data.payload && typeof data.payload === 'object'
+        ? (data.payload as Record<string, unknown>)
+        : {};
+    return {
+      type: 'workflow',
+      brandSlug: data.brandSlug,
+      eventType: data.eventType,
+      payload,
+      idempotencyKey: typeof data.idempotencyKey === 'string' ? data.idempotencyKey : undefined,
+    };
+  }
 
   if (!data.type || typeof data.text !== 'string') {
     throw new Error(`Missing required fields (type, text) in ${filename}`);
@@ -204,7 +232,9 @@ class SessionAgentRunner {
           ? event.schedule
           : 'immediate';
 
-    const message = `[EVENT:${filename}:${event.type}:${scheduleInfo}] ${event.text}`;
+    const eventText =
+      'text' in event ? event.text : `workflow:${(event as { brandSlug: string }).brandSlug}`;
+    const message = `[EVENT:${filename}:${event.type}:${scheduleInfo}] ${eventText}`;
 
     let usageSummary = '';
     const callbacks: ChatCallbacks = {
@@ -558,11 +588,56 @@ export class EventsRunner {
       case 'periodic':
         this.handlePeriodic(filename, event);
         break;
+      case 'workflow':
+        await this.handleWorkflowEvent(filename, event);
+        break;
     }
   }
 
   private parseEvent(content: string, filename: string): ResponseEvent {
     return parseEvent(content, filename);
+  }
+
+  private async handleWorkflowEvent(
+    filename: string,
+    event: ResponseEvent & { type: 'workflow' },
+  ): Promise<void> {
+    const { getWorkflowEngineConfig } = await import('./config.js');
+    const engineConfig = getWorkflowEngineConfig();
+    if (!engineConfig) {
+      logger.warn(`Workflow event skipped (engine not configured): ${filename}`);
+      this.deleteFile(filename);
+      return;
+    }
+
+    try {
+      const { EngineClient } = await import('./lib/engine-client.js');
+      const client = new EngineClient(engineConfig);
+      const idempotencyKey = event.idempotencyKey ?? `evt-${filename}-${Date.now()}`;
+
+      const result = await client.ingestEvent(
+        event.brandSlug,
+        {
+          event_type: event.eventType,
+          workflow_type: 'response',
+          payload: event.payload,
+        },
+        idempotencyKey,
+      );
+
+      logger.info(`Workflow event dispatched: ${filename}`, {
+        brandSlug: event.brandSlug,
+        eventType: event.eventType,
+        result: typeof result === 'object' ? result : undefined,
+      });
+    } catch (err) {
+      logger.error(`Workflow event dispatch failed: ${filename}`, {
+        error: getErrorMessage(err),
+        brandSlug: event.brandSlug,
+      });
+    }
+
+    this.deleteFile(filename);
   }
 
   private handleImmediate(filename: string, event: ResponseEvent & { type: 'immediate' }): void {
@@ -623,7 +698,8 @@ export class EventsRunner {
     void this.cleanupSessionRunners().catch((error) => {
       logger.error(`Failed to cleanup session runners: ${getErrorMessage(error)}`);
     });
-    const sessionId = sanitizeSessionId(event.session || this.options.defaultSession);
+    const eventSession = 'session' in event ? event.session : undefined;
+    const sessionId = sanitizeSessionId(eventSession || this.options.defaultSession);
     const runner = this.getSessionRunner(sessionId);
     if (!runner) {
       this.scheduleExecutionRetry(

@@ -59,6 +59,7 @@ export interface ChatOptions {
   redact?: boolean;
   usage?: boolean;
   verbose?: boolean;
+  dryRun?: boolean;
 }
 
 export interface OneShotInputOptions {
@@ -78,6 +79,7 @@ interface ChatRuntime {
   model: ModelId;
   allowApply: boolean;
   redactEmails: boolean;
+  dryRun: boolean;
   sessionId: string;
   sessionStore: SessionStore;
   agent: StateSetAgent;
@@ -165,6 +167,15 @@ async function initializeChatRuntime(
 
   allowApply = options.apply ? true : readBooleanEnv('STATESET_ALLOW_APPLY');
   redactEmails = options.redact ? true : readBooleanEnv('STATESET_REDACT');
+  const dryRun = options.dryRun ? true : readBooleanEnv('STATESET_DRY_RUN');
+
+  if (dryRun && allowApply) {
+    console.log(
+      formatWarning(
+        'Dry-run mode is enabled. Write operations will be previewed but not executed.',
+      ),
+    );
+  }
 
   let model: ModelId = getConfiguredModel();
   if (options.model) {
@@ -186,14 +197,23 @@ async function initializeChatRuntime(
   agent.setMcpEnvOverrides({
     STATESET_ALLOW_APPLY: allowApply ? 'true' : 'false',
     STATESET_REDACT: redactEmails ? 'true' : 'false',
+    ...(dryRun && { STATESET_DRY_RUN: 'true' }),
   });
 
   const cwd = process.cwd();
   const activeSkills: string[] = [];
   const extensions = new ExtensionManager();
+  const promptProfile = process.env.STATESET_PROFILE;
   agent.useSessionStore(sessionStore);
   agent.setSystemPrompt(
-    buildSystemPrompt({ sessionId, memory: loadMemory(sessionId), cwd, activeSkills }),
+    buildSystemPrompt({
+      sessionId,
+      memory: loadMemory(sessionId),
+      cwd,
+      activeSkills,
+      profile: promptProfile,
+      dryRun,
+    }),
   );
 
   const spinner = ora(connectLabel).start();
@@ -219,6 +239,7 @@ async function initializeChatRuntime(
     model,
     allowApply,
     redactEmails,
+    dryRun,
     sessionId,
     sessionStore,
     agent,
@@ -321,7 +342,7 @@ export async function startChatSession(
     return;
   }
 
-  const { orgId, model, agent, cwd, activeSkills, extensions } = runtime;
+  const { orgId, model, agent, cwd, activeSkills, extensions, dryRun } = runtime;
   let { allowApply, redactEmails, sessionId, sessionStore } = runtime;
 
   printExtensionStartupWarnings(extensions);
@@ -330,10 +351,37 @@ export async function startChatSession(
   const integrationCount = getWelcomeIntegrationCount(cwd);
 
   const sessionMessageCount = sessionStore.getMessageCount();
+
+  // Engine health check is non-blocking (2s timeout) to avoid slowing startup
+  let engineConnected: boolean | null = null; // null = checking
+  const engineHealthPromise = (async () => {
+    try {
+      const { getWorkflowEngineConfig } = await import('../config.js');
+      const engineConfig = getWorkflowEngineConfig();
+      if (!engineConfig) return false;
+      const { EngineClient } = await import('../lib/engine-client.js');
+      const engineClient = new EngineClient(engineConfig);
+      await Promise.race([
+        engineClient.health(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000)),
+      ]);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+  // Fire and forget — update banner asynchronously if needed
+  engineHealthPromise.then((connected) => {
+    engineConnected = connected;
+  });
+
   printWelcome(orgId, meta.version, model, {
     integrationCount,
     sessionMessageCount,
     allowApply,
+    dryRun,
+    engineConnected: engineConnected ?? undefined,
+    profile: process.env.STATESET_PROFILE,
   });
   console.log(chalk.gray(`  Session: ${sessionId}`));
   console.log('');
@@ -350,6 +398,7 @@ export async function startChatSession(
   // Graceful shutdown
   const SHUTDOWN_FORCE_EXIT_MS = 10_000;
   let shuttingDown = false;
+  const sessionStartTime = Date.now();
   const shutdown = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
@@ -360,6 +409,32 @@ export async function startChatSession(
       process.exitCode = 1;
     }, SHUTDOWN_FORCE_EXIT_MS);
     forceExitTimer.unref();
+
+    // Save session metrics and show summary before disconnect
+    try {
+      const { saveSessionMetrics } = await import('../lib/metrics.js');
+      const { calculateCost } = await import('../lib/pricing.js');
+      const { printSessionSummary } = await import('../utils/display.js');
+
+      const snap = metrics.snapshot();
+      const currentModel = agent.getModel();
+      const cost = calculateCost(snap.tokenUsage, currentModel);
+      const toolCallCount = snap.toolBreakdown?.reduce((sum, t) => sum + t.calls, 0) ?? 0;
+
+      printSessionSummary({
+        sessionId,
+        model: currentModel,
+        durationMs: Date.now() - sessionStartTime,
+        tokenUsage: snap.tokenUsage,
+        totalCost: cost.totalCost,
+        toolCallCount,
+        messageCount: agent.getHistoryLength(),
+      });
+
+      saveSessionMetrics(sessionId);
+    } catch {
+      // Best-effort
+    }
 
     const exitSpinner = ora('Disconnecting...').start();
     try {
@@ -421,7 +496,16 @@ export async function startChatSession(
     agent.useSessionStore(sessionStore);
     pendingAttachments = [];
     const memory = loadMemory(sessionId);
-    agent.setSystemPrompt(buildSystemPrompt({ sessionId, memory, cwd, activeSkills }));
+    agent.setSystemPrompt(
+      buildSystemPrompt({
+        sessionId,
+        memory,
+        cwd,
+        activeSkills,
+        profile: process.env.STATESET_PROFILE,
+        dryRun,
+      }),
+    );
     console.log(formatSuccess(`Switched to session: ${sessionId}`));
     const infoParts: string[] = [];
     const msgCount = sessionStore.getMessageCount();
@@ -493,7 +577,16 @@ export async function startChatSession(
     reconnectAgent,
     refreshSystemPrompt: () => {
       const memory = loadMemory(sessionId);
-      agent.setSystemPrompt(buildSystemPrompt({ sessionId, memory, cwd, activeSkills }));
+      agent.setSystemPrompt(
+        buildSystemPrompt({
+          sessionId,
+          memory,
+          cwd,
+          activeSkills,
+          profile: process.env.STATESET_PROFILE,
+          dryRun,
+        }),
+      );
     },
     handleLine: async () => {},
     printIntegrationStatus: () => printIntegrationStatus(cwd),
@@ -551,6 +644,47 @@ export async function startChatSession(
       return;
     }
 
+    // Inline bash execution: !command runs shell, !!command excludes from context
+    if (input.startsWith('!')) {
+      const excludeFromContext = input.startsWith('!!');
+      const command = (excludeFromContext ? input.slice(2) : input.slice(1)).trim();
+      if (command) {
+        processing = true;
+        try {
+          const { execSync } = await import('node:child_process');
+          console.log(chalk.gray(`  $ ${command}`));
+          const result = execSync(command, {
+            encoding: 'utf8',
+            cwd,
+            timeout: 30_000,
+            stdio: ['pipe', 'pipe', 'pipe'],
+            env: { ...process.env },
+          });
+          if (result) {
+            const lines = result.trimEnd();
+            console.log(chalk.gray(lines));
+          }
+          console.log(chalk.green('  (exit 0)'));
+          console.log('');
+
+          // Optionally include in agent context
+          if (!excludeFromContext) {
+            ctx.lastUserMessage = `Shell command: ${command}\nOutput: ${result?.slice(0, 2000) ?? '(empty)'}`;
+          }
+        } catch (err: unknown) {
+          const execErr = err as { status?: number; stderr?: string; stdout?: string };
+          if (execErr.stdout) console.log(chalk.gray(execErr.stdout.toString().trimEnd()));
+          if (execErr.stderr) console.log(chalk.red(execErr.stderr.toString().trimEnd()));
+          console.log(chalk.red(`  (exit ${execErr.status ?? 1})`));
+          console.log('');
+        } finally {
+          processing = false;
+        }
+        rl.prompt();
+        return;
+      }
+    }
+
     let finalInput = input;
 
     if (!input.startsWith('/')) {
@@ -584,7 +718,16 @@ export async function startChatSession(
           return;
         }
         const memory = loadMemory(sessionId);
-        agent.setSystemPrompt(buildSystemPrompt({ sessionId, memory, cwd, activeSkills }));
+        agent.setSystemPrompt(
+          buildSystemPrompt({
+            sessionId,
+            memory,
+            cwd,
+            activeSkills,
+            profile: process.env.STATESET_PROFILE,
+            dryRun,
+          }),
+        );
         if (nextApply !== currentApply) {
           console.log(
             formatSuccess(`Writes ${nextApply ? 'enabled' : 'disabled'} (inline --apply).`),

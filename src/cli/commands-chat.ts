@@ -36,6 +36,7 @@ const HELP_CATEGORIES: CommandCategory[] = [
   'core',
   'safety',
   'integrations',
+  'engine',
   'sessions',
   'shortcuts',
   'exports',
@@ -47,6 +48,7 @@ const HELP_CATEGORY_ALIASES: Record<CommandCategory, string[]> = {
   core: ['core'],
   safety: ['safety', 'policy', 'policies', 'security'],
   integrations: ['integration', 'integrations'],
+  engine: ['engine', 'workflow', 'workflows'],
   sessions: ['session', 'sessions'],
   shortcuts: ['shortcut', 'shortcuts'],
   exports: ['export', 'exports'],
@@ -192,6 +194,29 @@ export async function handleChatCommand(input: string, ctx: ChatContext): Promis
   if (['/apply', '/redact', '/agentic', '/usage', '/model'].includes(prefix)) {
     return await handleConfigCommand(input, ctx);
   }
+
+  // /debug on|off — toggle debug logging
+  if (hasCommand(input, '/debug')) {
+    const arg = input.split(/\s+/).slice(1).join(' ').trim().toLowerCase();
+    const { logger } = await import('../lib/logger.js');
+    if (arg === 'on' || arg === 'true') {
+      logger.configure({ level: 'debug' });
+      console.log(formatSuccess('Debug logging enabled.'));
+    } else if (arg === 'off' || arg === 'false') {
+      logger.configure({ level: 'info' });
+      console.log(formatSuccess('Debug logging disabled.'));
+    } else {
+      const current = logger.getLevel();
+      console.log(
+        chalk.gray(
+          `  Debug mode: ${current === 'debug' || current === 'trace' ? 'on' : 'off'} (level: ${current})`,
+        ),
+      );
+    }
+    console.log('');
+    ctx.rl.prompt();
+    return { handled: true };
+  }
   if (
     hasCommand(input, '/audit') ||
     hasCommand(input, '/audit-show') ||
@@ -209,6 +234,131 @@ export async function handleChatCommand(input: string, ctx: ChatContext): Promis
     hasCommand(input, '/prompt')
   ) {
     return await handleTemplateCommand(input, ctx);
+  }
+
+  // /whoami — show full session dashboard
+  if (hasCommand(input, '/whoami')) {
+    const { calculateCost, formatUsd } = await import('../lib/pricing.js');
+    const { getFallbackChain } = await import('../lib/model-fallback.js');
+    const { getWorkflowEngineConfig } = await import('../config.js');
+    const { isIntegrationConfigured } = await import('../integrations/config.js');
+    const { INTEGRATION_DEFINITIONS } = await import('../integrations/registry.js');
+
+    const snap = metrics.snapshot();
+    const model = ctx.agent.getModel();
+    const breakdown = calculateCost(snap.tokenUsage, model);
+    const chain = getFallbackChain();
+    const engineConfig = getWorkflowEngineConfig();
+    const activeIntegrations = INTEGRATION_DEFINITIONS.filter((d) => {
+      try {
+        return isIntegrationConfigured(d.id);
+      } catch {
+        return false;
+      }
+    });
+    const profile = process.env.STATESET_PROFILE || 'default';
+    const totalTokens = snap.tokenUsage.inputTokens + snap.tokenUsage.outputTokens;
+
+    console.log('');
+    console.log(chalk.bold('  Session Dashboard'));
+    console.log(chalk.gray(`  ─────────────────────────────────────`));
+    console.log(chalk.gray(`  Session:      ${ctx.sessionId}`));
+    if (profile !== 'default') {
+      console.log(chalk.gray(`  Profile:      ${profile}`));
+    }
+    console.log(chalk.gray(`  Model:        ${model}`));
+    console.log(chalk.gray(`  Fallback:     ${chain.join(' → ')}`));
+    console.log(chalk.gray(`  Messages:     ${ctx.agent.getHistoryLength()}`));
+    console.log(
+      chalk.gray(
+        `  Tokens:       ${totalTokens.toLocaleString()} (${snap.tokenUsage.inputTokens.toLocaleString()} in / ${snap.tokenUsage.outputTokens.toLocaleString()} out)`,
+      ),
+    );
+    console.log(chalk.gray(`  Est. cost:    ${formatUsd(breakdown.totalCost)}`));
+    console.log(chalk.gray(`  Writes:       ${ctx.allowApply ? 'enabled' : 'disabled'}`));
+    console.log(chalk.gray(`  Redaction:    ${ctx.redactEmails ? 'enabled' : 'disabled'}`));
+    console.log(chalk.gray(`  Engine:       ${engineConfig ? 'configured' : 'not configured'}`));
+    console.log(
+      chalk.gray(
+        `  Integrations: ${activeIntegrations.length} active (${activeIntegrations.map((d) => d.label).join(', ') || 'none'})`,
+      ),
+    );
+    console.log('');
+    ctx.rl.prompt();
+    return { handled: true };
+  }
+
+  // /cost — show estimated session cost
+  if (hasCommand(input, '/cost')) {
+    const { calculateCost, formatUsd, formatCostBreakdown } = await import('../lib/pricing.js');
+    const snap = metrics.snapshot();
+    const model = ctx.agent.getModel();
+    const breakdown = calculateCost(snap.tokenUsage, model);
+    const totalTokens = snap.tokenUsage.inputTokens + snap.tokenUsage.outputTokens;
+
+    console.log('');
+    console.log(chalk.bold('  Session Cost Estimate'));
+    console.log(chalk.gray(`  Model: ${model}`));
+    console.log(
+      chalk.gray(
+        `  Tokens: ${totalTokens.toLocaleString()} (${snap.tokenUsage.inputTokens.toLocaleString()} in / ${snap.tokenUsage.outputTokens.toLocaleString()} out)`,
+      ),
+    );
+    console.log('');
+    for (const line of formatCostBreakdown(breakdown).split('\n')) {
+      console.log(`  ${line}`);
+    }
+    console.log('');
+    const msgCount = ctx.agent.getHistoryLength();
+    if (msgCount > 0) {
+      const costPerMsg = breakdown.totalCost / Math.ceil(msgCount / 2);
+      console.log(chalk.gray(`  Avg cost per exchange: ~${formatUsd(costPerMsg)}`));
+    }
+    console.log('');
+    ctx.rl.prompt();
+    return { handled: true };
+  }
+
+  // /trends — show historical token/cost trends
+  if (hasCommand(input, '/trends')) {
+    const arg = input.split(/\s+/).slice(1).join(' ').trim().toLowerCase();
+    const { computeTrends, formatTrendsSummary } = await import('../lib/trends.js');
+    const { formatUsd } = await import('../lib/pricing.js');
+
+    let days: number | undefined;
+    if (arg === '7d') days = 7;
+    else if (arg === '30d') days = 30;
+    else if (arg === '90d') days = 90;
+    else if (arg === 'all') days = undefined;
+    else days = 30; // default
+
+    const summary = computeTrends(days);
+
+    if (summary.totalSessions === 0) {
+      console.log(formatWarning('No session metrics found. Metrics are saved on session exit.'));
+    } else {
+      console.log('');
+      console.log(chalk.bold(`  Usage Trends${days ? ` (last ${days} days)` : ' (all time)'}`));
+      console.log(chalk.gray(`  ─────────────────────────────────────`));
+      for (const line of formatTrendsSummary(summary).split('\n')) {
+        console.log(`  ${line}`);
+      }
+
+      if (summary.topSessionsByCost.length > 1) {
+        console.log('');
+        console.log(chalk.bold('  Top sessions by cost:'));
+        for (const s of summary.topSessionsByCost.slice(0, 5)) {
+          console.log(
+            chalk.gray(
+              `    ${s.date}  ${s.sessionId.padEnd(20)}  ${formatUsd(s.cost).padStart(8)}  ${s.tokens.toLocaleString()} tokens`,
+            ),
+          );
+        }
+      }
+    }
+    console.log('');
+    ctx.rl.prompt();
+    return { handled: true };
   }
 
   // /metrics — show session metrics
@@ -360,6 +510,44 @@ export async function handleChatCommand(input: string, ctx: ChatContext): Promis
           `  Note: History was trimmed (${trimInfo.messagesBefore} → ${trimInfo.messagesAfter} messages)`,
         ),
       );
+    }
+    console.log('');
+    ctx.rl.prompt();
+    return { handled: true };
+  }
+
+  // /copy — copy last assistant response to clipboard
+  if (hasCommand(input, '/copy')) {
+    const history = ctx.agent.getHistory();
+    let lastAssistantText: string | null = null;
+    if (Array.isArray(history)) {
+      for (let i = history.length - 1; i >= 0; i--) {
+        const msg = history[i];
+        if (msg.role === 'assistant') {
+          if (typeof msg.content === 'string') {
+            lastAssistantText = msg.content;
+          } else if (Array.isArray(msg.content)) {
+            const texts: string[] = [];
+            for (const block of msg.content) {
+              if ('type' in block && block.type === 'text' && 'text' in block) {
+                texts.push((block as { text: string }).text);
+              }
+            }
+            lastAssistantText = texts.join('\n') || null;
+          }
+          if (lastAssistantText) break;
+        }
+      }
+    }
+    if (!lastAssistantText) {
+      console.log(formatWarning('No assistant response to copy.'));
+    } else {
+      const { copyToClipboard } = await import('../lib/clipboard.js');
+      if (copyToClipboard(lastAssistantText)) {
+        console.log(formatSuccess('Copied to clipboard.'));
+      } else {
+        console.log(formatWarning('Could not copy to clipboard. No clipboard tool found.'));
+      }
     }
     console.log('');
     ctx.rl.prompt();

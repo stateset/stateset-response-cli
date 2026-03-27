@@ -2,6 +2,7 @@ import { handleChatCommand } from './commands-chat.js';
 import { handleSessionCommand } from './commands-session.js';
 import { handleExportCommand } from './commands-export.js';
 import { handleShortcutCommand } from './commands-shortcuts.js';
+import { handleEngineCommand, handleWorkflowsCommand } from './commands-engine.js';
 import { findCommand, registerAllCommands } from './command-registry.js';
 import type { ChatContext, CommandResult } from './types.js';
 import { formatError } from '../utils/display.js';
@@ -86,6 +87,28 @@ export async function routeSlashCommand(input: string, ctx: ChatContext): Promis
   try {
     if (await handleExportCommand(routedInput, ctx)) {
       return { handled: true };
+    }
+  } catch (err) {
+    console.error(formatError(getErrorMessage(err)));
+    return { handled: true, needsPrompt: true };
+  }
+
+  // Engine commands: /engine, /engine setup, /engine brands, etc.
+  try {
+    const engineResult = await handleEngineCommand(routedInput, ctx);
+    if (engineResult.handled) {
+      return engineResult;
+    }
+  } catch (err) {
+    console.error(formatError(getErrorMessage(err)));
+    return { handled: true, needsPrompt: true };
+  }
+
+  // Workflow commands: /workflows list, /workflows status, etc.
+  try {
+    const workflowResult = await handleWorkflowsCommand(routedInput, ctx);
+    if (workflowResult.handled) {
+      return workflowResult;
     }
   } catch (err) {
     console.error(formatError(getErrorMessage(err)));

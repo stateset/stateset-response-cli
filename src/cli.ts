@@ -12,14 +12,18 @@ import {
   getConfiguredModel,
   getConfigPath,
   loadConfig,
+  saveConfig,
   resolveModelOrThrow,
   getModelAliasText,
+  getWorkflowEngineConfig,
   DEFAULT_MODEL,
   type ModelId,
+  type WorkflowEngineConfig,
 } from './config.js';
 import { sanitizeSessionId } from './session.js';
 import { printAuthHelp, formatError } from './utils/display.js';
 import { installGlobalErrorHandlers, getErrorMessage } from './lib/errors.js';
+import { setOutputMode, type OutputMode } from './lib/output.js';
 import { exportOrg, importOrg, type ImportResult } from './export-import.js';
 import { EventsRunner, validateEventsPrereqs } from './events.js';
 import { assertNodeVersion } from './cli/utils.js';
@@ -31,8 +35,21 @@ import { resolveOneShotInput, runOneShotPrompt, startChatSession } from './cli/c
 import { exportAgentRunbook } from './cli/runbook.js';
 import { listAgentTemplates, scaffoldAgentTemplate } from './cli/agent-templates.js';
 
+import { parseProfileArgs, applyProfile } from './lib/profile.js';
+
 const require = createRequire(import.meta.url);
 const pkg = require('../package.json') as { version?: string };
+
+// Parse and apply profile BEFORE commander or config loading
+try {
+  const { profile, cleanedArgv } = parseProfileArgs(process.argv.slice(2));
+  applyProfile(profile);
+  // Replace argv so commander doesn't see --profile/--dev
+  process.argv = [...process.argv.slice(0, 2), ...cleanedArgv];
+} catch (e) {
+  console.error(`Error: ${(e as Error).message}`);
+  process.exit(1);
+}
 
 const program = new Command();
 assertNodeVersion();
@@ -43,8 +60,21 @@ program
   .description('AI-powered CLI for managing the StateSet Response platform')
   .version(pkg.version || '0.0.0')
   .showSuggestionAfterError(true)
-  .showHelpAfterError();
+  .showHelpAfterError()
+  .option('--json', 'Output in machine-readable JSON format')
+  .option('--output <mode>', 'Output mode: json, pretty, minimal', 'pretty')
+  .option('--dry-run', 'Preview operations without executing mutations');
 program.exitOverride();
+
+// Apply global output mode before subcommands run
+program.hook('preAction', (thisCommand) => {
+  const opts = thisCommand.opts();
+  if (opts.json) {
+    setOutputMode('json');
+  } else if (opts.output && ['json', 'pretty', 'minimal'].includes(opts.output)) {
+    setOutputMode(opts.output as OutputMode);
+  }
+});
 
 program.addHelpText(
   'after',
@@ -55,9 +85,12 @@ program.addHelpText(
     '  response ask "Summarize the latest failed orders"',
     '  cat incident.txt | response ask --stdin --session ops',
     '  response chat --session ops --model sonnet',
+    '  response batch prompts.txt --output results.jsonl',
+    '  response engine setup',
     '  response init --from-env --integration shopify',
-    '  response integrations setup',
+    '  response serve --port 3000 --forward-to-engine',
     '  response doctor',
+    '  eval "$(response completion bash)"',
     '',
   ].join('\n'),
 );
@@ -191,6 +224,32 @@ program
       }
     }
 
+    // Offer workflow engine setup
+    if (!options.nonInteractive) {
+      const engineConfig = getWorkflowEngineConfig();
+      if (!engineConfig) {
+        const { configEngine } = await inquirer.prompt([
+          {
+            type: 'confirm',
+            name: 'configEngine',
+            message: 'Configure Workflow Engine? (brand management, workflow automation)',
+            default: false,
+          },
+        ]);
+        if (configEngine) {
+          try {
+            // Delegate to the engine setup command
+            await program.parseAsync(['node', 'response', 'engine', 'setup'], { from: 'user' });
+          } catch (e: unknown) {
+            console.error(formatError(getErrorMessage(e)));
+          }
+        }
+      } else {
+        console.log(chalk.gray('  Workflow engine already configured.'));
+      }
+      console.log('');
+    }
+
     if (options.template) {
       try {
         const result = scaffoldAgentTemplate(options.template, process.cwd());
@@ -251,6 +310,337 @@ interface AskCommandOptions {
   stdin?: boolean;
 }
 
+// Webhook dev server
+program
+  .command('serve')
+  .description('Start a local webhook development server')
+  .option('--port <port>', 'Port to listen on', '3000')
+  .option('--forward-to-engine', 'Forward received webhooks to the workflow engine')
+  .option('--verbose', 'Show webhook body previews')
+  .action(async (options: { port?: string; forwardToEngine?: boolean; verbose?: boolean }) => {
+    const port = Number.parseInt(options.port ?? '3000', 10);
+    if (!Number.isFinite(port) || port < 1 || port > 65535) {
+      console.error(formatError('Invalid port number. Use 1-65535.'));
+      process.exitCode = 1;
+      return;
+    }
+
+    const { startWebhookServer } = await import('./webhook-server.js');
+    const { server, stop } = startWebhookServer({
+      port,
+      forwardToEngine: Boolean(options.forwardToEngine),
+      verbose: Boolean(options.verbose),
+    });
+
+    const shutdown = async () => {
+      console.log('\n  Stopping webhook server...');
+      await stop();
+      process.exitCode = 0;
+    };
+
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
+
+    server.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code === 'EADDRINUSE') {
+        console.error(formatError(`Port ${port} is already in use.`));
+      } else {
+        console.error(formatError(err.message));
+      }
+      process.exitCode = 1;
+    });
+  });
+
+// Shell completion generation
+program
+  .command('completion')
+  .description('Generate shell completion scripts (bash, zsh, fish)')
+  .argument('[shell]', 'Shell type: bash, zsh, or fish', 'bash')
+  .action((shell: string) => {
+    const commands = [
+      'chat',
+      'ask',
+      'init',
+      'config',
+      'export',
+      'import',
+      'events',
+      'doctor',
+      'auth',
+      'integrations',
+      'engine',
+      'batch',
+      'completion',
+    ];
+    const globalFlags = [
+      '--model',
+      '--session',
+      '--apply',
+      '--redact',
+      '--dry-run',
+      '--json',
+      '--usage',
+      '--verbose',
+      '--help',
+      '--version',
+      '--profile',
+      '--dev',
+    ];
+
+    switch (shell.toLowerCase()) {
+      case 'bash':
+        console.log(`# bash completion for response CLI
+# Add to ~/.bashrc: eval "$(response completion bash)"
+_response_completions() {
+  local cur="\${COMP_WORDS[COMP_CWORD]}"
+  local prev="\${COMP_WORDS[COMP_CWORD-1]}"
+  if [ "$COMP_CWORD" -eq 1 ]; then
+    COMPREPLY=($(compgen -W "${commands.join(' ')}" -- "$cur"))
+    return
+  fi
+  case "$prev" in
+    --model) COMPREPLY=($(compgen -W "sonnet haiku opus" -- "$cur")); return;;
+    --output) COMPREPLY=($(compgen -W "json pretty minimal" -- "$cur")); return;;
+    --profile) return;;
+    engine) COMPREPLY=($(compgen -W "setup status brands health" -- "$cur")); return;;
+    config) COMPREPLY=($(compgen -W "path show" -- "$cur")); return;;
+  esac
+  COMPREPLY=($(compgen -W "${globalFlags.join(' ')}" -- "$cur"))
+}
+complete -F _response_completions response`);
+        break;
+
+      case 'zsh':
+        console.log(`# zsh completion for response CLI
+# Add to ~/.zshrc: eval "$(response completion zsh)"
+_response() {
+  local -a commands=(${commands.map((c) => `'${c}:${c} command'`).join(' ')})
+  local -a flags=(${globalFlags.map((f) => `'${f}'`).join(' ')})
+  _arguments '1:command:->cmds' '*:flags:->flags'
+  case "$state" in
+    cmds) _describe 'command' commands;;
+    flags) _values 'flags' $flags;;
+  esac
+}
+compdef _response response`);
+        break;
+
+      case 'fish':
+        console.log(`# fish completion for response CLI
+# Save to ~/.config/fish/completions/response.fish
+${commands.map((c) => `complete -c response -n '__fish_use_subcommand' -a '${c}' -d '${c}'`).join('\n')}
+complete -c response -l model -xa 'sonnet haiku opus'
+complete -c response -l output -xa 'json pretty minimal'
+complete -c response -l profile
+complete -c response -l apply
+complete -c response -l redact
+complete -c response -l dry-run
+complete -c response -l json
+complete -c response -l verbose
+complete -c response -n '__fish_seen_subcommand_from engine' -a 'setup status brands health'
+complete -c response -n '__fish_seen_subcommand_from config' -a 'path show'`);
+        break;
+
+      default:
+        console.error(formatError(`Unknown shell: ${shell}. Use bash, zsh, or fish.`));
+        process.exitCode = 1;
+    }
+  });
+
+// Engine commands
+const engineCmd = program
+  .command('engine')
+  .description('Manage the workflow engine connection and control plane');
+
+engineCmd
+  .command('setup')
+  .description('Configure the workflow engine connection (URL, API key, tenant)')
+  .option('--url <url>', 'Workflow engine URL')
+  .option('--api-key <key>', 'Workflow engine API key')
+  .option('--tenant-id <id>', 'Tenant ID for multi-tenant scoping')
+  .action(async (options: { url?: string; apiKey?: string; tenantId?: string }) => {
+    if (!configExists()) {
+      printAuthHelp();
+      process.exitCode = 1;
+      return;
+    }
+
+    const cfg = loadConfig();
+    const org = cfg.organizations[cfg.currentOrg];
+    if (!org) {
+      console.error(formatError(`Organization "${cfg.currentOrg}" not found.`));
+      process.exitCode = 1;
+      return;
+    }
+
+    let url = options.url?.trim();
+    let apiKey = options.apiKey?.trim();
+    let tenantId = options.tenantId?.trim();
+
+    if (!url || !apiKey) {
+      const existing = org.workflowEngine;
+      const answers = await inquirer.prompt([
+        ...(!url
+          ? [
+              {
+                type: 'input' as const,
+                name: 'url',
+                message: 'Workflow engine URL:',
+                default: existing?.url || 'http://localhost:8080',
+              },
+            ]
+          : []),
+        ...(!apiKey
+          ? [
+              {
+                type: 'password' as const,
+                name: 'apiKey',
+                message: 'Workflow engine API key:',
+                default: existing?.apiKey,
+              },
+            ]
+          : []),
+        ...(!tenantId
+          ? [
+              {
+                type: 'input' as const,
+                name: 'tenantId',
+                message: 'Tenant ID (optional):',
+                default: existing?.tenantId || '',
+              },
+            ]
+          : []),
+      ]);
+      url = url || answers.url;
+      apiKey = apiKey || answers.apiKey;
+      tenantId = tenantId || answers.tenantId || undefined;
+    }
+
+    if (!url || !apiKey) {
+      console.error(formatError('URL and API key are required.'));
+      process.exitCode = 1;
+      return;
+    }
+
+    const engineConfig: WorkflowEngineConfig = {
+      url,
+      apiKey,
+      tenantId: tenantId || undefined,
+    };
+
+    // Test connectivity
+    const { EngineClient } = await import('./lib/engine-client.js');
+    const client = new EngineClient(engineConfig);
+    const spinner = ora('Testing connection...').start();
+    try {
+      await client.health();
+      spinner.succeed('Connected to workflow engine');
+    } catch (e: unknown) {
+      spinner.warn(`Could not reach engine: ${getErrorMessage(e)}`);
+    }
+
+    org.workflowEngine = engineConfig;
+    cfg.organizations[cfg.currentOrg] = org;
+    saveConfig(cfg);
+    console.log(chalk.green('  Workflow engine configuration saved.'));
+  });
+
+engineCmd
+  .command('status')
+  .description('Show workflow engine connection status')
+  .action(async () => {
+    const config = getWorkflowEngineConfig();
+    if (!config) {
+      console.log(chalk.yellow('  Workflow engine not configured.'));
+      console.log(chalk.gray('  Run "response engine setup" to configure.'));
+      return;
+    }
+
+    console.log(chalk.bold('  Workflow Engine'));
+    console.log(chalk.gray(`  URL:       ${config.url}`));
+    console.log(chalk.gray(`  API Key:   ${'*'.repeat(8)}...${config.apiKey.slice(-4)}`));
+    if (config.tenantId) {
+      console.log(chalk.gray(`  Tenant ID: ${config.tenantId}`));
+    }
+
+    const { EngineClient } = await import('./lib/engine-client.js');
+    const client = new EngineClient(config);
+    try {
+      await client.health();
+      console.log(chalk.green('  Status:    connected'));
+    } catch (e: unknown) {
+      console.log(chalk.red(`  Status:    unreachable (${getErrorMessage(e)})`));
+    }
+  });
+
+engineCmd
+  .command('brands')
+  .description('List brands in the workflow engine')
+  .option('--slug <slug>', 'Filter by brand slug')
+  .option('--status <status>', 'Filter by status')
+  .action(async (options: { slug?: string; status?: string }) => {
+    const config = getWorkflowEngineConfig();
+    if (!config) {
+      console.log(chalk.yellow('  Workflow engine not configured.'));
+      return;
+    }
+
+    const { EngineClient } = await import('./lib/engine-client.js');
+    const client = new EngineClient(config);
+    try {
+      const result = (await client.listBrands({
+        slug: options.slug,
+        status: options.status,
+        limit: 50,
+      })) as { items?: Array<Record<string, unknown>> };
+      const items =
+        result?.items ?? (Array.isArray(result) ? (result as Array<Record<string, unknown>>) : []);
+
+      if (!items.length) {
+        console.log(chalk.gray('  No brands found.'));
+        return;
+      }
+
+      console.log(chalk.bold(`  Brands (${items.length})`));
+      for (const brand of items) {
+        const id = String(brand.id ?? '').slice(0, 8);
+        const name = brand.name ?? brand.slug ?? 'unnamed';
+        const st = brand.status ?? 'unknown';
+        const mode = brand.routing_mode ?? '-';
+        console.log(
+          `  ${chalk.gray(id)}  ${String(name).padEnd(24)} ${String(st).padEnd(12)} ${chalk.gray(String(mode))}`,
+        );
+      }
+    } catch (e: unknown) {
+      console.error(formatError(getErrorMessage(e)));
+      process.exitCode = 1;
+    }
+  });
+
+engineCmd
+  .command('health')
+  .description('Check workflow engine health')
+  .action(async () => {
+    const config = getWorkflowEngineConfig();
+    if (!config) {
+      console.log(chalk.yellow('  Workflow engine not configured.'));
+      return;
+    }
+
+    const { EngineClient } = await import('./lib/engine-client.js');
+    const client = new EngineClient(config);
+    try {
+      const result = await client.health();
+      console.log(chalk.green('  Engine healthy'));
+      if (result && typeof result === 'object') {
+        console.log(chalk.gray(`  ${JSON.stringify(result, null, 2)}`));
+      }
+    } catch (e: unknown) {
+      console.error(chalk.red(`  Engine unreachable: ${getErrorMessage(e)}`));
+      process.exitCode = 1;
+    }
+  });
+
 // Config commands
 const configCmd = program.command('config').description('Manage CLI configuration');
 
@@ -284,6 +674,13 @@ configCmd
               graphqlEndpoint: org.graphqlEndpoint,
               adminSecret: org.adminSecret ? '***' : undefined,
               cliToken: org.cliToken ? '***' : undefined,
+              workflowEngine: org.workflowEngine
+                ? {
+                    url: org.workflowEngine.url,
+                    apiKey: '***',
+                    tenantId: org.workflowEngine.tenantId,
+                  }
+                : undefined,
             },
           ]),
         ),
@@ -579,6 +976,7 @@ program
   .option('--file <path>', 'Attach a file (repeatable)', collectRepeatableOption, [])
   .option('--apply', 'Allow write operations for integration tools')
   .option('--redact', 'Redact customer emails in integration outputs')
+  .option('--dry-run', 'Preview write operations without executing')
   .option('--usage', 'Show token usage summaries')
   .option('--verbose', 'Enable debug logging')
   .action(async (promptParts: string[], options: AskCommandOptions) => {
@@ -606,6 +1004,126 @@ program
     });
   });
 
+// Batch command
+program
+  .command('batch')
+  .description('Process multiple prompts from a file (one per line)')
+  .argument('<file>', 'Input file with prompts (one per line)')
+  .option('--model <model>', `Model to use (${getModelAliasText('list')} or full model ID)`)
+  .option('--session <name>', 'Session name', 'batch')
+  .option('--apply', 'Allow write operations')
+  .option('--redact', 'Redact customer emails')
+  .option('--output <path>', 'Output file (JSONL format)')
+  .action(
+    async (
+      file: string,
+      options: {
+        model?: string;
+        session?: string;
+        apply?: boolean;
+        redact?: boolean;
+        output?: string;
+      },
+    ) => {
+      const fs = await import('node:fs');
+      if (!fs.existsSync(file)) {
+        console.error(formatError(`File not found: ${file}`));
+        process.exitCode = 1;
+        return;
+      }
+
+      const lines = fs
+        .readFileSync(file, 'utf-8')
+        .split('\n')
+        .map((l: string) => l.trim())
+        .filter((l: string) => l.length > 0 && !l.startsWith('#'));
+
+      if (lines.length === 0) {
+        console.error(formatError('No prompts found in file.'));
+        process.exitCode = 1;
+        return;
+      }
+
+      console.log(chalk.gray(`  Processing ${lines.length} prompts from ${file}`));
+
+      const { createProgress } = await import('./lib/progress.js');
+      const progress = createProgress({
+        message: `Processing ${lines.length} prompts`,
+        total: lines.length,
+      });
+
+      // Set up agent once for the batch
+      if (!configExists()) {
+        printAuthHelp();
+        process.exitCode = 1;
+        return;
+      }
+
+      const { validateRuntimeConfig } = await import('./config.js');
+      const { StateSetAgent } = await import('./agent.js');
+
+      let runtime;
+      try {
+        runtime = validateRuntimeConfig();
+      } catch (e: unknown) {
+        console.error(formatError(getErrorMessage(e)));
+        process.exitCode = 1;
+        return;
+      }
+
+      let model: ModelId = getConfiguredModel();
+      if (options.model) {
+        try {
+          model = resolveModelOrThrow(options.model);
+        } catch (e: unknown) {
+          console.error(formatError(getErrorMessage(e)));
+          process.exitCode = 1;
+          return;
+        }
+      }
+
+      const agent = new StateSetAgent(runtime.anthropicApiKey, model);
+      const mcpEnv: Record<string, string> = {};
+      if (options.apply) mcpEnv.STATESET_ALLOW_APPLY = 'true';
+      if (options.redact) mcpEnv.STATESET_REDACT = 'true';
+      agent.setMcpEnvOverrides(mcpEnv);
+
+      const batchSpinner = ora('Connecting to MCP server...').start();
+      try {
+        await agent.connect();
+        batchSpinner.succeed('Connected');
+      } catch (e: unknown) {
+        batchSpinner.fail(`Connection failed: ${getErrorMessage(e)}`);
+        process.exitCode = 1;
+        return;
+      }
+
+      const outputPath = options.output ?? `${file}.results.jsonl`;
+      const outputStream = fs.createWriteStream(outputPath, { flags: 'w' });
+
+      for (let i = 0; i < lines.length; i++) {
+        const prompt = lines[i];
+        progress.update(`[${i + 1}/${lines.length}] ${prompt.slice(0, 50)}...`);
+
+        try {
+          const response = await agent.chat(prompt);
+          outputStream.write(JSON.stringify({ index: i, prompt, response, error: null }) + '\n');
+        } catch (err) {
+          outputStream.write(
+            JSON.stringify({ index: i, prompt, response: null, error: getErrorMessage(err) }) +
+              '\n',
+          );
+        }
+
+        progress.tick();
+      }
+
+      outputStream.end();
+      await agent.disconnect();
+      progress.succeed(`Processed ${lines.length} prompts → ${outputPath}`);
+    },
+  );
+
 // Default command: interactive agent session
 program
   .command('chat', { isDefault: true })
@@ -615,6 +1133,7 @@ program
   .option('--file <path>', 'Attach a file (repeatable)', collectRepeatableOption, [])
   .option('--apply', 'Allow write operations for integration tools')
   .option('--redact', 'Redact customer emails in integration outputs')
+  .option('--dry-run', 'Preview write operations without executing')
   .option('--usage', 'Show token usage summaries')
   .option('--verbose', 'Enable debug logging')
   .action(async (options) => {

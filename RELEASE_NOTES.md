@@ -1,28 +1,21 @@
-# StateSet ResponseCLI Release Notes (v1.9.0)
+# StateSet ResponseCLI Release Notes (v1.9.2)
 
 ## Overview
 
-StateSet ResponseCLI `v1.9.0` adds a traced simulator and conversation replay workflow for faster agent iteration, expands CLI operations around drift detection and bulk updates, and adds scaffolding and runbook generation for faster rollout across brands.
+StateSet ResponseCLI `v1.9.2` focuses on release quality: more consistent machine-readable output for automation-heavy workflows, cleaner output primitives, and a restored clean lint/test baseline for the expanded command surface.
 
 ## Highlights
 
-### Agent simulation and replay
+### Structured output
 
-- Turned `response test` into a traced simulator with visible tool calls, sandboxed write blocking, optional mock tool responses, and final-response inspection.
-- Added `response replay <conversation-id>` so existing conversations can be rerun step by step with tool visibility.
-- Added `response logs --watch` to tail local session and audit activity during rollouts and debugging.
+- Standardized structured JSON responses for config and export command paths so scripts can rely on stable payloads instead of mixed prose output.
+- Improved shared output helpers to carry richer success, warning, and error details in JSON mode while keeping interactive terminal output readable.
 
-### Operational controls
+### Release quality
 
-- Added `response diff --remote` to compare local `.stateset` config with deployed remote state before deploys.
-- Added `response sync status` to summarize integration readiness, last success, and failure signals from local telemetry.
-- Added bulk mutation flows for rules and agents so repetitive cross-brand updates can be handled from the CLI.
-
-### Templates, analytics, and runbooks
-
-- Added `response init --template refund-agent|subscription-management` to scaffold local starter bundles.
-- Added `response analytics quality` for derived CSAT, escalation, resolution, and per-agent quality reporting.
-- Added `response export runbook --agent ...` to generate human-readable documentation for audits and handoffs.
+- Removed warning-only lint failures from the new test coverage and cleaned up minor dead code in the metrics trends path.
+- Added regression tests around JSON-mode output for config and export commands.
+- Kept the full supported Node 20 verification path green before release.
 
 ## CLI entry points
 

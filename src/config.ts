@@ -7,11 +7,18 @@ import { ConfigurationError, getErrorMessage } from './lib/errors.js';
 import { readJsonFile } from './utils/file-read.js';
 import { ensurePrivateDirectory, writePrivateTextFileSecure } from './utils/secure-file.js';
 
+export interface WorkflowEngineConfig {
+  url: string;
+  apiKey: string;
+  tenantId?: string;
+}
+
 export interface OrgConfig {
   name: string;
   graphqlEndpoint: string;
   adminSecret?: string;
   cliToken?: string;
+  workflowEngine?: WorkflowEngineConfig;
 }
 
 export const MODEL_IDS = [
@@ -71,11 +78,18 @@ export interface StateSetConfig {
 }
 
 // Zod schemas for runtime validation
+const WorkflowEngineConfigSchema = z.object({
+  url: z.string().min(1),
+  apiKey: z.string().min(1),
+  tenantId: z.string().optional(),
+});
+
 const OrgConfigSchema = z.object({
   name: z.string().min(1),
   graphqlEndpoint: z.string().min(1),
   adminSecret: z.string().optional(),
   cliToken: z.string().optional(),
+  workflowEngine: WorkflowEngineConfigSchema.optional(),
 });
 
 const StateSetConfigSchema = z.object({
@@ -85,12 +99,17 @@ const StateSetConfigSchema = z.object({
   organizations: z.record(z.string(), OrgConfigSchema),
 });
 
-const CONFIG_DIR = path.join(os.homedir(), '.stateset');
-const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
+function getConfigDir(): string {
+  return process.env.STATESET_STATE_DIR?.trim() || path.join(os.homedir(), '.stateset');
+}
+
+function getConfigFile(): string {
+  return process.env.STATESET_CONFIG_PATH?.trim() || path.join(getConfigDir(), 'config.json');
+}
 
 /** Returns the absolute path to ~/.stateset/config.json. */
 export function getConfigPath(): string {
-  return CONFIG_FILE;
+  return getConfigFile();
 }
 
 type DecryptResult = { value: string | undefined; error?: string };
@@ -108,14 +127,14 @@ function tryDecryptConfigSecret(value: string, label: string): DecryptResult {
 }
 
 export function ensureConfigDir(): void {
-  ensurePrivateDirectory(CONFIG_DIR, {
+  ensurePrivateDirectory(getConfigDir(), {
     symlinkErrorPrefix: 'Refusing to use symlinked config directory',
     nonDirectoryErrorPrefix: 'Config directory path is not a directory',
   });
 }
 
 export function configExists(): boolean {
-  return fs.existsSync(CONFIG_FILE);
+  return fs.existsSync(getConfigFile());
 }
 
 /** Reads, validates, and decrypts the config from disk. Throws ConfigurationError on failure. */
@@ -132,7 +151,7 @@ export function loadConfig(): StateSetConfig {
   }
   let parsed: unknown;
   try {
-    parsed = readJsonFile(CONFIG_FILE, { label: 'config file', expectObject: true });
+    parsed = readJsonFile(getConfigFile(), { label: 'config file', expectObject: true });
   } catch (e) {
     const message = getErrorMessage(e);
     if (message.includes('Invalid JSON in')) {
@@ -150,7 +169,7 @@ export function loadConfig(): StateSetConfig {
       .map((i) => `  - ${i.path.join('.')}: ${i.message}`)
       .join('\n');
     throw new ConfigurationError(
-      `Invalid configuration:\n${issues}\n\nFix the config at ${CONFIG_FILE} or run "response auth login".`,
+      `Invalid configuration:\n${issues}\n\nFix the config at ${getConfigFile()} or run "response auth login".`,
     );
   }
 
@@ -220,6 +239,18 @@ export function loadConfig(): StateSetConfig {
         `Failed to decrypt credentials for organization "${config.currentOrg}": ${activeOrgErrors.join(' ')}`,
       );
     }
+
+    if (activeOrg.workflowEngine?.apiKey) {
+      const decrypted = tryDecryptConfigSecret(
+        activeOrg.workflowEngine.apiKey,
+        `workflow engine API key for organization "${config.currentOrg}"`,
+      );
+      if (decrypted.error) {
+        activeOrg.workflowEngine.apiKey = '';
+      } else if (decrypted.value) {
+        activeOrg.workflowEngine.apiKey = decrypted.value;
+      }
+    }
   }
 
   return config;
@@ -246,11 +277,17 @@ export function saveConfig(config: StateSetConfig): void {
     if (org.adminSecret) {
       org.adminSecret = encryptSecret(org.adminSecret);
     }
+    if (org.workflowEngine?.apiKey) {
+      org.workflowEngine = {
+        ...org.workflowEngine,
+        apiKey: encryptSecret(org.workflowEngine.apiKey),
+      };
+    }
     configToSave.organizations[orgId] = org;
   }
 
   try {
-    writePrivateTextFileSecure(CONFIG_FILE, JSON.stringify(configToSave, null, 2), {
+    writePrivateTextFileSecure(getConfigFile(), JSON.stringify(configToSave, null, 2), {
       label: 'Config file path',
     });
   } catch (e) {
@@ -365,6 +402,32 @@ export function getAnthropicApiKey(): string {
   );
 }
 
+/**
+ * Returns the workflow engine config for the current org, if configured.
+ * Also checks WORKFLOW_ENGINE_URL / WORKFLOW_ENGINE_API_KEY env vars as overrides.
+ */
+export function getWorkflowEngineConfig(): WorkflowEngineConfig | null {
+  const envUrl = process.env.WORKFLOW_ENGINE_URL?.trim();
+  const envKey = process.env.WORKFLOW_ENGINE_API_KEY?.trim();
+
+  if (envUrl && envKey) {
+    return {
+      url: envUrl,
+      apiKey: envKey,
+      tenantId: process.env.WORKFLOW_ENGINE_TENANT_ID?.trim(),
+    };
+  }
+
+  if (!configExists()) return null;
+  try {
+    const cfg = loadConfig();
+    const org = cfg.organizations[cfg.currentOrg];
+    return org?.workflowEngine ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** Returns the model from config, defaulting to DEFAULT_MODEL if unset. */
 export function getConfiguredModel(): ModelId {
   if (configExists()) {
@@ -399,7 +462,7 @@ export function migrateConfigSecrets(): boolean {
   }
 
   try {
-    const parsed = readJsonFile(CONFIG_FILE, { label: 'config file', expectObject: true });
+    const parsed = readJsonFile(getConfigFile(), { label: 'config file', expectObject: true });
     const parsedConfig = StateSetConfigSchema.safeParse(parsed);
     if (!parsedConfig.success) {
       return false;
@@ -439,6 +502,13 @@ export function migrateConfigSecrets(): boolean {
       }
       if (org.adminSecret && !isEncrypted(org.adminSecret)) {
         current.adminSecret = encryptSecret(org.adminSecret);
+        migrated = true;
+      }
+      if (current.workflowEngine?.apiKey && !isEncrypted(current.workflowEngine.apiKey)) {
+        current.workflowEngine = {
+          ...current.workflowEngine,
+          apiKey: encryptSecret(current.workflowEngine.apiKey),
+        };
         migrated = true;
       }
       next.organizations[orgId] = current;

@@ -57,6 +57,8 @@ import { registerShipHeroTools } from './tools/shiphero.js';
 import { registerShipFusionTools } from './tools/shipfusion.js';
 import { registerShipHawkTools } from './tools/shiphawk.js';
 import { registerZendeskTools } from './tools/zendesk.js';
+import { registerWorkflowEngineTools } from './tools/workflow-engine.js';
+import { getWorkflowEngineConfig } from '../config.js';
 
 /* ------------------------------------------------------------------ */
 /*  Declarative integration registry                                   */
@@ -205,6 +207,16 @@ export function createServer(): McpServer {
   registerMessageTools(server, graphqlClient, orgId);
   registerSettingsTools(server, graphqlClient, orgId);
   registerOrganizationTools(server, graphqlClient, orgId);
+
+  // Workflow engine (optional)
+  try {
+    const engineConfig = getWorkflowEngineConfig();
+    if (engineConfig) {
+      registerWorkflowEngineTools(server, engineConfig);
+    }
+  } catch (error) {
+    logger.warn(`Workflow engine tools disabled: ${getErrorMessage(error)}`);
+  }
 
   const integrationFlags = getIntegrationFlagsFromEnv();
 

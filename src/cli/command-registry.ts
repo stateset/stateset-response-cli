@@ -4,6 +4,7 @@ export type CommandCategory =
   | 'core'
   | 'safety'
   | 'integrations'
+  | 'engine'
   | 'sessions'
   | 'shortcuts'
   | 'exports'
@@ -86,6 +87,7 @@ const CATEGORY_ORDER: CommandCategory[] = [
   'core',
   'safety',
   'integrations',
+  'engine',
   'sessions',
   'shortcuts',
   'exports',
@@ -97,6 +99,7 @@ const CATEGORY_LABELS: Record<CommandCategory, string> = {
   core: 'Core',
   safety: 'Safety & Policy',
   integrations: 'Integrations',
+  engine: 'Workflow Engine',
   sessions: 'Sessions',
   shortcuts: 'Shortcut Commands',
   exports: 'Exports',
@@ -160,6 +163,39 @@ export function registerAllCommands(): void {
     name: '/metrics',
     usage: '/metrics [json] [reset]',
     description: 'Show session metrics, token usage, and tool breakdown',
+    category: 'core',
+  });
+  registerCommand({
+    name: '/whoami',
+    usage: '/whoami',
+    description: 'Show full session dashboard (org, model, profile, engine, cost)',
+    category: 'core',
+  });
+  registerCommand({
+    name: '/cost',
+    usage: '/cost',
+    description: 'Show estimated session cost based on token usage',
+    category: 'core',
+  });
+  registerCommand({
+    name: '/trends',
+    usage: '/trends [7d|30d|90d|all]',
+    description: 'Show token usage and cost trends over time',
+    category: 'core',
+    detailedHelp:
+      'Aggregates session metrics from persistent storage. Shows daily breakdown, top sessions by cost, and monthly cost projection.',
+    examples: ['/trends', '/trends 7d', '/trends 30d', '/trends all'],
+  });
+  registerCommand({
+    name: '/debug',
+    usage: '/debug on|off',
+    description: 'Toggle debug logging for this session',
+    category: 'core',
+  });
+  registerCommand({
+    name: '/copy',
+    usage: '/copy',
+    description: 'Copy the last assistant response to clipboard',
     category: 'core',
   });
   registerCommand({
@@ -289,6 +325,74 @@ export function registerAllCommands(): void {
     category: 'integrations',
     helpOnly: true,
     examples: ['/integrations logs', '/integrations logs shopify --last 50'],
+  });
+
+  // ── Workflow Engine ──────────────────────────────────────────────
+  registerCommand({
+    name: '/engine',
+    usage: '/engine',
+    description: 'Show workflow engine connection status',
+    category: 'engine',
+    detailedHelp: 'Display the current workflow engine connection status and configuration.',
+    examples: ['/engine', '/engine brands', '/engine setup'],
+  });
+  registerCommand({
+    name: '/engine setup',
+    usage: '/engine setup',
+    description: 'Configure the workflow engine connection',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine brands',
+    usage: '/engine brands [slug]',
+    description: 'List or search brands in the workflow engine',
+    category: 'engine',
+    helpOnly: true,
+    examples: ['/engine brands', '/engine brands acme-co'],
+  });
+  registerCommand({
+    name: '/engine onboard',
+    usage: '/engine onboard <brand-id>',
+    description: 'Start an onboarding run for a brand',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine health',
+    usage: '/engine health',
+    description: 'Check workflow engine health',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine templates',
+    usage: '/engine templates [key]',
+    description: 'List or get workflow templates',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine dlq',
+    usage: '/engine dlq <brand-id>',
+    description: 'List dead-letter queue items for a brand',
+    category: 'engine',
+    helpOnly: true,
+  });
+
+  registerCommand({
+    name: '/workflows',
+    aliases: ['/wf'],
+    usage: '/workflows [list|start|status|cancel|retry]',
+    description: 'Manage workflow executions in the engine',
+    category: 'engine',
+    detailedHelp:
+      'List running workflows, start new ones, check status, cancel, or retry failed workflows.',
+    examples: [
+      '/workflows list',
+      '/workflows status <workflow-id>',
+      '/workflows cancel <workflow-id>',
+    ],
   });
 
   // ── Sessions ──────────────────────────────────────────────────────
@@ -522,6 +626,14 @@ export function registerAllCommands(): void {
     category: 'shortcuts',
   });
   registerCommand({
+    name: '/drift',
+    usage: '/drift [--json]',
+    description: 'Detect configuration drift between local and remote state',
+    category: 'shortcuts',
+    detailedHelp:
+      'Compares agents, rules, skills, and attributes against the remote GraphQL state. Shows deactivated, stale, or missing resources.',
+  });
+  registerCommand({
     name: '/deploy',
     usage: '/deploy',
     description: 'Push snapshot-backed changes (--schedule/--approve)',
@@ -559,10 +671,15 @@ export function registerAllCommands(): void {
 
   registerCommand({
     name: '/export',
-    usage: '/export [session] [md|json|jsonl] [path] [--unsafe-path]',
-    description: 'Export session to markdown/json/jsonl',
+    usage: '/export [session] [md|json|jsonl|html] [path] [--unsafe-path]',
+    description: 'Export session to markdown/json/jsonl/html',
     category: 'exports',
-    examples: ['/export md', '/export my-session json', '/export jsonl ./out.jsonl'],
+    examples: [
+      '/export md',
+      '/export html',
+      '/export my-session json',
+      '/export jsonl ./out.jsonl',
+    ],
   });
   registerCommand({
     name: '/export-list',

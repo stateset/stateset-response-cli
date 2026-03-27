@@ -63,6 +63,7 @@ import {
   listSessionSummaries,
   formatContentForExport,
   exportSessionToMarkdown,
+  exportSessionToHtml,
 } from '../cli/session-meta.js';
 
 describe('readSessionMeta', () => {
@@ -197,5 +198,36 @@ describe('exportSessionToMarkdown', () => {
     expect(md).toContain('What is 2+2?');
     expect(md).toContain('## Assistant');
     expect(md).toContain('The answer is 4.');
+  });
+});
+
+describe('exportSessionToHtml', () => {
+  it('generates valid HTML with session data', () => {
+    const entries = [
+      { role: 'user' as const, content: 'Hello', ts: '2025-01-01T00:00:00Z' },
+      { role: 'assistant' as const, content: 'Hi there!' },
+    ];
+
+    const html = exportSessionToHtml('test-session', entries);
+    expect(html).toContain('<!DOCTYPE html>');
+    expect(html).toContain('<title>Session: test-session</title>');
+    expect(html).toContain('2 messages (1 user, 1 assistant)');
+    expect(html).toContain('Hello');
+    expect(html).toContain('Hi there!');
+    expect(html).toContain('class="message user"');
+    expect(html).toContain('class="message assistant"');
+  });
+
+  it('escapes HTML entities in content', () => {
+    const entries = [{ role: 'user' as const, content: '<script>alert("xss")</script>' }];
+
+    const html = exportSessionToHtml('xss-test', entries);
+    expect(html).not.toContain('<script>');
+    expect(html).toContain('&lt;script&gt;');
+  });
+
+  it('handles empty entries', () => {
+    const html = exportSessionToHtml('empty', []);
+    expect(html).toContain('0 messages (0 user, 0 assistant)');
   });
 });

@@ -221,6 +221,61 @@ export function exportSessionToMarkdown(sessionId: string, entries: SessionExpor
   return lines.join('\n');
 }
 
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+export function exportSessionToHtml(sessionId: string, entries: SessionExportEntry[]): string {
+  const now = new Date().toISOString();
+  const messageCount = entries.length;
+  const userCount = entries.filter((e) => e.role === 'user').length;
+  const assistantCount = entries.filter((e) => e.role === 'assistant').length;
+
+  const messages = entries
+    .map((entry) => {
+      const role = entry.role === 'assistant' ? 'Assistant' : 'User';
+      const roleClass = entry.role === 'assistant' ? 'assistant' : 'user';
+      const ts = entry.ts ? `<span class="ts">${escapeHtml(entry.ts)}</span>` : '';
+      const body = escapeHtml(formatContentForExport(entry.content) || '(empty)');
+      return `<div class="message ${roleClass}"><div class="role">${role} ${ts}</div><div class="body"><pre>${body}</pre></div></div>`;
+    })
+    .join('\n');
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Session: ${escapeHtml(sessionId)}</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; max-width: 900px; margin: 0 auto; padding: 24px; }
+  h1 { color: #58a6ff; font-size: 1.5rem; margin-bottom: 8px; }
+  .meta { color: #8b949e; font-size: 0.85rem; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid #21262d; }
+  .message { margin-bottom: 16px; border-radius: 8px; padding: 12px 16px; }
+  .message.user { background: #161b22; border-left: 3px solid #58a6ff; }
+  .message.assistant { background: #161b22; border-left: 3px solid #3fb950; }
+  .role { font-weight: 600; font-size: 0.85rem; margin-bottom: 6px; }
+  .user .role { color: #58a6ff; }
+  .assistant .role { color: #3fb950; }
+  .ts { font-weight: 400; color: #8b949e; margin-left: 8px; }
+  .body pre { white-space: pre-wrap; word-wrap: break-word; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.9rem; line-height: 1.5; color: #c9d1d9; }
+  .footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid #21262d; color: #8b949e; font-size: 0.8rem; text-align: center; }
+</style>
+</head>
+<body>
+<h1>Session: ${escapeHtml(sessionId)}</h1>
+<div class="meta">Generated: ${escapeHtml(now)} &middot; ${messageCount} messages (${userCount} user, ${assistantCount} assistant)</div>
+${messages}
+<div class="footer">Exported from StateSet Response CLI</div>
+</body>
+</html>`;
+}
+
 export function listExportFiles(
   sessionId: string,
 ): Array<{ name: string; path: string; updatedAtMs: number; size: number }> {

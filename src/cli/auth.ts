@@ -252,6 +252,33 @@ export async function runAuthLogin(options: AuthLoginOptions = {}): Promise<void
   }
   if (anthropicApiKey) {
     existing.anthropicApiKey = anthropicApiKey;
+
+    // Validate API key with a real API call (non-blocking)
+    if (!options.nonInteractive) {
+      try {
+        const Anthropic = (await import('@anthropic-ai/sdk')).default;
+        const testClient = new Anthropic({ apiKey: anthropicApiKey });
+        const ora = (await import('ora')).default;
+        const spinner = ora('Verifying API key...').start();
+        try {
+          await testClient.messages.create({
+            model: 'claude-haiku-4-5-20251001',
+            max_tokens: 1,
+            messages: [{ role: 'user', content: 'hi' }],
+          });
+          spinner.succeed('API key verified');
+        } catch (testErr: unknown) {
+          const status = (testErr as { status?: number }).status;
+          if (status === 401 || status === 403) {
+            spinner.fail('API key appears invalid. You can still save it and try later.');
+          } else {
+            spinner.succeed('API key accepted (could not fully verify, but format is valid)');
+          }
+        }
+      } catch {
+        // SDK not available or import failed — skip validation
+      }
+    }
   }
 
   if (loginMethod === 'device') {

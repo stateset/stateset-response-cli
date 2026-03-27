@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import path from 'node:path';
 import type { ChatContext } from '../cli/types.js';
+import { setOutputMode } from '../lib/output.js';
 
 const mockEntries = [{ role: 'user' as const, content: 'hello', ts: '2025-01-01T00:00:00Z' }];
 
@@ -92,6 +93,7 @@ function createMockCtx(overrides: Partial<ChatContext> = {}): ChatContext {
 
 describe('handleExportCommand', () => {
   beforeEach(() => {
+    setOutputMode('pretty');
     vi.clearAllMocks();
     mockPrompt.mockResolvedValue({});
     mockReadSessionEntries.mockReturnValue([...mockEntries]);
@@ -101,6 +103,7 @@ describe('handleExportCommand', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    setOutputMode('pretty');
   });
 
   it('returns false for non-export commands', async () => {
@@ -160,6 +163,31 @@ describe('handleExportCommand', () => {
       ),
     ).toBe(true);
     expect(ctx.rl.prompt).toHaveBeenCalled();
+  });
+
+  it('/export-list emits structured JSON when output mode is json', async () => {
+    setOutputMode('json');
+    mockListExportFiles.mockReturnValue([
+      { name: 'export1.md', updatedAtMs: 1_700_000_000_000, size: 1024 },
+    ]);
+    const stdoutWrite = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
+    const ctx = createMockCtx();
+
+    const result = await handleExportCommand('/export-list', ctx);
+
+    expect(result).toBe(true);
+    const payload = JSON.parse(String(stdoutWrite.mock.calls[0][0]).trim());
+    expect(payload).toMatchObject({
+      command: 'export-list',
+      session: 'test-session',
+      directory: '/tmp/sessions/test-session/exports',
+    });
+    expect(payload.exports).toHaveLength(1);
+    expect(payload.exports[0]).toMatchObject({
+      name: 'export1.md',
+      sizeBytes: 1024,
+      size: '1kb',
+    });
   });
 
   it('/export-show with no filename shows usage', async () => {

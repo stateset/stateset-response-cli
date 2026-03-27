@@ -74,6 +74,12 @@ export interface OrgExport {
   evals: unknown[];
   datasets: unknown[];
   agentSettings: unknown[];
+  /** Workflow engine configuration (if connected). */
+  workflowEngine?: {
+    brands?: unknown[];
+    templates?: unknown[];
+    policySets?: unknown[];
+  };
 }
 
 // ─── Export ──────────────────────────────────────────────────────────────────
@@ -167,6 +173,35 @@ export async function exportOrg(
     datasets: data.datasets || [],
     agentSettings: data.agent_settings || [],
   };
+
+  // Optionally export workflow engine data if configured
+  try {
+    const { getWorkflowEngineConfig } = await import('./config.js');
+    const engineConfig = getWorkflowEngineConfig();
+    if (engineConfig) {
+      const { EngineClient } = await import('./lib/engine-client.js');
+      const engineClient = new EngineClient(engineConfig);
+      const [brandsResult, templatesResult, policySetsResult] = await Promise.allSettled([
+        engineClient.listBrands({ limit: 200 }),
+        engineClient.listWorkflowTemplates({ limit: 200 }),
+        engineClient.listPolicySets({ limit: 200 }),
+      ]);
+
+      const extractItems = (result: PromiseSettledResult<unknown>): unknown[] => {
+        if (result.status !== 'fulfilled') return [];
+        const val = result.value as { items?: unknown[] };
+        return val?.items ?? (Array.isArray(result.value) ? (result.value as unknown[]) : []);
+      };
+
+      exportData.workflowEngine = {
+        brands: extractItems(brandsResult),
+        templates: extractItems(templatesResult),
+        policySets: extractItems(policySetsResult),
+      };
+    }
+  } catch {
+    // Engine export is best-effort
+  }
 
   // Redact secrets unless explicitly included
   if (!includeSecrets) {

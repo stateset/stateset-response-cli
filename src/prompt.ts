@@ -20,6 +20,9 @@ export interface PromptContext {
   memory?: string;
   cwd?: string;
   activeSkills?: string[];
+  profile?: string;
+  engineConnected?: boolean;
+  dryRun?: boolean;
 }
 
 function getTimezone(): string {
@@ -43,9 +46,23 @@ export function buildSystemPrompt(context: PromptContext): string {
     // ignore if not configured
   }
 
-  sections.push(
-    `## Session\n- Org: ${orgId}\n- Session: ${context.sessionId}\n- Timezone: ${getTimezone()}`,
-  );
+  const sessionLines = [
+    `- Org: ${orgId}`,
+    `- Session: ${context.sessionId}`,
+    `- Timezone: ${getTimezone()}`,
+  ];
+  if (context.profile && context.profile !== 'default') {
+    sessionLines.push(`- Profile: ${context.profile}`);
+  }
+  if (context.dryRun) {
+    sessionLines.push('- Dry-run mode: enabled (mutations are previewed, not executed)');
+  }
+  if (context.engineConnected !== undefined) {
+    sessionLines.push(
+      `- Workflow Engine: ${context.engineConnected ? 'connected' : 'not available'}`,
+    );
+  }
+  sections.push(`## Session\n${sessionLines.join('\n')}`);
 
   const integrationFlags = getIntegrationFlagsFromEnv();
   const integrationLines = INTEGRATION_DEFINITIONS.map(

@@ -1,3 +1,7 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+
 /**
  * Lightweight in-process metrics collector for StateSet Response CLI.
  *
@@ -218,3 +222,30 @@ export class MetricsCollector {
 
 /** Singleton instance used across the CLI process. */
 export const metrics = new MetricsCollector();
+
+/**
+ * Save session metrics to a persistent JSON file.
+ * Called on graceful shutdown to preserve analytics history.
+ */
+export function saveSessionMetrics(sessionId: string): void {
+  try {
+    const stateDir = process.env.STATESET_STATE_DIR || path.join(os.homedir(), '.stateset');
+    const metricsDir = path.join(stateDir, 'metrics');
+
+    if (!fs.existsSync(metricsDir)) {
+      fs.mkdirSync(metricsDir, { recursive: true, mode: 0o700 });
+    }
+
+    const snap = metrics.snapshot();
+    const record = {
+      sessionId,
+      savedAt: new Date().toISOString(),
+      ...snap,
+    };
+
+    const filePath = path.join(metricsDir, `${sessionId}.json`);
+    fs.writeFileSync(filePath, JSON.stringify(record, null, 2), { mode: 0o600 });
+  } catch {
+    // Best-effort — metrics saving should never crash the process
+  }
+}

@@ -184,7 +184,9 @@ describe('parseEvent', () => {
     });
     const result = parseEvent(content, 'extra.json');
     expect(result.type).toBe('immediate');
-    expect(result.text).toBe('Hello');
+    if (result.type === 'immediate') {
+      expect(result.text).toBe('Hello');
+    }
   });
 
   it('rejects non-string session', () => {
@@ -196,7 +198,9 @@ describe('parseEvent', () => {
     // session should be ignored or cause an error depending on implementation
     const result = parseEvent(content, 'badsession.json');
     // Non-string session should be treated as undefined
-    expect(result.session).toBeUndefined();
+    if (result.type === 'immediate') {
+      expect(result.session).toBeUndefined();
+    }
   });
 
   it('rejects non-string at for one-shot', () => {

@@ -16,7 +16,8 @@ export type IntegrationId =
   | 'shiphero'
   | 'shipfusion'
   | 'shiphawk'
-  | 'zendesk';
+  | 'zendesk'
+  | 'engine';
 
 export interface IntegrationField {
   key: string;
@@ -480,6 +481,34 @@ export const INTEGRATION_DEFINITIONS: IntegrationDefinition[] = [
         envVars: ['ZENDESK_API_TOKEN', 'STATESET_ZENDESK_API_TOKEN'],
         required: true,
         secret: true,
+      },
+    ],
+  },
+  {
+    id: 'engine',
+    label: 'Workflow Engine',
+    description: 'Brand management, workflow automation, policy sets, and event routing',
+    fields: [
+      {
+        key: 'url',
+        label: 'Engine URL',
+        envVars: ['WORKFLOW_ENGINE_URL', 'ORCHESTRATION_ENGINE_URL'],
+        required: true,
+        placeholder: 'http://localhost:8080',
+      },
+      {
+        key: 'apiKey',
+        label: 'API key',
+        envVars: ['WORKFLOW_ENGINE_API_KEY', 'ORCHESTRATION_ENGINE_API_KEY'],
+        required: true,
+        secret: true,
+      },
+      {
+        key: 'tenantId',
+        label: 'Tenant ID',
+        envVars: ['WORKFLOW_ENGINE_TENANT_ID'],
+        required: false,
+        hint: 'Required for multi-tenant deployments',
       },
     ],
   },

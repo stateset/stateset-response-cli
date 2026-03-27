@@ -3,7 +3,7 @@
 AI-powered CLI for managing the [StateSet ResponseCX](https://response.cx) platform. Chat with an AI agent that can manage your agents, rules, skills, knowledge base, channels, messages, and more — all from the terminal.
 
 Includes optional WhatsApp and Slack gateways for connecting your agent to messaging platforms.
-Current version: `1.9.1`.
+Current version: `1.9.2`.
 
 ## Features
 
@@ -142,6 +142,11 @@ Use `/help` for the full list. This reference is generated from [`src/cli/comman
 - `/model <name>` Switch model (sonnet, haiku, opus) Aliases: `/m`.
 - `/usage on|off` Enable or disable usage summaries
 - `/metrics [json] [reset]` Show session metrics, token usage, and tool breakdown
+- `/whoami` Show full session dashboard (org, model, profile, engine, cost)
+- `/cost` Show estimated session cost based on token usage
+- `/trends [7d|30d|90d|all]` Show token usage and cost trends over time
+- `/debug on|off` Toggle debug logging for this session
+- `/copy` Copy the last assistant response to clipboard
 - `/attach <path>` Attach a file or image to the next message
 - `/attachments` List staged attachments
 - `/attach-clear` Clear staged attachments
@@ -169,6 +174,17 @@ Use `/help` for the full list. This reference is generated from [`src/cli/comman
 - `/integrations health [integration] [--detailed]` Show integration readiness and config health
 - `/integrations limits [integration]` Show integration call/error and rate-limit telemetry
 - `/integrations logs [integration] [--last 20]` Show recent integration audit events
+
+**Workflow Engine**
+
+- `/engine` Show workflow engine connection status
+- `/engine setup` Configure the workflow engine connection
+- `/engine brands [slug]` List or search brands in the workflow engine
+- `/engine onboard <brand-id>` Start an onboarding run for a brand
+- `/engine health` Check workflow engine health
+- `/engine templates [key]` List or get workflow templates
+- `/engine dlq <brand-id>` List dead-letter queue items for a brand
+- `/workflows [list|start|status|cancel|retry]` Manage workflow executions in the engine Aliases: `/wf`.
 
 **Sessions**
 
@@ -210,13 +226,14 @@ Use `/help` for the full list. This reference is generated from [`src/cli/comman
 - `/monitor [status|live]` Watch live platform metrics
 - `/test [message...] [--agent <agent-id>]` Run a non-persistent test message
 - `/diff` Show config diff
+- `/drift [--json]` Detect configuration drift between local and remote state
 - `/deploy` Push snapshot-backed changes (--schedule/--approve)
 - `/rollback` Rollback config changes (--schedule/--approve)
 - `/deployments` Inspect deployment history and scheduled jobs
 
 **Exports**
 
-- `/export [session] [md|json|jsonl] [path] [--unsafe-path]` Export session to markdown/json/jsonl
+- `/export [session] [md|json|jsonl|html] [path] [--unsafe-path]` Export session to markdown/json/jsonl/html
 - `/export-list [session]` List export files for a session
 - `/export-show <file> [session] [head=40]` Preview an export file
 - `/export-open <file> [session]` Show export file path

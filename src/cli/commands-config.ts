@@ -3,38 +3,67 @@ import { loadMemory } from '../memory.js';
 import { buildSystemPrompt } from '../prompt.js';
 import { resolveModelOrThrow, formatUnknownModelError, getModelAliasText } from '../config.js';
 import { getErrorMessage } from '../lib/errors.js';
-import { formatError, formatSuccess, formatWarning } from '../utils/display.js';
+import {
+  getOutputMode,
+  isJsonMode,
+  output,
+  outputError,
+  outputSuccess,
+  outputWarn,
+} from '../lib/output.js';
 import type { ChatContext, CommandResult } from './types.js';
 import { parseToggleValue } from './utils.js';
+
+function printSpacer(): void {
+  if (getOutputMode() === 'pretty') {
+    console.log('');
+  }
+}
+
+function printUsage(usage: string): void {
+  if (isJsonMode()) {
+    return;
+  }
+  output(`Usage: ${usage}`);
+}
+
+function finishHandled(ctx: ChatContext): CommandResult {
+  printSpacer();
+  ctx.rl.prompt();
+  return { handled: true };
+}
 
 export async function handleConfigCommand(input: string, ctx: ChatContext): Promise<CommandResult> {
   const applyMatch = /^\/apply(?:\s+(.*))?$/.exec(input);
 
   // /apply — toggle write operations
   if (applyMatch) {
+    const usage = '/apply on|off';
     const arg = applyMatch[1] ? applyMatch[1].trim() : '';
     const parsed = parseToggleValue(arg);
     const current = ctx.allowApply;
     const currentStructuredToolResults =
       process.env.STATESET_MCP_STRUCTURED_TOOL_RESULTS === 'true';
     if (!arg) {
-      console.log(formatSuccess(`Writes enabled: ${current ? 'yes' : 'no'}`));
-      console.log(chalk.gray('  Usage: /apply on|off'));
-      console.log('');
-      ctx.rl.prompt();
-      return { handled: true };
+      outputSuccess(`Writes enabled: ${current ? 'yes' : 'no'}`, {
+        command: 'apply',
+        enabled: current,
+        usage,
+      });
+      printUsage(usage);
+      return finishHandled(ctx);
     }
     if (parsed === undefined) {
-      console.log(formatWarning('Usage: /apply on|off'));
-      console.log('');
-      ctx.rl.prompt();
-      return { handled: true };
+      outputWarn(`Usage: ${usage}`, { command: 'apply', usage });
+      return finishHandled(ctx);
     }
     if (parsed === current) {
-      console.log(formatSuccess(`Writes already ${current ? 'enabled' : 'disabled'}.`));
-      console.log('');
-      ctx.rl.prompt();
-      return { handled: true };
+      outputSuccess(`Writes already ${current ? 'enabled' : 'disabled'}.`, {
+        command: 'apply',
+        enabled: current,
+        unchanged: true,
+      });
+      return finishHandled(ctx);
     }
 
     ctx.allowApply = parsed;
@@ -52,11 +81,15 @@ export async function handleConfigCommand(input: string, ctx: ChatContext): Prom
         STATESET_REDACT: ctx.redactEmails ? 'true' : 'false',
         STATESET_MCP_STRUCTURED_TOOL_RESULTS: currentStructuredToolResults ? 'true' : 'false',
       });
-      console.error(formatError(`Unable to apply writes toggle: ${getErrorMessage(err)}`));
-      console.log(chalk.gray('  Writes setting unchanged.'));
-      console.log('');
-      ctx.rl.prompt();
-      return { handled: true };
+      outputError(`Unable to apply writes toggle: ${getErrorMessage(err)}`, {
+        command: 'apply',
+        enabled: current,
+        unchanged: true,
+      });
+      if (!isJsonMode()) {
+        output('Writes setting unchanged.');
+      }
+      return finishHandled(ctx);
     }
 
     const memory = loadMemory(ctx.sessionId);
@@ -68,39 +101,43 @@ export async function handleConfigCommand(input: string, ctx: ChatContext): Prom
         activeSkills: ctx.activeSkills,
       }),
     );
-    console.log(formatSuccess(`Writes ${parsed ? 'enabled' : 'disabled'}.`));
-    console.log('');
-    ctx.rl.prompt();
-    return { handled: true };
+    outputSuccess(`Writes ${parsed ? 'enabled' : 'disabled'}.`, {
+      command: 'apply',
+      enabled: parsed,
+    });
+    return finishHandled(ctx);
   }
 
   const redactMatch = /^\/redact(?:\s+(.*))?$/.exec(input);
 
   // /redact — toggle redaction
   if (redactMatch) {
+    const usage = '/redact on|off';
     const arg = redactMatch[1] ? redactMatch[1].trim() : '';
     const parsed = parseToggleValue(arg);
     const current = ctx.redactEmails;
     const currentStructuredToolResults =
       process.env.STATESET_MCP_STRUCTURED_TOOL_RESULTS === 'true';
     if (!arg) {
-      console.log(formatSuccess(`Redaction: ${current ? 'enabled' : 'disabled'}`));
-      console.log(chalk.gray('  Usage: /redact on|off'));
-      console.log('');
-      ctx.rl.prompt();
-      return { handled: true };
+      outputSuccess(`Redaction: ${current ? 'enabled' : 'disabled'}`, {
+        command: 'redact',
+        enabled: current,
+        usage,
+      });
+      printUsage(usage);
+      return finishHandled(ctx);
     }
     if (parsed === undefined) {
-      console.log(formatWarning('Usage: /redact on|off'));
-      console.log('');
-      ctx.rl.prompt();
-      return { handled: true };
+      outputWarn(`Usage: ${usage}`, { command: 'redact', usage });
+      return finishHandled(ctx);
     }
     if (parsed === current) {
-      console.log(formatSuccess(`Redaction already ${current ? 'enabled' : 'disabled'}.`));
-      console.log('');
-      ctx.rl.prompt();
-      return { handled: true };
+      outputSuccess(`Redaction already ${current ? 'enabled' : 'disabled'}.`, {
+        command: 'redact',
+        enabled: current,
+        unchanged: true,
+      });
+      return finishHandled(ctx);
     }
 
     ctx.redactEmails = parsed;
@@ -118,11 +155,15 @@ export async function handleConfigCommand(input: string, ctx: ChatContext): Prom
         STATESET_REDACT: ctx.redactEmails ? 'true' : 'false',
         STATESET_MCP_STRUCTURED_TOOL_RESULTS: currentStructuredToolResults ? 'true' : 'false',
       });
-      console.error(formatError(`Unable to apply redaction toggle: ${getErrorMessage(err)}`));
-      console.log(chalk.gray('  Redaction setting unchanged.'));
-      console.log('');
-      ctx.rl.prompt();
-      return { handled: true };
+      outputError(`Unable to apply redaction toggle: ${getErrorMessage(err)}`, {
+        command: 'redact',
+        enabled: current,
+        unchanged: true,
+      });
+      if (!isJsonMode()) {
+        output('Redaction setting unchanged.');
+      }
+      return finishHandled(ctx);
     }
 
     const memory = loadMemory(ctx.sessionId);
@@ -134,39 +175,41 @@ export async function handleConfigCommand(input: string, ctx: ChatContext): Prom
         activeSkills: ctx.activeSkills,
       }),
     );
-    console.log(formatSuccess(`Redaction ${parsed ? 'enabled' : 'disabled'}.`));
-    console.log('');
-    ctx.rl.prompt();
-    return { handled: true };
+    outputSuccess(`Redaction ${parsed ? 'enabled' : 'disabled'}.`, {
+      command: 'redact',
+      enabled: parsed,
+    });
+    return finishHandled(ctx);
   }
 
   const agenticMatch = /^\/agentic(?:\s+(.*))?$/.exec(input);
 
   // /agentic — toggle structured tool result metadata
   if (agenticMatch) {
+    const usage = '/agentic on|off';
     const arg = agenticMatch[1] ? agenticMatch[1].trim() : '';
     const parsed = parseToggleValue(arg);
     const current = process.env.STATESET_MCP_STRUCTURED_TOOL_RESULTS === 'true';
     if (!arg) {
-      console.log(formatSuccess(`Structured tool results: ${current ? 'enabled' : 'disabled'}`));
-      console.log(chalk.gray('  Usage: /agentic on|off'));
-      console.log('');
-      ctx.rl.prompt();
-      return { handled: true };
+      outputSuccess(`Structured tool results: ${current ? 'enabled' : 'disabled'}`, {
+        command: 'agentic',
+        enabled: current,
+        usage,
+      });
+      printUsage(usage);
+      return finishHandled(ctx);
     }
     if (parsed === undefined) {
-      console.log(formatWarning('Usage: /agentic on|off'));
-      console.log('');
-      ctx.rl.prompt();
-      return { handled: true };
+      outputWarn(`Usage: ${usage}`, { command: 'agentic', usage });
+      return finishHandled(ctx);
     }
     if (parsed === current) {
-      console.log(
-        formatSuccess(`Structured tool results already ${current ? 'enabled' : 'disabled'}.`),
-      );
-      console.log('');
-      ctx.rl.prompt();
-      return { handled: true };
+      outputSuccess(`Structured tool results already ${current ? 'enabled' : 'disabled'}.`, {
+        command: 'agentic',
+        enabled: current,
+        unchanged: true,
+      });
+      return finishHandled(ctx);
     }
 
     process.env.STATESET_MCP_STRUCTURED_TOOL_RESULTS = parsed ? 'true' : 'false';
@@ -184,70 +227,99 @@ export async function handleConfigCommand(input: string, ctx: ChatContext): Prom
         STATESET_REDACT: ctx.redactEmails ? 'true' : 'false',
         STATESET_MCP_STRUCTURED_TOOL_RESULTS: current ? 'true' : 'false',
       });
-      console.error(
-        formatError(`Unable to toggle structured tool results: ${getErrorMessage(err)}`),
-      );
-      console.log(chalk.gray('  Structured tool results setting unchanged.'));
-      console.log('');
-      ctx.rl.prompt();
-      return { handled: true };
+      outputError(`Unable to toggle structured tool results: ${getErrorMessage(err)}`, {
+        command: 'agentic',
+        enabled: current,
+        unchanged: true,
+      });
+      if (!isJsonMode()) {
+        output('Structured tool results setting unchanged.');
+      }
+      return finishHandled(ctx);
     }
 
-    console.log(formatSuccess(`Structured tool results ${parsed ? 'enabled' : 'disabled'}.`));
-    console.log('');
-    ctx.rl.prompt();
-    return { handled: true };
+    outputSuccess(`Structured tool results ${parsed ? 'enabled' : 'disabled'}.`, {
+      command: 'agentic',
+      enabled: parsed,
+    });
+    return finishHandled(ctx);
   }
 
   const usageMatch = /^\/usage(?:\s+(.*))?$/.exec(input);
 
   // /usage — toggle usage summaries
   if (usageMatch) {
+    const usage = '/usage on|off';
     const arg = usageMatch[1] ? usageMatch[1].trim() : '';
     const parsed = parseToggleValue(arg);
     if (!arg) {
-      console.log(formatSuccess(`Usage summaries: ${ctx.showUsage ? 'enabled' : 'disabled'}`));
-      console.log(chalk.gray('  Usage: /usage on|off'));
-      console.log('');
-      ctx.rl.prompt();
-      return { handled: true };
+      outputSuccess(`Usage summaries: ${ctx.showUsage ? 'enabled' : 'disabled'}`, {
+        command: 'usage',
+        enabled: ctx.showUsage,
+        usage,
+      });
+      printUsage(usage);
+      return finishHandled(ctx);
     }
     if (parsed === undefined) {
-      console.log(formatWarning('Usage: /usage on|off'));
-      console.log('');
-      ctx.rl.prompt();
-      return { handled: true };
+      outputWarn(`Usage: ${usage}`, { command: 'usage', usage });
+      return finishHandled(ctx);
     }
     ctx.showUsage = parsed;
-    console.log(formatSuccess(`Usage summaries ${parsed ? 'enabled' : 'disabled'}.`));
-    console.log('');
-    ctx.rl.prompt();
-    return { handled: true };
+    outputSuccess(`Usage summaries ${parsed ? 'enabled' : 'disabled'}.`, {
+      command: 'usage',
+      enabled: parsed,
+    });
+    return finishHandled(ctx);
   }
 
   // /model — show or change model
   const modelMatch = /^\/model(?:\s+(.*))?$/.exec(input);
   if (modelMatch) {
+    const usage = `/model <${getModelAliasText('list').replace(/,\s*/g, '|')} | full model ID>`;
     const modelArg = modelMatch[1] ? modelMatch[1].trim() : '';
-    if (!modelArg) {
-      console.log(formatSuccess(`Current model: ${ctx.agent.getModel()}`));
-      console.log(
-        chalk.gray(
-          `  Usage: /model <${getModelAliasText('list').replace(/,\s*/g, '|')} | full model ID>`,
-        ),
-      );
+    if (!modelArg || modelArg === '--chain' || modelArg === '--show-chain') {
+      const currentModel = ctx.agent.getModel();
+      if (modelArg === '--chain' || modelArg === '--show-chain') {
+        const { getFallbackChain } = await import('../lib/model-fallback.js');
+        const chain = getFallbackChain();
+        outputSuccess(`Current model: ${currentModel}`, {
+          command: 'model',
+          currentModel,
+          fallbackChain: chain,
+        });
+        if (!isJsonMode()) {
+          output(chalk.gray(`  Fallback chain: ${chain.join(' → ')}`));
+        }
+      } else {
+        outputSuccess(`Current model: ${currentModel}`, {
+          command: 'model',
+          currentModel,
+          usage,
+        });
+        if (!isJsonMode()) {
+          printUsage(usage);
+          output('Use /model --chain to see the fallback chain.');
+        }
+      }
     } else {
       try {
         const resolved = resolveModelOrThrow(modelArg);
         ctx.agent.setModel(resolved);
-        console.log(formatSuccess(`Model switched to: ${resolved}`));
+        outputSuccess(`Model switched to: ${resolved}`, {
+          command: 'model',
+          previousModel: ctx.model,
+          currentModel: resolved,
+        });
       } catch {
-        console.log(formatWarning(formatUnknownModelError(modelArg)));
+        outputWarn(formatUnknownModelError(modelArg), {
+          command: 'model',
+          input: modelArg,
+          validModels: getModelAliasText('list').split(/,\s*/),
+        });
       }
     }
-    console.log('');
-    ctx.rl.prompt();
-    return { handled: true };
+    return finishHandled(ctx);
   }
 
   return { handled: false };

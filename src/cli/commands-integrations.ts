@@ -89,6 +89,7 @@ const TOOL_PREFIX_BY_INTEGRATION: Record<IntegrationId, string> = {
   shipfusion: 'shipfusion_',
   shiphawk: 'shiphawk_',
   zendesk: 'zendesk_',
+  engine: 'engine_',
 };
 
 function normalizeConfigStatus(entry: IntegrationEntry | undefined): ConfigStatus {

@@ -6,6 +6,39 @@ export type SlashRouteAction = 'send' | 'prompt' | 'handled' | 'ignore';
 
 export type SlashInputAction = 'send' | 'prompt' | 'handled' | 'exit' | 'unhandled';
 
+/**
+ * Common typos and natural-language aliases for slash commands.
+ * Maps misspelled/alternate forms to canonical command names.
+ */
+const COMMAND_TYPO_ALIASES: Record<string, string> = {
+  '/rul': '/rules',
+  '/rule': '/rules',
+  '/agen': '/agents',
+  '/agent': '/agents',
+  '/setting': '/integrations',
+  '/config': '/integrations',
+  '/msg': '/messages',
+  '/message': '/messages',
+  '/resp': '/responses',
+  '/response': '/responses',
+  '/chan': '/channels',
+  '/channel': '/channels',
+  '/conv': '/convos',
+  '/convo': '/convos',
+  '/conversation': '/convos',
+  '/conversations': '/convos',
+  '/hlep': '/help',
+  '/hep': '/help',
+  '/hepl': '/help',
+  '/clera': '/clear',
+  '/cler': '/clear',
+  '/exti': '/exit',
+  '/qui': '/quit',
+  '/modle': '/model',
+  '/engien': '/engine',
+  '/enigne': '/engine',
+};
+
 let knownSlashCommands: string[] | null = null;
 
 function getKnownSlashCommands(): string[] {
@@ -37,9 +70,15 @@ export function getSlashCommandSuggestions(
   input: string,
   extensionCommands: string[] = [],
 ): string[] {
-  const command = input.split(/\s+/)[0] ?? '';
+  const command = input.split(/\s+/)[0]?.toLowerCase() ?? '';
   if (!command.startsWith('/')) return [];
   if (command.length <= 1) return [];
+
+  // Check typo aliases first for instant correction
+  const aliasMatch = COMMAND_TYPO_ALIASES[command];
+  if (aliasMatch) {
+    return [aliasMatch];
+  }
 
   const normalizedExtensions = extensionCommands.map((name) =>
     name.startsWith('/') ? name : `/${name}`,

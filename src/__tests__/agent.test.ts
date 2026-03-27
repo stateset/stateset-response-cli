@@ -953,12 +953,12 @@ describe('StateSetAgent', () => {
       mockAnthropicInstance.messages.stream.mockReturnValue(stream);
 
       // Each chat call adds 2 messages (user + assistant).
-      // 25 calls = 50 messages, but should be trimmed to 40.
+      // 25 calls = 50 messages, trimmed to 40 recent + 1 injected context summary = 41.
       for (let i = 0; i < 25; i++) {
         await agent.chat(`message-${i}`);
       }
 
-      expect(agent.getHistoryLength()).toBe(40);
+      expect(agent.getHistoryLength()).toBe(41);
     });
   });
 

@@ -212,4 +212,29 @@ describe('getSlashCommandSuggestions', () => {
     expect(suggestions).toContain('/stats');
     expect(suggestions).toContain('/status');
   });
+
+  it('resolves typo alias /hlep to /help', () => {
+    const suggestions = getSlashCommandSuggestions('/hlep');
+    expect(suggestions).toEqual(['/help']);
+  });
+
+  it('resolves typo alias /engien to /engine', () => {
+    const suggestions = getSlashCommandSuggestions('/engien');
+    expect(suggestions).toEqual(['/engine']);
+  });
+
+  it('resolves typo alias /modle to /model', () => {
+    const suggestions = getSlashCommandSuggestions('/modle');
+    expect(suggestions).toEqual(['/model']);
+  });
+
+  it('resolves typo alias /agen to /agents', () => {
+    const suggestions = getSlashCommandSuggestions('/agen');
+    expect(suggestions).toEqual(['/agents']);
+  });
+
+  it('resolves typo alias /clera to /clear', () => {
+    const suggestions = getSlashCommandSuggestions('/clera');
+    expect(suggestions).toEqual(['/clear']);
+  });
 });

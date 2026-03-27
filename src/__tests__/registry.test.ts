@@ -6,9 +6,9 @@ import {
 } from '../integrations/registry.js';
 
 describe('listIntegrations', () => {
-  it('returns all 16 integration definitions', () => {
+  it('returns all 17 integration definitions', () => {
     const integrations = listIntegrations();
-    expect(integrations).toHaveLength(16);
+    expect(integrations).toHaveLength(17);
     const ids = integrations.map((i) => i.id);
     expect(ids).toContain('shopify');
     expect(ids).toContain('gorgias');
@@ -20,13 +20,14 @@ describe('listIntegrations', () => {
     expect(ids).toContain('dhl');
     expect(ids).toContain('globale');
     expect(ids).toContain('fedex');
+    expect(ids).toContain('engine');
   });
 
   it('returns a copy (mutations do not affect future calls)', () => {
     const first = listIntegrations();
     first.pop();
     const second = listIntegrations();
-    expect(second).toHaveLength(16);
+    expect(second).toHaveLength(17);
   });
 });
 
