@@ -2,16 +2,17 @@
 
 AI-powered CLI for managing the [StateSet ResponseCX](https://response.cx) platform. Chat with an AI agent that can manage your agents, rules, skills, knowledge base, channels, messages, and more — all from the terminal.
 
-Includes optional WhatsApp and Slack gateways for connecting your agent to messaging platforms.
-Current version: `1.9.2`.
+Includes optional Slack, Telegram, and WhatsApp gateways for connecting your agent to messaging platforms or running a multi-channel bot on Kubernetes.
+Current version: `1.9.3`.
 
 ## Features
 
 - **100+ MCP tools** across 16 integrations — Shopify, Gorgias, Recharge, Klaviyo, Loop, ShipStation, ShipHero, ShipFusion, ShipHawk, Zendesk, Skio, Stay.ai, Amazon SP-API, DHL, FedEx, Global-e
-- **WhatsApp and Slack gateways** with a multi-channel orchestrator for running both simultaneously
+- **Slack, Telegram, and WhatsApp gateways** with a multi-channel orchestrator for running them from one process
 - **Interactive chat** with session management, memory, file attachments, and prompt templates
 - **Markdown-aware terminal output** with streaming-safe rendering for headings, lists, quotes, and code fences
 - **Productive CLI ergonomics** with slash-command tab completion and persistent local input history
+- **Capability map** that groups commands by workflow area so operators can discover setup, runtime, workflow-studio, curation, and control-plane flows quickly
 - **Extension system** with trust policies, tool hooks, and hash verification
 - **Event-driven automation** — immediate, one-shot, and periodic (cron) agent runs
 - **Shortcut commands** for direct CLI operations (deploy, backup, monitor, snapshot, diff, etc.)
@@ -53,6 +54,9 @@ response ask "Summarize the latest failed orders"
 
 # Start an interactive chat session
 response chat
+
+# See the CLI grouped by workflow area
+response capabilities
 ```
 
 ## Authentication
@@ -178,13 +182,68 @@ Use `/help` for the full list. This reference is generated from [`src/cli/comman
 **Workflow Engine**
 
 - `/engine` Show workflow engine connection status
+- `/capabilities [area]` Show the CLI grouped by workflow areas such as setup, runtime, workflow-studio, curation, operations, and resources
 - `/engine setup` Configure the workflow engine connection
+- `/engine init [brand-slug]` Initialize .stateset/<brand>/ config-as-code directory with scaffold files
+- `/engine config [pull|push|validate|history] <brand>` Manage local `.stateset/<brand>` workflow studio config against the engine
+- `/engine config show <brand-slug|brand-id>` Show the effective remote workflow studio config for a brand
+- `/engine config pull <brand-slug|brand-id>` Pull brand workflow studio config into `.stateset/<brand>`
+- `/engine config history <brand-slug|brand-id>` Show config version history for a brand
+- `/engine config validate <brand-slug>` Validate local brand workflow studio config files
+- `/engine config push <brand-slug>` Push local brand workflow studio config to the engine
+- `/engine activate <brand-slug|brand-id> [config-version]` Activate the current config for a brand
+- `/engine validate <brand-slug|brand-id>` Run remote engine validation for a brand
 - `/engine brands [slug]` List or search brands in the workflow engine
-- `/engine onboard <brand-id>` Start an onboarding run for a brand
+- `/engine brands show <brand-slug|brand-id>` Show brand details from the workflow engine
+- `/engine brands create <json-file>` Create a brand from a JSON file, optionally bootstrapping a template-backed workflow config
+- `/engine brands bootstrap <brand-slug|brand-id> [ecommerce|subscription|knowledge_base] [activate]` Create or repair a workflow-studio brand and bootstrap response automation
+- `/engine brands update <brand-slug|brand-id> <json-file>` Update a brand from a JSON patch file
+- `/engine executions <brand-slug|brand-id> [status]` List recent workflow executions for a brand
+- `/engine connectors <brand-slug|brand-id> [create <json-file>|health <connector-id>|plan [loop-mode] [--source local|platform]|sync [loop-mode] [--source local|platform]]` List connectors, create connectors, plan connector sync from local or platform credentials, or create missing live connectors for a brand
+- `/engine connectors <brand-slug|brand-id> create <json-file>` Create a connector for a brand from a JSON file
+- `/engine connectors <brand-slug|brand-id> plan [subscriptions|returns|both] [--source local|platform]` Show the workflow-studio connector sync plan from local integrations or platform credentials
+- `/engine connectors <brand-slug|brand-id> sync [subscriptions|returns|both] [--source local|platform]` Write local connector config, persist connector preferences, and create missing live connectors from local integrations or platform credentials
+- `/engine connectors <brand-slug|brand-id> env [subscriptions|returns|both] [dotenv|shell|json] [out=path]` Inspect or export the brand-scoped connector secret env vars your local workers need
+- `/engine local apply <brand-slug|brand-id> [subscriptions|returns|both] [out=path] [compose=path] [services=a,b,c] [--write-only]` Write the brand env file and refresh the local Temporal stack services
+- `/engine onboard <brand-slug|brand-id> [notes]` Start an onboarding run for a brand
+- `/engine onboard list <brand-slug|brand-id>` List onboarding runs for a brand
+- `/engine onboard show <brand-slug|brand-id> <run-id>` Show a specific onboarding run
+- `/engine onboard update <brand-slug|brand-id> <run-id> <status> [notes]` Update onboarding run status or notes
+- `/engine migration <brand-slug|brand-id>` Show migration state for a brand
+- `/engine migration update <brand-slug|brand-id> <json-file>` Update migration state for a brand from a JSON patch file
+- `/engine parity <brand-slug|brand-id> [from] [to]` Show parity dashboard for a brand
 - `/engine health` Check workflow engine health
-- `/engine templates [key]` List or get workflow templates
-- `/engine dlq <brand-id>` List dead-letter queue items for a brand
-- `/workflows [list|start|status|cancel|retry]` Manage workflow executions in the engine Aliases: `/wf`.
+- `/engine dispatch-health [--tenant-id <tenant-id>] [--limit <n>] [--offset <n>]` Show dispatch health dashboard across brands
+- `/engine dispatch-guard [--tenant-id <tenant-id>] [--apply true|false] [--minimum-health-status warning|critical] [--max-actions <n>]` Plan or apply dispatch guard actions for unhealthy brands
+- `/engine test <brand-slug|brand-id> <ticket-id>` Dispatch a dry-run workflow-studio test event for a brand
+- `/engine event <brand-slug|brand-id> <json-file> [idempotency-key]` Ingest a workflow engine event payload from a JSON file
+- `/engine templates [key] [version]` List or get workflow templates
+- `/engine templates create <json-file>` Create a workflow template version from a JSON file
+- `/engine templates update <template-key> <version> <json-file>` Update a workflow template version from a JSON file
+- `/engine policy-sets [key]` List or get versioned policy sets
+- `/engine policy-sets get <policy-set-key> [version]` Get a policy set version
+- `/engine policy-sets create <json-file>` Create a policy set version from a JSON file
+- `/engine policy-sets update <policy-set-key> <version> <json-file>` Update a policy set version from a JSON file
+- `/engine dlq <brand-slug|brand-id> [status]` List dead-letter queue items for a brand
+- `/engine dlq retry <brand-slug|brand-id> <dlq-id>` Retry a dead-letter queue item
+- `/engine dlq resolve <brand-slug|brand-id> <dlq-id> [action] [notes]` Resolve a dead-letter queue item
+- `/workflows [list|start|status|cancel|terminate|restart|review|retry]` Manage workflow executions in the engine Aliases: `/wf`.
+- `/onboard [init]` Interactive onboarding wizard — brand, integrations, KB, rules, workflow, deploy
+- `/onboard init [brand-slug]` Initialize .stateset/<brand>/ config-as-code directory
+- `/finetune [list|export|validate|create|deploy]` Fine-tuning pipeline: export evals → validate datasets → create job spec → deploy model
+- `/finetune export [output-dir] [--format all|sft|dpo|openai-sft|studio-sft|trl-sft|studio-dpo|pair-dpo] [--status approved] [--validation-ratio 0.1]` Export evals into the SFT and DPO dataset formats used by workflow studio and synthetic-data-studio
+- `/finetune validate [path] [--format auto|openai-sft|studio-sft|trl-sft|studio-dpo|pair-dpo]` Validate exported datasets before training
+- `/finetune create [dataset-file] [--method supervised|dpo]` Create a new fine-tuning job spec from a validated dataset
+- `/finetune deploy <model-id>` Deploy a fine-tuned model to workflow config
+- `/evals [list|create|create-from-response|get|update|delete|export|review|suggest|<id>]` Manage eval records and fine-tuning examples
+- `/evals create-from-response <response-id> [--seed preferred|rejected|none]` Seed a new eval from a stored response so curators can turn live agent output into SFT or DPO data
+- `/evals review [eval-id] [--status pending]` Interactively review pending evals
+- `/evals suggest` Auto-suggest eval criteria based on conversation patterns Aliases: `/evals-suggest`.
+- `/datasets [list|create|get|update|delete|add-entry|update-entry|delete-entry|import|export|<id>]` Manage datasets and message-based dataset entries for training-data curation
+- `/datasets add-entry <dataset-id> (--messages <json> | --file <path>)` Add a message-based training example to a dataset
+- `/datasets import <dataset-id> <json|jsonl-file>` Bulk import dataset entries from JSON or JSONL
+- `/datasets export <dataset-id> [--out <path>]` Export a dataset with all of its entries
+- `/rules generate [brand-slug]` Auto-generate rules from KB and business data (with human confirmation)
 
 **Sessions**
 
@@ -205,7 +264,8 @@ Use `/help` for the full list. This reference is generated from [`src/cli/comman
 **Shortcut Commands**
 
 - `/rules [get|list|create|toggle|delete|import|export|agent|<id>]` Manage agent rules Aliases: `/r`.
-- `/kb [search|add|delete|scroll|list|info]` Manage KB entries
+- `/kb [search|add|ingest|delete|scroll|list|info]` Manage KB entries
+- `/kb ingest <path> [--chunk_size 2000] [--overlap 200]` Bulk ingest local files/directories into KB with chunking
 - `/agents [list|get|create|switch|export|import|bootstrap|<id>]` Manage agents Aliases: `/a`.
 - `/channels [list|create|messages|<id>]` Manage conversation channels
 - `/convos [get|recent|search|count|export|replay|tag|<id>]` Inspect conversations
@@ -221,7 +281,7 @@ Use `/help` for the full list. This reference is generated from [`src/cli/comman
 - `/push [source]` Push a local config file or directory
 - `/validate [source]` Validate local state-set payload
 - `/watch [dir]` Watch .stateset for changes and sync
-- `/webhooks [list|create|test|logs|delete]` Manage webhook subscriptions
+- `/webhooks [list|get|create|update|deliveries|logs|delete]` Manage remote webhook subscriptions and delivery history
 - `/alerts [list|get|create|delete]` Manage alert rules
 - `/monitor [status|live]` Watch live platform metrics
 - `/test [message...] [--agent <agent-id>]` Run a non-persistent test message
@@ -333,6 +393,50 @@ response-whatsapp --reset
 
 When `--self-chat` is enabled, responses are prefixed with `[agent]`, and any incoming `[agent]` messages are ignored to prevent loops.
 
+### Telegram Gateway
+
+Bridge private Telegram chats to your StateSet Response agent.
+
+```bash
+response-telegram
+```
+
+**Setup:**
+
+1. Create a bot with `@BotFather`
+2. Copy the bot token
+3. Set environment variables:
+
+```bash
+export TELEGRAM_BOT_TOKEN=<token>
+export ANTHROPIC_API_KEY=<key>
+# Optional: enable real state changes instead of read-only responses
+export STATESET_ALLOW_APPLY=true
+```
+
+**Behavior:**
+
+- In private chats: responds to all messages
+- Group chats and channels are ignored by the current gateway runtime
+
+**Options:**
+
+```
+--model <name>, -m  Model to use (sonnet|haiku|opus or full model ID)
+--allow <ids>       Comma-separated allowlist of Telegram user IDs
+--version, -V       Show version
+--verbose, -v       Enable debug logging
+```
+
+**Examples:**
+
+```bash
+response-telegram
+response-telegram --model haiku
+response-telegram --allow 12345,6789
+response-telegram --verbose
+```
+
 ### Slack Gateway
 
 Bridge Slack messages to your StateSet Response agent via Socket Mode.
@@ -353,6 +457,8 @@ response-slack
 ```bash
 export SLACK_BOT_TOKEN=xoxb-...
 export SLACK_APP_TOKEN=xapp-...
+# Optional: enable real state changes instead of read-only responses
+export STATESET_ALLOW_APPLY=true
 ```
 
 **Behavior:**
@@ -491,38 +597,50 @@ Settings are stored in `~/.stateset/integrations.json` (global) or `.stateset/in
 
 ### Multi-Channel Gateway
 
-Run Slack and WhatsApp gateways together:
+Run Slack and Telegram from one process, with WhatsApp available when you need it:
 
 ```bash
-response-gateway
+response-gateway --no-whatsapp
 ```
 
 **Channel Startup**
 
-Slack via the gateway requires the Slack env vars, then run the gateway (optionally disabling WhatsApp):
+Slack + Telegram together:
 
 ```bash
 export SLACK_BOT_TOKEN=xoxb-...
 export SLACK_APP_TOKEN=xapp-...
+export TELEGRAM_BOT_TOKEN=<token>
+# Optional: enable real state changes instead of read-only responses
+export STATESET_ALLOW_APPLY=true
 response-gateway --no-whatsapp
 ```
 
-WhatsApp via the gateway requires the Baileys package, then run the gateway (optionally disabling Slack):
+Telegram-only:
+
+```bash
+export TELEGRAM_BOT_TOKEN=<token>
+response-gateway --no-slack --no-whatsapp
+```
+
+WhatsApp via the gateway requires the Baileys package, then run the gateway (optionally disabling Slack and/or Telegram):
 
 ```bash
 npm install @whiskeysockets/baileys
-response-gateway --no-slack
+response-gateway --no-slack --no-telegram
 ```
 
-On first WhatsApp run, scan the QR code (Settings > Linked Devices > Link a Device). Auth state is stored in `~/.stateset/whatsapp-auth/` or the path provided by `--whatsapp-auth-dir`.
+On first WhatsApp run, scan the QR code (Settings > Linked Devices > Link a Device). Auth state is stored in `~/.stateset/whatsapp-auth/` or the path provided by `--whatsapp-auth-dir`. Telegram currently handles private chats only.
 
 **Options:**
 
 ```
---model <name>, -m        Model to use (sonnet|haiku|opus or full model ID)
+--model <name>, -m         Model to use (sonnet|haiku|opus or full model ID)
 --no-slack                 Disable Slack channel
+--no-telegram              Disable Telegram channel
 --no-whatsapp              Disable WhatsApp channel
 --slack-allow <ids>        Comma-separated Slack user ID allowlist
+--telegram-allow <ids>     Comma-separated Telegram user ID allowlist
 --whatsapp-allow <phones>  Comma-separated phone number allowlist
 --whatsapp-groups          Allow WhatsApp group messages
 --whatsapp-self-chat       Only respond to messages you send to yourself
@@ -534,7 +652,34 @@ On first WhatsApp run, scan the QR code (Settings > Linked Devices > Link a Devi
 **Notes:**
 
 - Slack requires `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN`
+- Telegram requires `TELEGRAM_BOT_TOKEN`
 - WhatsApp requires the `@whiskeysockets/baileys` package to be installed
+- Set `STATESET_ALLOW_APPLY=true` if the bot should execute state-changing operations
+- Set `STATESET_GATEWAY_HEALTH_PORT` or `PORT` to expose `/healthz` and `/readyz`
+
+### Kubernetes Deployment
+
+The repo includes a container image definition plus `k8s/` manifests for the combined Slack + Telegram gateway. The default deployment runs `node ./bin/stateset-gateway.js --no-whatsapp`, exposes `/healthz` and `/readyz` on port `3000`, and bootstraps `~/.stateset/config.json` from environment variables on first start.
+
+```bash
+docker build -t registry.example.com/stateset/stateset-response-cli:1.9.3 .
+docker push registry.example.com/stateset/stateset-response-cli:1.9.3
+# Replace STATESET_RESPONSE_CLI_IMAGE in k8s/deployment.yaml before applying
+kubectl apply -k k8s
+```
+
+Populate `k8s/secret.yaml`, replace `STATESET_RESPONSE_CLI_IMAGE` in `k8s/deployment.yaml`, then apply the manifests.
+
+Required Kubernetes secrets/config:
+
+- `ANTHROPIC_API_KEY`
+- `STATESET_ORG_ID`
+- `STATESET_GRAPHQL_ENDPOINT`
+- `STATESET_CLI_TOKEN` or `STATESET_ADMIN_SECRET`
+- `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` for Slack
+- `TELEGRAM_BOT_TOKEN` for Telegram
+
+No public ingress is required for Slack Socket Mode or Telegram long polling. The bundled Service is there for probes and optional `kubectl port-forward`. The default manifest uses `emptyDir` for `/home/agent/.stateset`; switch that volume to a PVC if you want persistent session artifacts or WhatsApp auth state across pod restarts.
 
 ## Environment Variables
 
@@ -542,9 +687,18 @@ On first WhatsApp run, scan the QR code (Settings > Linked Devices > Link a Devi
 | ------------------------------ | ------------- | -------------------------------------------------------------------- |
 | `ANTHROPIC_API_KEY`            | Yes           | Anthropic API key for Claude                                         |
 | `STATESET_INSTANCE_URL`        | No            | StateSet ResponseCX instance URL                                     |
-| `STATESET_GRAPHQL_ENDPOINT`    | No            | GraphQL API endpoint                                                 |
+| `STATESET_GRAPHQL_ENDPOINT`    | No            | GraphQL API endpoint; required when bootstrapping gateway config     |
 | `STATESET_KB_HOST`             | No            | Knowledge base (Qdrant) host URL                                     |
+| `STATESET_KB_BASE_URL`         | No            | Explicit KB/Qdrant base URL for workflow-studio connector sync       |
 | `STATESET_SECRET_PASSPHRASE`   | No            | Optional secret used to encrypt/decrypt stored credentials           |
+| `STATESET_ORG_ID`            | Gateway/K8s   | Organization ID used to bootstrap config in headless deployments     |
+| `STATESET_ORG_NAME`          | Gateway/K8s   | Optional organization display name for env bootstrapping             |
+| `STATESET_CLI_TOKEN`         | Gateway/K8s   | CLI token used to bootstrap config in headless deployments           |
+| `STATESET_ADMIN_SECRET`      | Gateway/K8s   | Admin secret alternative to `STATESET_CLI_TOKEN`                     |
+| `STATESET_MODEL`             | Optional      | Default model for CLI and gateway runtime bootstrap                  |
+| `STATESET_STATE_DIR`         | Optional      | Override the `~/.stateset` runtime state directory                   |
+| `STATESET_GATEWAY_HEALTH_PORT` | Optional    | HTTP health probe port for `response-gateway`                        |
+| `PORT`                       | Optional      | Alias for `STATESET_GATEWAY_HEALTH_PORT`                             |
 | `SHOPIFY_SHOP_DOMAIN`          | Shopify       | Shopify shop domain (e.g., `myshop.myshopify.com`)                   |
 | `SHOPIFY_ACCESS_TOKEN`         | Shopify       | Shopify Admin API access token                                       |
 | `SHOPIFY_API_VERSION`          | Shopify       | Shopify API version (default: `2025-04`)                             |
@@ -593,13 +747,17 @@ On first WhatsApp run, scan the QR code (Settings > Linked Devices > Link a Devi
 | `ZENDESK_SUBDOMAIN`            | Zendesk       | Zendesk subdomain (e.g., `acme`)                                     |
 | `ZENDESK_EMAIL`                | Zendesk       | Zendesk account email                                                |
 | `ZENDESK_API_TOKEN`            | Zendesk       | Zendesk API token                                                    |
-| `STATESET_ALLOW_APPLY`         | Optional      | Enable write operations for integrations                             |
+| `STATESET_ALLOW_APPLY`         | Optional      | Enable write operations for integrations and messaging gateways      |
 | `STATESET_REDACT`              | Optional      | Redact customer emails in integration outputs                        |
 | `STATESET_SHOW_USAGE`          | Optional      | Print token usage summaries                                          |
 | `STATESET_TOOL_AUDIT`          | Optional      | Enable tool audit logging                                            |
 | `STATESET_TOOL_AUDIT_DETAIL`   | Optional      | Include tool result excerpts in audit logs                           |
 | `SLACK_BOT_TOKEN`              | Slack         | Bot User OAuth Token (`xoxb-...`)                                    |
 | `SLACK_APP_TOKEN`              | Slack         | App-level token for Socket Mode (`xapp-...`)                         |
+| `SLACK_ALLOW`                  | Slack         | Optional comma-separated Slack user ID allowlist                     |
+| `TELEGRAM_BOT_TOKEN`           | Telegram      | Bot token from `@BotFather`                                          |
+| `TELEGRAM_ALLOW`               | Telegram      | Optional comma-separated Telegram user ID allowlist                  |
+| `WHATSAPP_ALLOW`               | WhatsApp      | Optional comma-separated phone number allowlist                      |
 | `OPENAI_API_KEY`               | KB            | OpenAI API key for knowledge base embeddings                         |
 | `OPEN_AI`                      | KB            | Alternative OpenAI API key variable                                  |
 
@@ -633,7 +791,7 @@ The AI agent has access to 100+ tools organized by resource type:
 
 ### Datasets
 
-`list_datasets` `get_dataset` `create_dataset` `update_dataset` `delete_dataset` `add_dataset_entry` `delete_dataset_entry`
+`list_datasets` `get_dataset` `create_dataset` `update_dataset` `delete_dataset` `add_dataset_entry` `update_dataset_entry` `delete_dataset_entry` `import_dataset_entries`
 
 ### Functions
 
@@ -830,7 +988,7 @@ The CLI can load local context files, skills, and prompt templates from `~/.stat
 
 **Operations Store**
 
-The shortcut commands track webhooks, alerts, and deployments in a local store at `~/.stateset/platform-operations.json`. This powers `response webhooks`, `response alerts`, `response deployments`, and `response monitor`.
+The shortcut commands track alerts and deployments in a local store at `~/.stateset/platform-operations.json`. `response webhooks` now uses the remote platform webhook records and delivery history, while `response monitor` prefers remote webhook state and falls back to the local store if webhook tools are unavailable.
 
 ## Architecture
 

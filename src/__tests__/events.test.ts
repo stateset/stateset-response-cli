@@ -12,7 +12,7 @@ const mockRuntimeContext: RuntimeContext = {
     name: 'Org',
     graphqlEndpoint: 'https://api.example.com',
   },
-  anthropicApiKey: 'sk-ant-test',
+  anthropicApiKey: 'anthropic-example-key',
 };
 
 beforeEach(() => {
@@ -223,7 +223,7 @@ describe('EventsRunner reliability guards', () => {
   it('defers deletion when a session queue is saturated', () => {
     const runner = new EventsRunner({
       defaultSession: 'default',
-      anthropicApiKey: 'sk-ant-test',
+      anthropicApiKey: 'anthropic-example-key',
     }) as any;
 
     runner.running = true;
@@ -243,7 +243,7 @@ describe('EventsRunner reliability guards', () => {
   it('returns null for new sessions when at capacity with no idle runners', () => {
     const runner = new EventsRunner({
       defaultSession: 'default',
-      anthropicApiKey: 'sk-ant-test',
+      anthropicApiKey: 'anthropic-example-key',
     }) as any;
 
     const busyRunner = {
@@ -267,7 +267,7 @@ describe('EventsRunner reliability guards', () => {
 
     const runner = new EventsRunner({
       defaultSession: 'default',
-      anthropicApiKey: 'sk-ant-test',
+      anthropicApiKey: 'anthropic-example-key',
     }) as any;
     runner.running = true;
     const watcher = { close: vi.fn() };
@@ -290,7 +290,7 @@ describe('EventsRunner reliability guards', () => {
 
     const runner = new EventsRunner({
       defaultSession: 'default',
-      anthropicApiKey: 'sk-ant-test',
+      anthropicApiKey: 'anthropic-example-key',
     }) as any;
 
     runner.running = true;
@@ -312,7 +312,7 @@ describe('EventsRunner reliability guards', () => {
   it('does not retry when runner is not running', () => {
     const runner = new EventsRunner({
       defaultSession: 'default',
-      anthropicApiKey: 'sk-ant-test',
+      anthropicApiKey: 'anthropic-example-key',
     }) as any;
 
     runner.running = false;

@@ -3,6 +3,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { ShortcutRunner, ShortcutLogger } from '../cli/shortcuts/types.js';
 
+const { mockPrompt } = vi.hoisted(() => ({
+  mockPrompt: vi.fn(),
+}));
+
+vi.mock('inquirer', () => ({
+  default: { prompt: mockPrompt },
+  prompt: mockPrompt,
+}));
+
 // ---- Helpers ----------------------------------------------------------------
 
 function createMockRunner(response: unknown = {}): ShortcutRunner {
@@ -174,6 +183,322 @@ describe('runAgentsCommand', () => {
     await runAgentsCommand([], runner, logger, true);
 
     expect(logger.output).toHaveBeenCalledWith(expect.stringContaining('"id"'));
+  });
+});
+
+// ---- Channels ---------------------------------------------------------------
+
+describe('runEvalsCommand', () => {
+  let runEvalsCommand: typeof import('../cli/shortcuts/evals.js').runEvalsCommand;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    mockPrompt.mockReset();
+    const mod = await import('../cli/shortcuts/evals.js');
+    runEvalsCommand = mod.runEvalsCommand;
+  });
+
+  it('lists evals by default', async () => {
+    const runner = createMockRunner([{ id: 'e1', eval_name: 'Accuracy' }]);
+    const logger = createMockLogger();
+
+    await runEvalsCommand([], runner, logger);
+
+    expect(runner.callTool).toHaveBeenCalledWith(
+      'list_evals',
+      expect.objectContaining({ limit: expect.any(Number), offset: 0 }),
+    );
+    expect(logger.success).toHaveBeenCalled();
+  });
+
+  it('creates evals with required fields', async () => {
+    const runner = createMockRunner({ id: 'e1', eval_name: 'Accuracy' });
+    const logger = createMockLogger();
+
+    await runEvalsCommand(
+      [
+        'create',
+        '--name',
+        'Accuracy',
+        '--type',
+        'quality',
+        '--message',
+        'Where is my order?',
+        '--preferred',
+        'Your order is in transit.',
+      ],
+      runner,
+      logger,
+    );
+
+    expect(runner.callTool).toHaveBeenCalledWith(
+      'create_eval',
+      expect.objectContaining({
+        eval_name: 'Accuracy',
+        eval_type: 'quality',
+        user_message: 'Where is my order?',
+        preferred_output: 'Your order is in transit.',
+      }),
+    );
+  });
+
+  it('updates evals', async () => {
+    const runner = createMockRunner({ id: 'e1', eval_status: 'approved' });
+    const logger = createMockLogger();
+
+    await runEvalsCommand(['update', 'e1', '--status', 'approved'], runner, logger);
+
+    expect(runner.callTool).toHaveBeenCalledWith(
+      'update_eval',
+      expect.objectContaining({ id: 'e1', eval_status: 'approved' }),
+    );
+  });
+
+  it('creates an eval from a stored response', async () => {
+    const runner: ShortcutRunner = {
+      callTool: vi
+        .fn()
+        .mockResolvedValueOnce({
+          payload: {
+            id: 'resp-1',
+            customer_message: 'Where is my order?',
+            agent_response: 'Please contact support.',
+            channel: 'email',
+            ticket_id: 'ticket-1',
+          },
+        })
+        .mockResolvedValueOnce({
+          payload: { id: 'eval-1' },
+        }),
+    };
+    const logger = createMockLogger();
+
+    await runEvalsCommand(['create-from-response', 'resp-1', '--seed', 'rejected'], runner, logger);
+
+    expect(runner.callTool).toHaveBeenNthCalledWith(1, 'get_response', { id: 'resp-1' });
+    expect(runner.callTool).toHaveBeenNthCalledWith(
+      2,
+      'create_eval',
+      expect.objectContaining({
+        response_id: 'resp-1',
+        ticket_id: 'ticket-1',
+        user_message: 'Where is my order?',
+        non_preferred_output: 'Please contact support.',
+        eval_status: 'pending',
+      }),
+    );
+  });
+
+  it('exports evals to a file', async () => {
+    const runner = createMockRunner([{ messages: [{ role: 'user', content: 'Hi' }] }]);
+    const logger = createMockLogger();
+    const dir = createProjectTempDir('tmp-evals-export-');
+    const outputPath = path.join(dir, 'evals-export.json');
+
+    try {
+      await runEvalsCommand(['export', '--out', outputPath, 'e1'], runner, logger);
+
+      expect(runner.callTool).toHaveBeenCalledWith('export_evals_for_finetuning', {
+        eval_ids: ['e1'],
+      });
+      expect(fs.existsSync(outputPath)).toBe(true);
+      expect(logger.success).toHaveBeenCalledWith(expect.stringContaining(outputPath));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('filters listed evals by status', async () => {
+    const runner = createMockRunner([
+      { id: 'e1', eval_status: 'pending' },
+      { id: 'e2', eval_status: 'approved' },
+    ]);
+    const logger = createMockLogger();
+
+    await runEvalsCommand(['list', '--status', 'pending'], runner, logger, true);
+
+    expect(logger.output).toHaveBeenCalledWith(expect.stringContaining('"e1"'));
+    expect(logger.output).not.toHaveBeenCalledWith(expect.stringContaining('"e2"'));
+  });
+
+  it('reviews and approves a pending eval', async () => {
+    const runner = createMockRunner([
+      {
+        id: 'e1',
+        eval_name: 'Accuracy',
+        eval_type: 'quality',
+        eval_status: 'pending',
+        user_message: 'Where is my order?',
+        preferred_output: '',
+      },
+    ]);
+    const logger = createMockLogger();
+    vi.mocked(runner.callTool)
+      .mockResolvedValueOnce({ payload: [{ id: 'e1', eval_status: 'pending' }] } as any)
+      .mockResolvedValueOnce({ payload: { id: 'e1', eval_status: 'approved' } } as any);
+    mockPrompt
+      .mockResolvedValueOnce({ action: 'approve' })
+      .mockResolvedValueOnce({ preferredOutput: 'Your order is in transit.' });
+
+    await runEvalsCommand(['review'], runner, logger);
+
+    expect(runner.callTool).toHaveBeenNthCalledWith(1, 'list_evals', { limit: 1000, offset: 0 });
+    expect(runner.callTool).toHaveBeenNthCalledWith(
+      2,
+      'update_eval',
+      expect.objectContaining({
+        id: 'e1',
+        eval_status: 'approved',
+        preferred_output: 'Your order is in transit.',
+      }),
+    );
+    expect(logger.success).toHaveBeenCalledWith('Approved eval e1');
+  });
+});
+
+describe('runDatasetsCommand', () => {
+  let runDatasetsCommand: typeof import('../cli/shortcuts/datasets.js').runDatasetsCommand;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    const mod = await import('../cli/shortcuts/datasets.js');
+    runDatasetsCommand = mod.runDatasetsCommand;
+  });
+
+  it('lists datasets by default', async () => {
+    const runner = createMockRunner([{ id: 'd1', name: 'Returns' }]);
+    const logger = createMockLogger();
+
+    await runDatasetsCommand([], runner, logger);
+
+    expect(runner.callTool).toHaveBeenCalledWith(
+      'list_datasets',
+      expect.objectContaining({ limit: expect.any(Number), offset: 0 }),
+    );
+    expect(logger.success).toHaveBeenCalled();
+  });
+
+  it('creates datasets with metadata', async () => {
+    const runner = createMockRunner({ id: 'd1', name: 'Returns' });
+    const logger = createMockLogger();
+
+    await runDatasetsCommand(
+      [
+        'create',
+        '--name',
+        'Returns',
+        '--description',
+        'Return and exchange examples',
+        '--status',
+        'active',
+        '--metadata',
+        '{"channel":"email"}',
+      ],
+      runner,
+      logger,
+    );
+
+    expect(runner.callTool).toHaveBeenCalledWith(
+      'create_dataset',
+      expect.objectContaining({
+        name: 'Returns',
+        description: 'Return and exchange examples',
+        status: 'active',
+        metadata: { channel: 'email' },
+      }),
+    );
+  });
+
+  it('adds dataset entries from inline messages', async () => {
+    const runner = createMockRunner({ id: 1, dataset_id: 'dataset-1' });
+    const logger = createMockLogger();
+
+    await runDatasetsCommand(
+      [
+        'add-entry',
+        'dataset-1',
+        '--messages',
+        '[{"role":"user","content":"Where is my order?"},{"role":"assistant","content":"It is in transit."}]',
+      ],
+      runner,
+      logger,
+    );
+
+    expect(runner.callTool).toHaveBeenCalledWith(
+      'add_dataset_entry',
+      expect.objectContaining({
+        dataset_id: 'dataset-1',
+        messages: [
+          { role: 'user', content: 'Where is my order?' },
+          { role: 'assistant', content: 'It is in transit.' },
+        ],
+      }),
+    );
+  });
+
+  it('imports dataset entries from a jsonl file', async () => {
+    const runner = createMockRunner({ imported: 2 });
+    const logger = createMockLogger();
+    const dir = createProjectTempDir('tmp-datasets-import-');
+    const importPath = path.join(dir, 'dataset.jsonl');
+    fs.writeFileSync(
+      importPath,
+      [
+        '{"messages":[{"role":"user","content":"Where is my order?"},{"role":"assistant","content":"It is in transit."}]}',
+        '{"messages":[{"role":"user","content":"I want to cancel"},{"role":"assistant","content":"I can help with that."}]}',
+      ].join('\n'),
+      'utf-8',
+    );
+
+    try {
+      await runDatasetsCommand(['import', 'dataset-1', importPath], runner, logger);
+
+      expect(runner.callTool).toHaveBeenCalledWith(
+        'import_dataset_entries',
+        expect.objectContaining({
+          dataset_id: 'dataset-1',
+          entries: expect.arrayContaining([
+            expect.objectContaining({
+              messages: expect.arrayContaining([
+                expect.objectContaining({ role: 'user', content: 'Where is my order?' }),
+              ]),
+            }),
+          ]),
+        }),
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('exports datasets to a file', async () => {
+    const payload = {
+      dataset: { id: 'd1', name: 'Returns' },
+      entries: [{ id: 1, messages: [{ role: 'user', content: 'Where is my order?' }] }],
+    };
+    const runner = createMockRunner(payload);
+    const logger = createMockLogger();
+    const dir = createProjectTempDir('tmp-datasets-export-');
+    const outputPath = path.join(dir, 'dataset-export.json');
+
+    try {
+      await runDatasetsCommand(['export', 'd1', '--out', outputPath], runner, logger);
+      expect(runner.callTool).toHaveBeenCalledWith('get_dataset', { id: 'd1' });
+      expect(fs.existsSync(outputPath)).toBe(true);
+      expect(JSON.parse(fs.readFileSync(outputPath, 'utf-8'))).toEqual(payload);
+      expect(logger.success).toHaveBeenCalledWith(expect.stringContaining(outputPath));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('warns on missing create args', async () => {
+    const runner = createMockRunner();
+    const logger = createMockLogger();
+
+    await runDatasetsCommand(['create'], runner, logger);
+
+    expect(logger.warning).toHaveBeenCalledWith(expect.stringContaining('Usage'));
   });
 });
 
@@ -1258,58 +1583,125 @@ describe('runWebhooksCommand', () => {
     runWebhooksCommand = mod.runWebhooksCommand;
   });
 
-  it('warns when no webhooks configured', async () => {
+  it('warns when no runner is provided', async () => {
     const logger = createMockLogger();
 
     await runWebhooksCommand([], logger);
 
-    expect(logger.warning).toHaveBeenCalledWith(expect.stringContaining('No webhooks'));
+    expect(logger.warning).toHaveBeenCalledWith(expect.stringContaining('requires authentication'));
   });
 
   it('warns on missing get webhook id', async () => {
+    const runner = createMockRunner();
     const logger = createMockLogger();
 
-    await runWebhooksCommand(['get'], logger);
+    await runWebhooksCommand(['get'], logger, false, runner);
 
     expect(logger.warning).toHaveBeenCalledWith(expect.stringContaining('Usage'));
   });
 
   it('warns on missing create url', async () => {
+    const runner = createMockRunner();
     const logger = createMockLogger();
 
-    await runWebhooksCommand(['create'], logger);
+    await runWebhooksCommand(['create'], logger, false, runner);
 
     expect(logger.warning).toHaveBeenCalledWith(expect.stringContaining('Usage'));
   });
 
-  it('warns on missing test webhook id', async () => {
+  it('lists remote webhooks by default', async () => {
+    const runner = createMockRunner([{ id: 'wh_1', url: 'https://example.com/hook' }]);
     const logger = createMockLogger();
 
-    await runWebhooksCommand(['test'], logger);
+    await runWebhooksCommand([], logger, false, runner);
 
-    expect(logger.warning).toHaveBeenCalledWith(expect.stringContaining('Usage'));
+    expect(runner.callTool).toHaveBeenCalledWith(
+      'list_webhooks',
+      expect.objectContaining({ limit: expect.any(Number), offset: 0 }),
+    );
+    expect(logger.success).toHaveBeenCalled();
   });
 
-  it('warns on missing logs webhook id', async () => {
+  it('creates a remote webhook', async () => {
+    const runner = createMockRunner({ id: 'wh_1' });
     const logger = createMockLogger();
 
-    await runWebhooksCommand(['logs'], logger);
+    await runWebhooksCommand(
+      ['create', 'https://example.com/hook', '--events', 'response.created,response.rated'],
+      logger,
+      false,
+      runner,
+    );
 
-    expect(logger.warning).toHaveBeenCalledWith(expect.stringContaining('Usage'));
+    expect(runner.callTool).toHaveBeenCalledWith('create_webhook', {
+      url: 'https://example.com/hook',
+      events: ['response.created', 'response.rated'],
+    });
+  });
+
+  it('updates a remote webhook', async () => {
+    const runner = createMockRunner({ id: 'wh_1' });
+    const logger = createMockLogger();
+
+    await runWebhooksCommand(
+      ['update', '00000000-0000-0000-0000-000000000123', '--enabled', 'false'],
+      logger,
+      false,
+      runner,
+    );
+
+    expect(runner.callTool).toHaveBeenCalledWith('update_webhook', {
+      id: '00000000-0000-0000-0000-000000000123',
+      is_active: false,
+    });
+  });
+
+  it('lists remote webhook deliveries', async () => {
+    const runner = createMockRunner([{ id: 'delivery_1' }]);
+    const logger = createMockLogger();
+
+    await runWebhooksCommand(
+      ['deliveries', '00000000-0000-0000-0000-000000000123', '--limit', '5'],
+      logger,
+      false,
+      runner,
+    );
+
+    expect(runner.callTool).toHaveBeenCalledWith('list_webhook_deliveries', {
+      webhook_id: '00000000-0000-0000-0000-000000000123',
+      limit: 5,
+      offset: 0,
+    });
+  });
+
+  it('warns that remote webhook test is unsupported', async () => {
+    const runner = createMockRunner();
+    const logger = createMockLogger();
+
+    await runWebhooksCommand(
+      ['test', '00000000-0000-0000-0000-000000000123'],
+      logger,
+      false,
+      runner,
+    );
+
+    expect(logger.warning).toHaveBeenCalledWith(expect.stringContaining('not supported'));
   });
 
   it('warns on missing delete webhook id', async () => {
+    const runner = createMockRunner();
     const logger = createMockLogger();
 
-    await runWebhooksCommand(['delete'], logger);
+    await runWebhooksCommand(['delete'], logger, false, runner);
 
     expect(logger.warning).toHaveBeenCalledWith(expect.stringContaining('Usage'));
   });
 
   it('warns on unknown webhooks command', async () => {
+    const runner = createMockRunner();
     const logger = createMockLogger();
 
-    await runWebhooksCommand(['unknown'], logger);
+    await runWebhooksCommand(['unknown'], logger, false, runner);
 
     expect(logger.warning).toHaveBeenCalledWith(expect.stringContaining('Unknown'));
   });

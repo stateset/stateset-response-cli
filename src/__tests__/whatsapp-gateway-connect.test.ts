@@ -11,7 +11,7 @@ vi.mock('../config.js', () => ({
       graphqlEndpoint: 'https://api.example.com/graphql',
       adminSecret: 'secret',
     },
-    anthropicApiKey: 'sk-ant-test',
+    anthropicApiKey: 'anthropic-example-key',
   })),
 }));
 

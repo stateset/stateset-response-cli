@@ -17,19 +17,33 @@ import {
   formatToolResult,
   formatTable,
   parseToggleValue,
+  printPayload,
 } from './utils.js';
-import {
-  createWebhook,
-  deleteWebhook,
-  getWebhook,
-  listWebhooks,
-  listWebhookLogs,
-  pushWebhookLog,
-  createAlert,
-  deleteAlert,
-  listAlerts,
-  loadOperationsStore,
-} from '../operations-store.js';
+import { createAlert, deleteAlert, listAlerts, loadOperationsStore } from '../operations-store.js';
+
+function readFirstOption(options: Record<string, string>, names: string[]): string | undefined {
+  for (const name of names) {
+    const value = options[name];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function parseWebhookEventList(value: string | undefined): string[] {
+  if (!value) {
+    return [];
+  }
+  return Array.from(
+    new Set(
+      value
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter(Boolean),
+    ),
+  );
+}
 
 export async function runWebhooksCommand(
   tokens: string[],
@@ -37,145 +51,101 @@ export async function runWebhooksCommand(
   json = false,
   runner?: ShortcutRunner,
 ): Promise<void> {
+  if (!runner) {
+    logger.warning('Webhooks requires authentication and an active tool runner.');
+    return;
+  }
+
   const raw = toLines(tokens);
   const { options, positionals } = parseCommandArgs(raw);
   const action = positionals[0]?.toLowerCase() || 'list';
-  const firstArg = positionals[1];
-  const hasPositionalId = firstArg && !firstArg.startsWith('--');
-  const webhookRef = options.id || (action !== 'create' && hasPositionalId ? firstArg : undefined);
+  const firstArg = positionals[1]?.trim();
+  const webhookRef = readFirstOption(options, ['id']) || firstArg;
   const limit = toPositiveInteger(options.limit, 20, 200);
-  const rows = action === 'list' ? listWebhooks(webhookRef) : [];
+  const events = parseWebhookEventList(readFirstOption(options, ['events', 'event']));
+  const enabledValue = parseToggleValue(readFirstOption(options, ['enabled']));
 
   if (action === 'list') {
-    if (rows.length === 0) {
-      logger.warning('No webhooks configured.');
-      return;
-    }
-    if (json) {
-      logger.output(JSON.stringify({ webhooks: rows }, null, 2));
-      return;
-    }
-    const tableRows = rows.map((entry) => ({
-      id: entry.id,
-      url: entry.url,
-      events: entry.events.join(','),
-      enabled: String(entry.enabled),
-      updated: entry.updatedAt,
-    }));
-    logger.output(formatTable(tableRows, ['id', 'url', 'events', 'enabled', 'updated']));
+    const result = await runner.callTool('list_webhooks', { limit, offset: 0 });
+    printPayload(logger, 'Webhooks', result.payload, json);
     return;
   }
 
   if (action === 'get') {
     if (!webhookRef) {
-      logger.warning('Usage: /webhooks get <webhook-id-or-url>');
+      logger.warning('Usage: /webhooks get <webhook-id>');
       return;
     }
-    try {
-      const result = getWebhook(webhookRef);
-      logger.output(JSON.stringify(result, null, 2));
-    } catch (error) {
-      logger.warning(getErrorMessage(error));
-    }
+    const result = await runner.callTool('get_webhook', { id: webhookRef });
+    printPayload(logger, `Webhook ${webhookRef}`, result.payload, json);
     return;
   }
 
   if (action === 'create') {
-    const eventSource = options.url || options.endpoint || options.webhook;
-    const eventList = options.events || options.event;
-    const url = hasPositionalId ? firstArg : eventSource;
+    const url = firstArg || readFirstOption(options, ['url', 'endpoint', 'webhook']);
     if (!url) {
+      logger.warning('Usage: /webhooks create <url> --events event1,event2 [--enabled true|false]');
+      return;
+    }
+    if (events.length === 0) {
+      logger.warning('Provide at least one webhook event via --events event1,event2.');
+      return;
+    }
+    const result = await runner.callTool('create_webhook', {
+      url,
+      events,
+      ...(enabledValue !== undefined ? { is_active: enabledValue } : {}),
+    });
+    printPayload(logger, 'Created webhook', result.payload, json);
+    return;
+  }
+
+  if (action === 'update') {
+    if (!webhookRef) {
       logger.warning(
-        'Usage: /webhooks create <url> [--events event1,event2] [--enabled true|false]',
+        'Usage: /webhooks update <webhook-id> [--url <url>] [--events event1,event2] [--enabled true|false]',
       );
       return;
     }
-    try {
-      const created = createWebhook({
-        url,
-        events: eventList,
-        enabled: parseToggleValue(options.enabled) !== false,
-      });
-      if (runner) {
-        await pushWebhookLog({
-          webhookId: created.id,
-          event: 'created',
-          status: 'ok',
-          statusMessage: 'created via CLI',
-        });
-      }
-      logger.output(
-        json
-          ? JSON.stringify({ webhook: created }, null, 2)
-          : formatToolResult(JSON.stringify({ webhook: created }, null, 2)),
-      );
-    } catch (error) {
-      logger.warning(getErrorMessage(error));
+    const url = readFirstOption(options, ['url', 'endpoint', 'webhook']);
+    const payload: Record<string, unknown> = { id: webhookRef };
+    if (url !== undefined) {
+      payload.url = url;
     }
+    if (events.length > 0) {
+      payload.events = events;
+    }
+    if (enabledValue !== undefined) {
+      payload.is_active = enabledValue;
+    }
+    if (Object.keys(payload).length === 1) {
+      logger.warning('Provide at least one webhook field to update.');
+      return;
+    }
+    const result = await runner.callTool('update_webhook', payload);
+    printPayload(logger, `Updated webhook ${webhookRef}`, result.payload, json);
+    return;
+  }
+
+  if (action === 'deliveries' || action === 'logs') {
+    const result = await runner.callTool('list_webhook_deliveries', {
+      ...(webhookRef ? { webhook_id: webhookRef } : {}),
+      limit,
+      offset: 0,
+    });
+    printPayload(
+      logger,
+      webhookRef ? `Webhook deliveries for ${webhookRef}` : 'Webhook deliveries',
+      result.payload,
+      json,
+    );
     return;
   }
 
   if (action === 'test') {
-    if (!webhookRef) {
-      logger.warning('Usage: /webhooks test <webhook-id>');
-      return;
-    }
-    try {
-      const target = getWebhook(webhookRef);
-      if (runner) {
-        // no remote dispatch yet; record an invocation for operational visibility
-        await pushWebhookLog({
-          webhookId: target.id,
-          event: 'test',
-          status: 'ok',
-          statusMessage: 'synthetic test event',
-          payload: { url: target.url, events: target.events },
-        });
-      }
-      logger.output(
-        json
-          ? JSON.stringify({ webhook: target.id, status: 'ok', test: true }, null, 2)
-          : formatToolResult(
-              JSON.stringify({ webhook: target.id, status: 'ok', test: true }, null, 2),
-            ),
-      );
-    } catch (error) {
-      logger.warning(getErrorMessage(error));
-    }
-    return;
-  }
-
-  if (action === 'logs') {
-    if (!webhookRef) {
-      logger.warning('Usage: /webhooks logs <webhook-id>');
-      return;
-    }
-    try {
-      const target = getWebhook(webhookRef);
-      const logs = listWebhookLogs(target.id, limit);
-      if (json) {
-        logger.output(JSON.stringify({ webhook: target.id, logs }, null, 2));
-      } else {
-        if (logs.length === 0) {
-          logger.warning(`No logs for webhook "${target.id}".`);
-          return;
-        }
-        logger.output(
-          formatTable(
-            logs.map((entry) => ({
-              time: entry.createdAt,
-              event: entry.event,
-              status: entry.status,
-              id: entry.id,
-              message: entry.statusMessage ?? '',
-            })),
-            ['time', 'event', 'status', 'id', 'message'],
-          ),
-        );
-      }
-    } catch (error) {
-      logger.warning(getErrorMessage(error));
-    }
+    logger.warning(
+      'Synthetic webhook tests are not supported by the platform API. Use /webhooks deliveries to inspect real webhook delivery history.',
+    );
     return;
   }
 
@@ -184,21 +154,13 @@ export async function runWebhooksCommand(
       logger.warning('Usage: /webhooks delete <webhook-id>');
       return;
     }
-    try {
-      const removed = deleteWebhook(webhookRef);
-      logger.output(
-        json
-          ? JSON.stringify({ removed }, null, 2)
-          : formatToolResult(JSON.stringify({ removed }, null, 2)),
-      );
-    } catch (error) {
-      logger.warning(getErrorMessage(error));
-    }
+    const result = await runner.callTool('delete_webhook', { id: webhookRef });
+    printPayload(logger, `Deleted webhook ${webhookRef}`, result.payload, json);
     return;
   }
 
   logger.warning(`Unknown webhooks command "${action}".`);
-  logger.output(formatToolResult('Available: list, create, test, logs, delete'));
+  logger.output(formatToolResult('Available: list, get, create, update, deliveries, logs, delete'));
 }
 
 export async function runAlertsCommand(
@@ -341,6 +303,8 @@ async function collectMonitorSnapshot(
     needsAttentionChannelsResult,
     inProgressChannelsResult,
     recentChannelsResult,
+    webhooksResult,
+    webhookDeliveriesResult,
   ] = await Promise.all([
     runner.callTool('list_agents', { limit: FETCH_ALL_LIMIT }),
     runner.callTool('list_rules', { limit: FETCH_ALL_LIMIT }),
@@ -362,6 +326,12 @@ async function collectMonitorSnapshot(
       limit: FETCH_ALL_LIMIT,
     }),
     runner.callTool('list_channels', { ...scopedFilter, limit: recentChannelsLimit }),
+    runner
+      .callTool('list_webhooks', { limit: FETCH_ALL_LIMIT, offset: 0 })
+      .catch(() => ({ payload: [] })),
+    runner
+      .callTool('list_webhook_deliveries', { limit: recentWebhookLogLimit, offset: 0 })
+      .catch(() => ({ payload: [] })),
   ]);
 
   const agents = asRecordArray(agentsResult.payload);
@@ -382,17 +352,31 @@ async function collectMonitorSnapshot(
   const kbPointsRaw = asStringRecord(kbInfo.info).points_count;
   const kbPoints = toDisplayValue(kbPointsRaw);
 
+  const remoteWebhooks = asRecordArray(webhooksResult.payload);
+  const remoteDeliveries = asRecordArray(webhookDeliveriesResult.payload);
   const operationsStore = loadOperationsStore();
-  const enabledWebhookCount = operationsStore.webhooks.filter((webhook) => webhook.enabled).length;
-  const recentWebhookLogs = operationsStore.webhookLogs
-    .slice(0, recentWebhookLogLimit)
-    .map((entry) => ({
-      time: entry.createdAt,
-      webhook: entry.webhookId,
-      event: entry.event,
-      status: entry.status,
-      message: entry.statusMessage || '-',
-    }));
+  const enabledWebhookCount =
+    remoteWebhooks.length > 0
+      ? remoteWebhooks.filter((webhook) => webhook.is_active === true).length
+      : operationsStore.webhooks.filter((webhook) => webhook.enabled).length;
+  const totalWebhookCount =
+    remoteWebhooks.length > 0 ? remoteWebhooks.length : operationsStore.webhooks.length;
+  const recentWebhookLogs =
+    remoteDeliveries.length > 0
+      ? remoteDeliveries.slice(0, recentWebhookLogLimit).map((entry) => ({
+          time: toDisplayValue(entry.delivered_at),
+          webhook: toDisplayValue(entry.webhook_id),
+          event: toDisplayValue(entry.event_type),
+          status: entry.success === true ? 'ok' : 'error',
+          message: toDisplayValue(entry.error_message || entry.status_code),
+        }))
+      : operationsStore.webhookLogs.slice(0, recentWebhookLogLimit).map((entry) => ({
+          time: entry.createdAt,
+          webhook: entry.webhookId,
+          event: entry.event,
+          status: entry.status,
+          message: entry.statusMessage || '-',
+        }));
 
   const metrics: Array<{ metric: string; value: string }> = [
     { metric: 'Scope', value: isAgentScope ? `agent:${agentId}` : 'organization' },
@@ -406,7 +390,7 @@ async function collectMonitorSnapshot(
     { metric: 'Responses', value: String(responseCount) },
     {
       metric: 'Webhook subscriptions',
-      value: `${operationsStore.webhooks.length} (${enabledWebhookCount} enabled)`,
+      value: `${totalWebhookCount} (${enabledWebhookCount} enabled)`,
     },
     { metric: 'Alert rules', value: String(operationsStore.alerts.length) },
     { metric: 'KB', value: `${kbCollectionRaw} (${kbPoints} points)` },
@@ -553,7 +537,9 @@ export async function runTopLevelWebhooks(
   options: TopLevelOptions = {},
 ): Promise<void> {
   const logger = buildTopLevelLogger();
-  await runWebhooksCommand(args, logger, Boolean(options.json));
+  await withAgentRunner(async (runner) => {
+    await runWebhooksCommand(args, logger, Boolean(options.json), runner);
+  });
 }
 
 export async function runTopLevelAlerts(

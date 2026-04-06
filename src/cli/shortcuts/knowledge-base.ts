@@ -1,8 +1,10 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { requestText } from '../../integrations/http.js';
 import type { ShortcutLogger, ShortcutRunner, TopLevelOptions } from './types.js';
 import { readTextFile, MAX_TEXT_FILE_SIZE_BYTES } from '../../utils/file-read.js';
 import { getErrorMessage } from '../../lib/errors.js';
+import { processPath, type IngestSummary } from '../../lib/kb-ingest.js';
 import {
   toLines,
   parseCommandArgs,
@@ -72,6 +74,61 @@ export async function runKnowledgeBaseCommand(
       },
     });
     printPayload(logger, 'KB added', result.payload, json);
+    return;
+  }
+
+  if (action === 'ingest') {
+    const sourcePath = stripQuotes(positionals.slice(1).join(' '));
+    if (!sourcePath) {
+      logger.warning('Usage: /kb ingest <path> [--chunk_size 2000]');
+      return;
+    }
+    const resolved = path.resolve(sourcePath);
+    if (!fs.existsSync(resolved)) {
+      logger.error(`Path not found: ${resolved}`);
+      return;
+    }
+    const chunkSize = toPositiveInteger(options.chunk_size, 2000, 10000);
+    const overlap = toPositiveInteger(options.overlap, 200, 2000);
+
+    logger.output(`Ingesting from ${resolved}...`);
+    const { chunks, results } = processPath(resolved, { chunkSize, overlap });
+    const succeeded = results.filter((r) => r.status === 'ok').length;
+    const failed = results.filter((r) => r.status === 'error').length;
+
+    logger.output(`Found ${results.length} files → ${chunks.length} chunks (${failed} errors)`);
+
+    let upserted = 0;
+    for (const chunk of chunks) {
+      try {
+        await runner.callTool('kb_upsert', {
+          knowledge: chunk.content,
+          metadata: chunk.metadata,
+        });
+        upserted++;
+      } catch {
+        // Continue on individual failures
+      }
+    }
+
+    const summary: IngestSummary = {
+      files_processed: results.length,
+      files_succeeded: succeeded,
+      files_failed: failed,
+      total_chunks: upserted,
+      results,
+    };
+
+    if (json) {
+      printPayload(logger, 'KB ingest', JSON.stringify(summary), true);
+    } else {
+      logger.success(`Ingested ${upserted}/${chunks.length} chunks from ${succeeded} files`);
+      if (failed > 0) {
+        for (const r of results.filter((r) => r.status === 'error')) {
+          logger.warning(`  ${r.file}: ${r.error}`);
+        }
+      }
+    }
     return;
   }
 

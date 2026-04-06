@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { parseGatewayArgs, parseSlackArgs, parseWhatsAppArgs } from '../cli/gateway-args.js';
+import {
+  parseGatewayArgs,
+  parseSlackArgs,
+  parseTelegramArgs,
+  parseWhatsAppArgs,
+} from '../cli/gateway-args.js';
 
 describe('parseGatewayArgs', () => {
   it('applies default values', () => {
@@ -9,8 +14,10 @@ describe('parseGatewayArgs', () => {
       showHelp: false,
       showVersion: false,
       slackEnabled: true,
+      telegramEnabled: true,
       whatsappEnabled: true,
       slackAllowList: undefined,
+      telegramAllowList: undefined,
       whatsappAllowList: undefined,
       whatsappAllowGroups: false,
       whatsappSelfChatOnly: false,
@@ -24,6 +31,7 @@ describe('parseGatewayArgs', () => {
       'opus',
       '--slack-allow',
       'U1, U2, U1',
+      '--telegram-allow=123,456,123',
       '--whatsapp-allow=+10001,+10002',
       '--no-whatsapp',
       '--whatsapp-groups',
@@ -39,8 +47,10 @@ describe('parseGatewayArgs', () => {
       showHelp: false,
       showVersion: false,
       slackEnabled: true,
+      telegramEnabled: true,
       whatsappEnabled: false,
       slackAllowList: ['U1', 'U2'],
+      telegramAllowList: ['123', '456'],
       whatsappAllowList: ['+10001', '+10002'],
       whatsappAllowGroups: true,
       whatsappSelfChatOnly: true,
@@ -73,6 +83,25 @@ describe('parseSlackArgs', () => {
   it('throws on missing allow value', () => {
     expect(() => parseSlackArgs(['--allow'])).toThrow('Missing value for --allow.');
     expect(() => parseSlackArgs(['--bogus'])).toThrow('Unknown option "--bogus".');
+  });
+});
+
+describe('parseTelegramArgs', () => {
+  it('parses Telegram options and defaults', () => {
+    const parsed = parseTelegramArgs(['--model=haiku', '--allow', '123,,456,123', '--verbose']);
+
+    expect(parsed).toEqual({
+      model: 'haiku',
+      allowList: ['123', '456'],
+      verbose: true,
+      showHelp: false,
+      showVersion: false,
+    });
+  });
+
+  it('throws on missing allow value', () => {
+    expect(() => parseTelegramArgs(['--allow'])).toThrow('Missing value for --allow.');
+    expect(() => parseTelegramArgs(['--bogus'])).toThrow('Unknown option "--bogus".');
   });
 });
 

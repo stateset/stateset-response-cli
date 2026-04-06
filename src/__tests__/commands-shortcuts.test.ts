@@ -30,6 +30,16 @@ vi.mock('../cli/shortcuts/rules.js', () => ({
   runTopLevelRules: vi.fn(async () => undefined),
 }));
 
+vi.mock('../cli/shortcuts/evals.js', () => ({
+  runEvalsCommand: vi.fn(async () => undefined),
+  runTopLevelEvals: vi.fn(async () => undefined),
+}));
+
+vi.mock('../cli/shortcuts/datasets.js', () => ({
+  runDatasetsCommand: vi.fn(async () => undefined),
+  runTopLevelDatasets: vi.fn(async () => undefined),
+}));
+
 vi.mock('../cli/shortcuts/knowledge-base.js', () => ({
   runKnowledgeBaseCommand: vi.fn(async () => undefined),
   runTopLevelKb: vi.fn(async () => undefined),
@@ -158,6 +168,34 @@ describe('handleShortcutCommand', () => {
     expect(result).toEqual({ handled: true });
     expect(mockRunConvosCommand).toHaveBeenCalledWith(
       ['recent', '--json'],
+      expect.objectContaining({ callTool: expect.any(Function) }),
+      mockLogger,
+      true,
+    );
+    expect(mockLogger.done).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes /evals to evals shortcut command', async () => {
+    const { runEvalsCommand } = await import('../cli/shortcuts/evals.js');
+    const result = await handleShortcutCommand('/evals list --limit 5 --json', createCtx());
+
+    expect(result).toEqual({ handled: true });
+    expect(runEvalsCommand).toHaveBeenCalledWith(
+      ['list', '--limit', '5', '--json'],
+      expect.objectContaining({ callTool: expect.any(Function) }),
+      mockLogger,
+      true,
+    );
+    expect(mockLogger.done).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes /datasets to datasets shortcut command', async () => {
+    const { runDatasetsCommand } = await import('../cli/shortcuts/datasets.js');
+    const result = await handleShortcutCommand('/datasets list --limit 5 --json', createCtx());
+
+    expect(result).toEqual({ handled: true });
+    expect(runDatasetsCommand).toHaveBeenCalledWith(
+      ['list', '--limit', '5', '--json'],
       expect.objectContaining({ callTool: expect.any(Function) }),
       mockLogger,
       true,

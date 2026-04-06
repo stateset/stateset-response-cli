@@ -6,6 +6,7 @@ hi
 stateset
 .stateset/
 vitest.config.ts.timestamp-*.mjs
+.codex
 
 # Test coverage
 coverage/

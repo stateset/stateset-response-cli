@@ -21,6 +21,7 @@ import { validateRuntimeConfig, resolveModelOrThrow } from '../config.js';
 interface TestGateway {
   name: string;
   stop: () => Promise<void>;
+  getHealth: () => Record<string, unknown>;
 }
 
 interface StartResult {
@@ -33,6 +34,7 @@ const makeGateway = (name: string): TestGateway => ({
   stop: async () => {
     return;
   },
+  getHealth: () => ({ running: true, connected: true }),
 });
 
 describe('Orchestrator', () => {
@@ -44,24 +46,34 @@ describe('Orchestrator', () => {
     vi.restoreAllMocks();
   });
 
-  it('throws when both channels are disabled', async () => {
-    const orchestrator = new Orchestrator({ slackEnabled: false, whatsappEnabled: false });
+  it('throws when all channels are disabled', async () => {
+    const orchestrator = new Orchestrator({
+      slackEnabled: false,
+      telegramEnabled: false,
+      whatsappEnabled: false,
+    });
 
     await expect(orchestrator.start()).rejects.toThrow(
-      'No channels enabled. Remove --no-slack and/or --no-whatsapp to run at least one channel.',
+      'No channels enabled. Remove --no-slack, --no-telegram, and/or --no-whatsapp to run at least one channel.',
     );
     expect(vi.mocked(validateRuntimeConfig)).not.toHaveBeenCalled();
   });
 
-  it('starts enabled channels in parallel and reports skipped reasons', async () => {
+  it('starts enabled channels and reports skipped reasons', async () => {
     const orchestrator = new Orchestrator({});
     const slack = makeGateway('Slack');
+    const telegram = makeGateway('Telegram');
     const slackStop = vi.spyOn(slack, 'stop');
+    const telegramStop = vi.spyOn(telegram, 'stop');
 
     vi.spyOn(
       orchestrator as unknown as { startSlack: (_model: unknown) => Promise<StartResult> },
       'startSlack',
     ).mockResolvedValue({ gateway: slack });
+    vi.spyOn(
+      orchestrator as unknown as { startTelegram: (_model: unknown) => Promise<StartResult> },
+      'startTelegram',
+    ).mockResolvedValue({ gateway: telegram });
     vi.spyOn(
       orchestrator as unknown as { startWhatsApp: (_model: unknown) => Promise<StartResult> },
       'startWhatsApp',
@@ -71,11 +83,12 @@ describe('Orchestrator', () => {
 
     await orchestrator.start();
 
-    expect(logSpy).toHaveBeenCalled();
     expect(logSpy.mock.calls.join('\n')).toContain('[-] WhatsApp (baileys not installed)');
+    expect(orchestrator.getHealth().activeChannels).toBe(2);
 
     await orchestrator.stop();
     expect(slackStop).toHaveBeenCalledTimes(1);
+    expect(telegramStop).toHaveBeenCalledTimes(1);
   });
 
   it('fails with explicit startup errors when all enabled channels fail', async () => {
@@ -85,12 +98,16 @@ describe('Orchestrator', () => {
       'startSlack',
     ).mockRejectedValue(new Error('slack startup failed'));
     vi.spyOn(
+      orchestrator as unknown as { startTelegram: (_model: unknown) => Promise<StartResult> },
+      'startTelegram',
+    ).mockRejectedValue(new Error('telegram startup failed'));
+    vi.spyOn(
       orchestrator as unknown as { startWhatsApp: (_model: unknown) => Promise<StartResult> },
       'startWhatsApp',
     ).mockRejectedValue(new Error('baileys unavailable'));
 
     await expect(orchestrator.start()).rejects.toThrow(
-      'No channels started. Channel startup failures: Slack: slack startup failed; WhatsApp: baileys unavailable',
+      'No channels started. Channel startup failures: Slack: slack startup failed; Telegram: telegram startup failed; WhatsApp: baileys unavailable',
     );
   });
 
@@ -100,6 +117,10 @@ describe('Orchestrator', () => {
       orchestrator as unknown as { startSlack: (_model: unknown) => Promise<StartResult> },
       'startSlack',
     ).mockResolvedValue({ gateway: makeGateway('Slack') });
+    vi.spyOn(
+      orchestrator as unknown as { startTelegram: (_model: unknown) => Promise<StartResult> },
+      'startTelegram',
+    ).mockResolvedValue({ gateway: makeGateway('Telegram') });
     vi.spyOn(
       orchestrator as unknown as { startWhatsApp: (_model: unknown) => Promise<StartResult> },
       'startWhatsApp',
@@ -120,14 +141,13 @@ describe('Orchestrator', () => {
   });
 
   it('reports Slack dependency skip reason as skipped channel', async () => {
-    const orchestrator = new Orchestrator({});
+    const orchestrator = new Orchestrator({ telegramEnabled: false });
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     vi.spyOn(
       orchestrator as unknown as { startSlack: (_model: unknown) => Promise<StartResult> },
       'startSlack',
     ).mockResolvedValue({ gateway: null, skippedReason: 'slack/bolt not installed' });
-
     vi.spyOn(
       orchestrator as unknown as { startWhatsApp: (_model: unknown) => Promise<StartResult> },
       'startWhatsApp',
@@ -138,35 +158,17 @@ describe('Orchestrator', () => {
     expect(logSpy.mock.calls.join('\n')).toContain('[-] Slack (slack/bolt not installed)');
   });
 
-  it('maps Slack startup dependency error to skipped channel', async () => {
-    const orchestrator = new Orchestrator({ whatsappEnabled: false });
+  it('treats missing Telegram env as a skipped channel', async () => {
+    const orchestrator = new Orchestrator({ slackEnabled: false, whatsappEnabled: false });
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     vi.spyOn(
-      orchestrator as unknown as { startSlack: (_model: unknown) => Promise<StartResult> },
-      'startSlack',
-    ).mockRejectedValue(
-      new Error('@slack/bolt is not installed. Install it with: npm install @slack/bolt'),
-    );
+      orchestrator as unknown as { startTelegram: (_model: unknown) => Promise<StartResult> },
+      'startTelegram',
+    ).mockResolvedValue({ gateway: null, skippedReason: 'missing env vars' });
 
     await orchestrator.start();
 
-    expect(logSpy.mock.calls.join('\n')).toContain('[-] Slack (slack/bolt not installed)');
-  });
-
-  it('maps WhatsApp startup dependency error to skipped channel', async () => {
-    const orchestrator = new Orchestrator({ slackEnabled: false });
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-
-    vi.spyOn(
-      orchestrator as unknown as { startWhatsApp: (_model: unknown) => Promise<StartResult> },
-      'startWhatsApp',
-    ).mockRejectedValue(
-      new Error('WhatsApp gateway requires @whiskeysockets/baileys. Install it with: npm install'),
-    );
-
-    await orchestrator.start();
-
-    expect(logSpy.mock.calls.join('\n')).toContain('[-] WhatsApp (baileys not installed)');
+    expect(logSpy.mock.calls.join('\n')).toContain('[-] Telegram (missing env vars)');
   });
 });

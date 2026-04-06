@@ -13,6 +13,23 @@ function handleFatalError(err) {
   process.exit(1);
 }
 
+function parseCommaSeparatedEnv(value) {
+  if (!value) {
+    return undefined;
+  }
+  const items = [];
+  const seen = new Set();
+  for (const part of value.split(',')) {
+    const trimmed = part.trim();
+    if (!trimmed || seen.has(trimmed)) {
+      continue;
+    }
+    seen.add(trimmed);
+    items.push(trimmed);
+  }
+  return items.length > 0 ? items : undefined;
+}
+
 async function main() {
   const { ensureSupportedNodeRuntime } = await import('../dist/runtime/node-launcher.js');
   await ensureSupportedNodeRuntime(import.meta.url);
@@ -22,11 +39,13 @@ async function main() {
     { logger },
     { installGlobalErrorHandlers },
     { parseSlackArgs },
+    { ensureGatewayRuntimeConfigFromEnv },
   ] = await Promise.all([
     import('../dist/config.js'),
     import('../dist/lib/logger.js'),
     import('../dist/lib/errors.js'),
     import('../dist/cli/gateway-args.js'),
+    import('../dist/gateway/runtime-config.js'),
   ]);
 
   installGlobalErrorHandlers();
@@ -42,7 +61,7 @@ async function main() {
     }
     if (parsed.showHelp) {
       console.log(`
-StateSet Response — Slack Gateway
+StateSet Response - Slack Gateway
 
 Usage: response-slack [options]
 
@@ -63,6 +82,7 @@ Setup:
   7. Set environment variables:
      export SLACK_BOT_TOKEN=xoxb-...
      export SLACK_APP_TOKEN=xapp-...
+     export STATESET_ALLOW_APPLY=true   # optional, required for writes
   8. Run: response-slack
 
 Behavior:
@@ -72,7 +92,9 @@ Behavior:
 Environment:
   SLACK_BOT_TOKEN      Bot User OAuth Token (xoxb-...) (required)
   SLACK_APP_TOKEN      App-level token for Socket Mode (xapp-...) (required)
+  SLACK_ALLOW          Optional comma-separated Slack user ID allowlist
   ANTHROPIC_API_KEY    Anthropic API key (required)
+  STATESET_ALLOW_APPLY Enable state-changing operations [default: false]
 
 Examples:
   response-slack                              Start with default settings
@@ -84,7 +106,7 @@ Examples:
     }
     options = {
       model: parsed.model,
-      allow: parsed.allowList,
+      allow: parsed.allowList ?? parseCommaSeparatedEnv(process.env.SLACK_ALLOW),
       verbose: parsed.verbose,
     };
   } catch (err) {
@@ -95,9 +117,18 @@ Examples:
 
   logger.configure({ level: options.verbose ? 'debug' : 'info' });
 
+  try {
+    ensureGatewayRuntimeConfigFromEnv();
+  } catch (err) {
+    console.error(`Error: ${err instanceof Error ? err.message : err}`);
+    process.exit(1);
+  }
+
   if (!configExists()) {
     console.error('Error: No configuration found.');
-    console.error('Run "response auth login" to set up your credentials first.');
+    console.error(
+      'Run "response auth login" or set STATESET_ORG_ID, STATESET_GRAPHQL_ENDPOINT, and STATESET_CLI_TOKEN/STATESET_ADMIN_SECRET.',
+    );
     process.exit(1);
   }
 
@@ -138,12 +169,13 @@ Examples:
   }
 
   console.log(`
-╔═══════════════════════════════════════════════════╗
-║        StateSet Response — Slack Gateway          ║
-╠═══════════════════════════════════════════════════╣
-║  Organization: ${orgId.padEnd(34)}║
-║  Model:        ${(options.model ?? 'default').padEnd(34)}║
-${options.allow ? `║  Allowlist:    ${(options.allow.length + ' user(s)').padEnd(34)}║\n` : ''}╚═══════════════════════════════════════════════════╝
++---------------------------------------------------+
+|        StateSet Response - Slack Gateway          |
++---------------------------------------------------+
+|  Organization: ${orgId.padEnd(34)}|
+|  Model:        ${(options.model ?? 'default').padEnd(34)}|
+${options.allow ? `|  Allowlist:    ${(options.allow.length + ' user(s)').padEnd(34)}|
+` : ''}+---------------------------------------------------+
 `);
 
   const { SlackGateway } = await import('../dist/slack/gateway.js');

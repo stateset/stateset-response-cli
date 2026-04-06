@@ -31,6 +31,7 @@ import {
 } from './commands-integrations.js';
 import { hasCommand } from './utils.js';
 import { metrics } from '../lib/metrics.js';
+import { printCapabilityMap } from './capabilities.js';
 
 const HELP_CATEGORIES: CommandCategory[] = [
   'core',
@@ -464,6 +465,14 @@ export async function handleChatCommand(input: string, ctx: ChatContext): Promis
       return { handled: true };
     }
     printHelp();
+    ctx.rl.prompt();
+    return { handled: true };
+  }
+
+  // /capabilities — show the CLI grouped by jobs-to-be-done
+  if (hasCommand(input, '/capabilities') || hasCommand(input, '/caps')) {
+    const arg = input.split(/\s+/).slice(1).join(' ').trim();
+    printCapabilityMap(arg || undefined, false);
     ctx.rl.prompt();
     return { handled: true };
   }

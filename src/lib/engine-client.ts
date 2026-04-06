@@ -29,6 +29,98 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+type WorkflowAction = 'status' | 'review' | 'cancel' | 'restart' | 'terminate';
+
+function classifyWorkflowId(workflowId: string): 'rav2' | 'connector' | 'snooze' | 'legacy' {
+  if (workflowId.startsWith('rav2-') || workflowId.startsWith('cp-response-automation-v2-')) {
+    return 'rav2';
+  }
+  if (workflowId.startsWith('connector-')) return 'connector';
+  if (workflowId.startsWith('snooze-')) return 'snooze';
+  return 'legacy';
+}
+
+function normalizeWorkflowType(workflowType?: string): 'rav2' | 'connector' | 'snooze' | 'legacy' {
+  switch (workflowType) {
+    case 'response-automation-v2':
+      return 'rav2';
+    case 'connector':
+      return 'connector';
+    case 'snooze':
+      return 'snooze';
+    default:
+      return 'legacy';
+  }
+}
+
+function buildWorkflowActionPath(
+  workflowId: string,
+  action: WorkflowAction,
+  workflowType?: string,
+): string | null {
+  const type = workflowType ? normalizeWorkflowType(workflowType) : classifyWorkflowId(workflowId);
+
+  switch (type) {
+    case 'rav2':
+      if (action === 'status') {
+        return `/v1/workflows/response-automation-v2/${workflowId}/status`;
+      }
+      if (action === 'review') {
+        return `/v1/workflows/response-automation-v2/${workflowId}/review`;
+      }
+      if (action === 'cancel') {
+        return `/v1/workflows/response-automation-v2/${workflowId}/cancel`;
+      }
+      if (action === 'restart') {
+        return `/v1/workflows/response-automation-v2/${workflowId}/restart`;
+      }
+      if (action === 'terminate') {
+        return `/v1/workflows/response-automation-v2/${workflowId}/terminate`;
+      }
+      return null;
+
+    case 'connector':
+      if (action === 'status') {
+        return `/v1/workflows/connector/${workflowId}/status`;
+      }
+      if (action === 'cancel') {
+        return `/v1/workflows/connector/${workflowId}/cancel`;
+      }
+      if (action === 'terminate') {
+        return `/v1/workflows/connector/${workflowId}/terminate`;
+      }
+      return null;
+
+    case 'snooze':
+      if (action === 'status') {
+        return `/v1/workflows/snooze/${workflowId}/status`;
+      }
+      if (action === 'cancel') {
+        return `/v1/workflows/snooze/${workflowId}/cancel`;
+      }
+      if (action === 'terminate') {
+        return `/v1/workflows/snooze/${workflowId}/terminate`;
+      }
+      return null;
+
+    case 'legacy':
+    default:
+      if (action === 'status') {
+        return `/v1/workflows/${workflowId}/status`;
+      }
+      if (action === 'review') {
+        return `/v1/workflows/${workflowId}/signal/review`;
+      }
+      if (action === 'cancel') {
+        return `/v1/workflows/${workflowId}/cancel`;
+      }
+      if (action === 'terminate') {
+        return `/v1/workflows/${workflowId}/terminate`;
+      }
+      return null;
+  }
+}
+
 export class EngineClient {
   private readonly baseUrl: string;
   private readonly apiKey: string;
@@ -160,6 +252,36 @@ export class EngineClient {
     return this.fetchWithRetry('/health');
   }
 
+  async getDispatchHealthDashboard(filters?: {
+    tenantId?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (filters?.tenantId) params.set('tenant_id', filters.tenantId);
+    if (filters?.limit !== undefined) params.set('limit', String(filters.limit));
+    if (filters?.offset !== undefined) params.set('offset', String(filters.offset));
+    const qs = params.toString();
+    return this.fetchWithRetry(`/v1/dispatch/health${qs ? `?${qs}` : ''}`);
+  }
+
+  async runDispatchGuard(request: {
+    tenantId?: string;
+    apply?: boolean;
+    minimumHealthStatus?: string;
+    maxActions?: number;
+  }): Promise<unknown> {
+    return this.request('/v1/dispatch/guard', {
+      method: 'POST',
+      body: {
+        tenant_id: request.tenantId,
+        apply: request.apply,
+        minimum_health_status: request.minimumHealthStatus,
+        max_actions: request.maxActions,
+      },
+    });
+  }
+
   /* ------------------------------------------------------------------ */
   /*  Brands                                                            */
   /* ------------------------------------------------------------------ */
@@ -177,6 +299,17 @@ export class EngineClient {
     if (filters?.offset !== undefined) params.set('offset', String(filters.offset));
     const qs = params.toString();
     return this.fetchWithRetry(`/v1/brands${qs ? `?${qs}` : ''}`);
+  }
+
+  async listBootstrapTemplates(): Promise<unknown> {
+    return this.fetchWithRetry('/v1/bootstrap/templates');
+  }
+
+  async bootstrapBrand(payload: Record<string, unknown>): Promise<unknown> {
+    return this.request('/v1/bootstrap/brands', {
+      method: 'POST',
+      body: payload,
+    });
   }
 
   async getBrand(brandId: string): Promise<unknown> {
@@ -216,6 +349,17 @@ export class EngineClient {
 
   async getBrandConfig(brandId: string): Promise<unknown> {
     return this.fetchWithRetry(`/v1/brands/${brandId}/config`);
+  }
+
+  async listBrandConfigVersions(
+    brandId: string,
+    filters?: { limit?: number; offset?: number },
+  ): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (filters?.limit !== undefined) params.set('limit', String(filters.limit));
+    if (filters?.offset !== undefined) params.set('offset', String(filters.offset));
+    const qs = params.toString();
+    return this.fetchWithRetry(`/v1/brands/${brandId}/config-versions${qs ? `?${qs}` : ''}`);
   }
 
   /* ------------------------------------------------------------------ */
@@ -418,21 +562,73 @@ export class EngineClient {
   }
 
   async getWorkflowStatus(workflowId: string): Promise<unknown> {
-    return this.fetchWithRetry(`/v1/workflows/response-automation-v2/${workflowId}/status`);
+    return this.getWorkflowStatusForType(workflowId);
+  }
+
+  async getWorkflowStatusForType(workflowId: string, workflowType?: string): Promise<unknown> {
+    const path = buildWorkflowActionPath(workflowId, 'status', workflowType);
+    if (!path) {
+      throw new EngineClientError(
+        `Workflow status is not supported for "${workflowType ?? workflowId}"`,
+        { status: 400, code: 'UNSUPPORTED_WORKFLOW_ACTION' },
+      );
+    }
+    return this.fetchWithRetry(path);
   }
 
   async reviewWorkflow(
     workflowId: string,
     decision: { approved: boolean; reason?: string },
+    workflowType?: string,
   ): Promise<unknown> {
-    return this.request(`/v1/workflows/response-automation-v2/${workflowId}/review`, {
+    const path = buildWorkflowActionPath(workflowId, 'review', workflowType);
+    if (!path) {
+      throw new EngineClientError(
+        `Workflow review is not supported for "${workflowType ?? workflowId}"`,
+        { status: 400, code: 'UNSUPPORTED_WORKFLOW_ACTION' },
+      );
+    }
+    return this.request(path, {
       method: 'POST',
       body: decision,
     });
   }
 
-  async cancelWorkflow(workflowId: string): Promise<unknown> {
-    return this.request(`/v1/workflows/response-automation-v2/${workflowId}/cancel`, {
+  async cancelWorkflow(workflowId: string, workflowType?: string): Promise<unknown> {
+    const path = buildWorkflowActionPath(workflowId, 'cancel', workflowType);
+    if (!path) {
+      throw new EngineClientError(
+        `Workflow cancellation is not supported for "${workflowType ?? workflowId}"`,
+        { status: 400, code: 'UNSUPPORTED_WORKFLOW_ACTION' },
+      );
+    }
+    return this.request(path, {
+      method: 'POST',
+    });
+  }
+
+  async restartWorkflow(workflowId: string, workflowType?: string): Promise<unknown> {
+    const path = buildWorkflowActionPath(workflowId, 'restart', workflowType);
+    if (!path) {
+      throw new EngineClientError(
+        `Workflow restart is not supported for "${workflowType ?? workflowId}"`,
+        { status: 400, code: 'UNSUPPORTED_WORKFLOW_ACTION' },
+      );
+    }
+    return this.request(path, {
+      method: 'POST',
+    });
+  }
+
+  async terminateWorkflow(workflowId: string, workflowType?: string): Promise<unknown> {
+    const path = buildWorkflowActionPath(workflowId, 'terminate', workflowType);
+    if (!path) {
+      throw new EngineClientError(
+        `Workflow termination is not supported for "${workflowType ?? workflowId}"`,
+        { status: 400, code: 'UNSUPPORTED_WORKFLOW_ACTION' },
+      );
+    }
+    return this.request(path, {
       method: 'POST',
     });
   }
@@ -504,5 +700,17 @@ export class EngineClient {
       method: 'POST',
       body: opts ?? {},
     });
+  }
+
+  async listBrandWorkflows(
+    brandId: string,
+    filters?: { status?: string; limit?: number; offset?: number },
+  ): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (filters?.status) params.set('status', filters.status);
+    if (filters?.limit !== undefined) params.set('limit', String(filters.limit));
+    if (filters?.offset !== undefined) params.set('offset', String(filters.offset));
+    const qs = params.toString();
+    return this.fetchWithRetry(`/v1/brands/${brandId}/workflows${qs ? `?${qs}` : ''}`);
   }
 }

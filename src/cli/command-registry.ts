@@ -131,6 +131,16 @@ export function registerAllCommands(): void {
     examples: ['/help', '/help model', '/help sessions'],
   });
   registerCommand({
+    name: '/capabilities',
+    aliases: ['/caps'],
+    usage: '/capabilities [area]',
+    description: 'Show the CLI grouped by common jobs-to-be-done',
+    category: 'core',
+    detailedHelp:
+      'Summarize the CLI by workflow area instead of raw command count. Useful for discovering the right command family for setup, runtime, workflow-studio, curation, operations, or resources.',
+    examples: ['/capabilities', '/capabilities workflow', '/caps curation'],
+  });
+  registerCommand({
     name: '/clear',
     aliases: ['/c'],
     usage: '/clear',
@@ -334,12 +344,89 @@ export function registerAllCommands(): void {
     description: 'Show workflow engine connection status',
     category: 'engine',
     detailedHelp: 'Display the current workflow engine connection status and configuration.',
-    examples: ['/engine', '/engine brands', '/engine setup'],
+    examples: [
+      '/engine',
+      '/engine brands',
+      '/engine config pull acme-co',
+      '/engine executions acme-co',
+    ],
   });
   registerCommand({
     name: '/engine setup',
     usage: '/engine setup',
     description: 'Configure the workflow engine connection',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine init',
+    usage: '/engine init [brand-slug]',
+    description: 'Initialize .stateset/<brand>/ config-as-code directory with scaffold files',
+    category: 'engine',
+    helpOnly: true,
+    examples: ['/engine init my-brand'],
+  });
+  registerCommand({
+    name: '/engine config',
+    usage: '/engine config [pull|push|validate|history] <brand>',
+    description: 'Manage local .stateset brand workflow studio config against the engine',
+    category: 'engine',
+    helpOnly: true,
+    detailedHelp:
+      'Pull a brand config from the workflow engine into .stateset/<brand>, validate local file consistency, inspect config version history, or push local workflow studio config back to the engine.',
+    examples: [
+      '/engine config pull acme-co',
+      '/engine config history acme-co',
+      '/engine config validate acme-co',
+      '/engine config push acme-co',
+    ],
+  });
+  registerCommand({
+    name: '/engine config pull',
+    usage: '/engine config pull <brand-slug|brand-id>',
+    description: 'Pull brand workflow studio config into .stateset/<brand>',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine config validate',
+    usage: '/engine config validate <brand-slug>',
+    description: 'Validate local brand workflow studio config files',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine config history',
+    usage: '/engine config history <brand-slug|brand-id>',
+    description: 'Show config version history for a brand',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine config show',
+    usage: '/engine config show <brand-slug|brand-id>',
+    description: 'Show the effective remote workflow studio config for a brand',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine config push',
+    usage: '/engine config push <brand-slug>',
+    description: 'Push local brand workflow studio config to the engine',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine activate',
+    usage: '/engine activate <brand-slug|brand-id> [config-version]',
+    description: 'Activate the current config for a brand',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine validate',
+    usage: '/engine validate <brand-slug|brand-id>',
+    description: 'Run remote engine validation for a brand',
     category: 'engine',
     helpOnly: true,
   });
@@ -352,9 +439,80 @@ export function registerAllCommands(): void {
     examples: ['/engine brands', '/engine brands acme-co'],
   });
   registerCommand({
+    name: '/engine brands show',
+    usage: '/engine brands show <brand-slug|brand-id>',
+    description: 'Show brand details from the workflow engine',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine brands create',
+    usage: '/engine brands create <json-file>',
+    description: 'Create a brand from a JSON file (supports template bootstrap)',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine brands bootstrap',
+    usage:
+      '/engine brands bootstrap <brand-slug|brand-id> [ecommerce|subscription|knowledge_base] [activate]',
+    description: 'Create or repair a workflow-studio brand and bootstrap response automation',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine brands update',
+    usage: '/engine brands update <brand-slug|brand-id> <json-file>',
+    description: 'Update a brand from a JSON patch file',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
     name: '/engine onboard',
-    usage: '/engine onboard <brand-id>',
+    usage: '/engine onboard <brand-slug|brand-id> [notes]',
     description: 'Start an onboarding run for a brand',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine onboard list',
+    usage: '/engine onboard list <brand-slug|brand-id>',
+    description: 'List onboarding runs for a brand',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine onboard show',
+    usage: '/engine onboard show <brand-slug|brand-id> <run-id>',
+    description: 'Show a specific onboarding run',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine onboard update',
+    usage: '/engine onboard update <brand-slug|brand-id> <run-id> <status> [notes]',
+    description: 'Update onboarding run status or notes',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine migration',
+    usage: '/engine migration <brand-slug|brand-id>',
+    description: 'Show migration state for a brand',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine migration update',
+    usage: '/engine migration update <brand-slug|brand-id> <json-file>',
+    description: 'Update migration state for a brand from a JSON patch file',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine parity',
+    usage: '/engine parity <brand-slug|brand-id> [from] [to]',
+    description: 'Show parity dashboard for a brand',
     category: 'engine',
     helpOnly: true,
   });
@@ -366,16 +524,166 @@ export function registerAllCommands(): void {
     helpOnly: true,
   });
   registerCommand({
+    name: '/engine dispatch-health',
+    usage: '/engine dispatch-health [--tenant-id <tenant-id>] [--limit <n>] [--offset <n>]',
+    description: 'Show dispatch health dashboard across brands',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine dispatch-guard',
+    usage:
+      '/engine dispatch-guard [--tenant-id <tenant-id>] [--apply true|false] [--minimum-health-status warning|critical] [--max-actions <n>]',
+    description: 'Plan or apply dispatch guard actions for unhealthy brands',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine executions',
+    usage: '/engine executions <brand-slug|brand-id> [status]',
+    description: 'List recent workflow executions for a brand',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine connectors',
+    usage:
+      '/engine connectors <brand-slug|brand-id> [create <json-file>|health <connector-id>|plan [loop-mode] [--source local|platform]|sync [loop-mode] [--source local|platform]|env [loop-mode] [dotenv|shell|json] [out=path] [--unsafe-path]]',
+    description:
+      'List connectors, create connectors, plan sync, export local secret env, or run health checks for a brand',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine connectors create',
+    usage: '/engine connectors <brand-slug|brand-id> create <json-file>',
+    description: 'Create a connector for a brand from a JSON file',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine connectors plan',
+    usage:
+      '/engine connectors <brand-slug|brand-id> plan [subscriptions|returns|both] [--source local|platform]',
+    description:
+      'Show the workflow-studio connector sync plan for a brand from local or platform credentials',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine connectors sync',
+    usage:
+      '/engine connectors <brand-slug|brand-id> sync [subscriptions|returns|both] [--source local|platform]',
+    description:
+      'Write local connector config and create missing live connectors for a brand from local or platform credentials',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine connectors env',
+    usage:
+      '/engine connectors <brand-slug|brand-id> env [subscriptions|returns|both] [dotenv|shell|json] [out=path] [--unsafe-path]',
+    description: 'Inspect or export brand-scoped connector secret env vars for local workers',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine local',
+    usage:
+      '/engine local apply <brand-slug|brand-id> [subscriptions|returns|both] [out=path] [compose=path] [services=a,b,c] [--write-only] [--unsafe-path]',
+    description: 'Write brand-scoped env and refresh the local Temporal stack services',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine local apply',
+    usage:
+      '/engine local apply <brand-slug|brand-id> [subscriptions|returns|both] [out=path] [compose=path] [services=a,b,c] [--write-only] [--unsafe-path]',
+    description: 'Write brand-scoped env and run docker compose for the local stack',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine test',
+    usage: '/engine test <brand-slug|brand-id> <ticket-id>',
+    description: 'Dispatch a dry-run workflow-studio test event for a brand',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine event',
+    usage: '/engine event <brand-slug|brand-id> <json-file> [idempotency-key]',
+    description: 'Ingest a workflow engine event payload from a JSON file',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
     name: '/engine templates',
-    usage: '/engine templates [key]',
+    usage: '/engine templates [key] [version]',
     description: 'List or get workflow templates',
     category: 'engine',
     helpOnly: true,
   });
   registerCommand({
+    name: '/engine templates create',
+    usage: '/engine templates create <json-file>',
+    description: 'Create a workflow template version from a JSON file',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine templates update',
+    usage: '/engine templates update <template-key> <version> <json-file>',
+    description: 'Update a workflow template version from a JSON file',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine policy-sets',
+    usage: '/engine policy-sets [key]',
+    description: 'List or get versioned policy sets',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine policy-sets get',
+    usage: '/engine policy-sets get <policy-set-key> [version]',
+    description: 'Get a policy set version',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine policy-sets create',
+    usage: '/engine policy-sets create <json-file>',
+    description: 'Create a policy set version from a JSON file',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine policy-sets update',
+    usage: '/engine policy-sets update <policy-set-key> <version> <json-file>',
+    description: 'Update a policy set version from a JSON file',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
     name: '/engine dlq',
-    usage: '/engine dlq <brand-id>',
+    usage: '/engine dlq <brand-slug|brand-id> [status]',
     description: 'List dead-letter queue items for a brand',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine dlq retry',
+    usage: '/engine dlq retry <brand-slug|brand-id> <dlq-id>',
+    description: 'Retry a dead-letter queue item',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine dlq resolve',
+    usage: '/engine dlq resolve <brand-slug|brand-id> <dlq-id> [action] [notes]',
+    description: 'Resolve a dead-letter queue item',
     category: 'engine',
     helpOnly: true,
   });
@@ -383,16 +691,260 @@ export function registerAllCommands(): void {
   registerCommand({
     name: '/workflows',
     aliases: ['/wf'],
-    usage: '/workflows [list|start|status|cancel|retry]',
+    usage: '/workflows [list|start|status|cancel|terminate|restart|review|retry]',
     description: 'Manage workflow executions in the engine',
     category: 'engine',
     detailedHelp:
-      'List running workflows, start new ones, check status, cancel, or retry failed workflows.',
+      'List recent workflow executions for a brand, start new ones, check status, review, restart, cancel, terminate, or retry failed workflows.',
     examples: [
-      '/workflows list',
+      '/workflows list acme-co',
       '/workflows status <workflow-id>',
       '/workflows cancel <workflow-id>',
+      '/workflows review <workflow-id> approve',
     ],
+  });
+
+  // ── Onboarding ──────────────────────────────────────────────────
+  registerCommand({
+    name: '/onboard',
+    usage: '/onboard [init]',
+    description: 'Interactive onboarding wizard — brand, integrations, KB, rules, workflow, deploy',
+    category: 'engine',
+    detailedHelp:
+      'Full CLI-first onboarding: create brand → connect integrations → ingest KB from local files → configure rules → build workflow config → write to .stateset/ → deploy to engine. Afterward use /engine config push <brand> for iterative updates.',
+    examples: ['/onboard', '/onboard init my-brand'],
+  });
+  registerCommand({
+    name: '/onboard init',
+    usage: '/onboard init [brand-slug]',
+    description: 'Initialize .stateset/<brand>/ config-as-code directory',
+    category: 'engine',
+    helpOnly: true,
+  });
+
+  // ── Fine-tuning ─────────────────────────────────────────────────
+  registerCommand({
+    name: '/finetune',
+    usage: '/finetune [list|export|validate|create|deploy]',
+    description: 'Fine-tuning pipeline: export evals → create job → deploy model',
+    category: 'engine',
+    detailedHelp:
+      'Manage the fine-tuning lifecycle. Export approved eval data into the SFT and DPO dataset formats used by workflow studio, validate datasets before training, create fine-tune job specs, and deploy fine-tuned models to workflow config.',
+    examples: [
+      '/finetune list',
+      '/finetune export --format all --validation-ratio 0.1',
+      '/finetune validate .stateset/finetune',
+      '/finetune create',
+      '/finetune deploy ft:gpt-4.1:stateset:...',
+    ],
+  });
+  registerCommand({
+    name: '/finetune export',
+    usage:
+      '/finetune export [output-dir] [--format all|sft|dpo|openai-sft|studio-sft|trl-sft|studio-dpo|pair-dpo] [--status approved] [--validation-ratio 0.1]',
+    description: 'Export evals into workflow-studio SFT and DPO dataset files',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/finetune validate',
+    usage:
+      '/finetune validate [path] [--format auto|openai-sft|studio-sft|trl-sft|studio-dpo|pair-dpo]',
+    description: 'Validate exported training datasets before fine-tuning',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/finetune create',
+    usage: '/finetune create [dataset-file] [--method supervised|dpo]',
+    description: 'Create a new fine-tuning job spec from a validated dataset',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/finetune deploy',
+    usage: '/finetune deploy <model-id>',
+    description: 'Deploy a fine-tuned model to workflow config',
+    category: 'engine',
+    helpOnly: true,
+  });
+
+  // ── Evals ───────────────────────────────────────────────────────
+  registerCommand({
+    name: '/evals',
+    usage: '/evals [list|create|create-from-response|get|update|delete|export|review|suggest|<id>]',
+    description: 'Manage evals and fine-tuning training examples',
+    category: 'shortcuts',
+    detailedHelp:
+      'List, create, seed from real responses, review, update, delete, export, or inspect eval records. Use /evals suggest to bootstrap quality criteria, /evals create-from-response to capture live agent outputs, then /finetune export to generate training data.',
+    examples: [
+      '/evals list',
+      '/evals create --name Accuracy --type quality --message "Where is my order?" --preferred "Your order is in transit."',
+      '/evals create-from-response resp-123 --seed rejected',
+      '/evals review',
+      '/evals update <eval-id> --status approved',
+      '/evals export --out .stateset/evals.json',
+      '/evals suggest',
+    ],
+  });
+  registerCommand({
+    name: '/evals list',
+    usage: '/evals list [--limit N] [--offset N]',
+    description: 'List eval records',
+    category: 'shortcuts',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/evals create',
+    usage:
+      '/evals create --name <name> --type <type> [--status <status>] [--message <text>] [--preferred <text>]',
+    description: 'Create an eval record',
+    category: 'shortcuts',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/evals create-from-response',
+    usage:
+      '/evals create-from-response <response-id> [--seed preferred|rejected|none] [--name <name>] [--type <type>]',
+    description: 'Seed an eval from a stored agent response for curation and DPO review',
+    category: 'shortcuts',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/evals get',
+    usage: '/evals get <eval-id>',
+    description: 'Show a single eval record',
+    category: 'shortcuts',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/evals update',
+    usage: '/evals update <eval-id> [--status <status>] [--preferred <text>] [--rejected <text>]',
+    description: 'Update an eval record',
+    category: 'shortcuts',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/evals delete',
+    usage: '/evals delete <eval-id>',
+    description: 'Delete an eval record',
+    category: 'shortcuts',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/evals export',
+    usage: '/evals export [eval-id ...] [--out <path>]',
+    description: 'Export evals in fine-tuning format',
+    category: 'shortcuts',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/evals review',
+    usage: '/evals review [eval-id] [--status pending]',
+    description: 'Interactively review pending evals',
+    category: 'shortcuts',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/evals suggest',
+    aliases: ['/evals-suggest'],
+    usage: '/evals suggest',
+    description: 'Auto-suggest eval criteria based on conversation patterns',
+    category: 'shortcuts',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/datasets',
+    usage:
+      '/datasets [list|create|get|update|delete|add-entry|update-entry|delete-entry|import|export|<id>]',
+    description: 'Manage datasets and dataset entries for training-data curation',
+    category: 'shortcuts',
+    detailedHelp:
+      'List, create, update, delete, import, and export datasets, plus add or update message-based dataset entries used for SFT curation and workflow-studio training loops.',
+    examples: [
+      '/datasets list',
+      '/datasets create --name "Returns Triage"',
+      '/datasets add-entry <dataset-id> --messages \'[{"role":"user","content":"Where is my order?"}]\'',
+      '/datasets import <dataset-id> ./train.jsonl',
+      '/datasets export <dataset-id> --out .stateset/datasets/returns-triage.json',
+    ],
+  });
+  registerCommand({
+    name: '/datasets create',
+    usage:
+      '/datasets create --name <name> [--description <text>] [--status active|archived|draft] [--metadata <json>]',
+    description: 'Create a dataset',
+    category: 'shortcuts',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/datasets get',
+    usage: '/datasets get <dataset-id>',
+    description: 'Show a dataset with its entries',
+    category: 'shortcuts',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/datasets update',
+    usage:
+      '/datasets update <dataset-id> [--name <name>] [--description <text>] [--status active|archived|draft] [--metadata <json>]',
+    description: 'Update dataset metadata',
+    category: 'shortcuts',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/datasets delete',
+    usage: '/datasets delete <dataset-id>',
+    description: 'Delete a dataset and all of its entries',
+    category: 'shortcuts',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/datasets add-entry',
+    usage: '/datasets add-entry <dataset-id> (--messages <json> | --file <path>)',
+    description: 'Add a message-based training entry to a dataset',
+    category: 'shortcuts',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/datasets update-entry',
+    usage: '/datasets update-entry <entry-id> (--messages <json> | --file <path>)',
+    description: 'Update a dataset entry by ID',
+    category: 'shortcuts',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/datasets delete-entry',
+    usage: '/datasets delete-entry <entry-id>',
+    description: 'Delete a dataset entry by ID',
+    category: 'shortcuts',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/datasets import',
+    usage: '/datasets import <dataset-id> <json|jsonl-file>',
+    description: 'Bulk import dataset entries from JSON or JSONL',
+    category: 'shortcuts',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/datasets export',
+    usage: '/datasets export <dataset-id> [--out <path>]',
+    description: 'Export a dataset with its entries',
+    category: 'shortcuts',
+    helpOnly: true,
+  });
+
+  // ── Rules Generation ────────────────────────────────────────────
+  registerCommand({
+    name: '/rules generate',
+    usage: '/rules generate [brand-slug]',
+    description: 'Auto-generate rules from KB and business data (with human confirmation)',
+    category: 'engine',
+    helpOnly: true,
+    detailedHelp:
+      'Analyzes your knowledge base and business context to suggest skip rules, escalation patterns, and response rules. All suggestions require human confirmation.',
+    examples: ['/rules generate', '/rules generate my-brand'],
   });
 
   // ── Sessions ──────────────────────────────────────────────────────
@@ -495,11 +1047,19 @@ export function registerAllCommands(): void {
   });
   registerCommand({
     name: '/kb',
-    usage: '/kb [search|add|delete|scroll|list|info]',
+    usage: '/kb [search|add|ingest|delete|scroll|list|info]',
     description: 'Manage KB entries',
     category: 'shortcuts',
-    detailedHelp: 'Search, add, delete, or browse knowledge base entries.',
-    examples: ['/kb search shipping policy', '/kb add', '/kb list'],
+    detailedHelp:
+      'Search, add, bulk ingest, delete, or browse knowledge base entries. Use /kb ingest <path> to recursively process local files (.md, .txt, .json, .yaml, .csv, .html) into KB entries with automatic chunking.',
+    examples: ['/kb search shipping policy', '/kb add ./faq.md', '/kb ingest ./docs/', '/kb list'],
+  });
+  registerCommand({
+    name: '/kb ingest',
+    usage: '/kb ingest <path> [--chunk_size 2000] [--overlap 200]',
+    description: 'Bulk ingest local files/directories into KB with chunking',
+    category: 'shortcuts',
+    helpOnly: true,
   });
   registerCommand({
     name: '/agents',
@@ -597,8 +1157,8 @@ export function registerAllCommands(): void {
   });
   registerCommand({
     name: '/webhooks',
-    usage: '/webhooks [list|create|test|logs|delete]',
-    description: 'Manage webhook subscriptions',
+    usage: '/webhooks [list|get|create|update|deliveries|logs|delete]',
+    description: 'Manage remote webhook subscriptions and delivery history',
     category: 'shortcuts',
   });
   registerCommand({

@@ -1,0 +1,13 @@
+node_modules
+dist
+.git
+.github
+coverage
+.nyc_output
+.stateset
+.codex
+*.log
+*.tsbuildinfo
+test-results.xml
+.vscode
+.idea

@@ -129,11 +129,11 @@ export const sampleConfig = {
     [TEST_ORG_ID]: {
       instanceUrl: 'https://api.stateset.com',
       graphqlEndpoint: 'https://api.stateset.com/v1/graphql',
-      cliToken: 'test-cli-token-12345',
+      cliToken: 'example-cli-token-12345',
       model: 'sonnet',
     },
   },
-  anthropicApiKey: 'sk-ant-test-key-12345',
+  anthropicApiKey: 'anthropic-example-key-12345',
 };
 
 export const sampleConfigWithAdminSecret = {
@@ -142,7 +142,7 @@ export const sampleConfigWithAdminSecret = {
     [TEST_ORG_ID]: {
       instanceUrl: 'https://api.stateset.com',
       graphqlEndpoint: 'https://api.stateset.com/v1/graphql',
-      adminSecret: 'test-admin-secret-12345',
+      adminSecret: 'example-admin-secret-12345',
       model: 'haiku',
     },
   },

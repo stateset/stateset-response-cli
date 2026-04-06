@@ -1,6 +1,6 @@
 {
   "name": "stateset-response-cli",
-  "version": "1.9.2",
+  "version": "1.9.3",
   "description": "CLI tool for managing the StateSet Response platform via AI agent",
   "license": "MIT",
   "type": "module",
@@ -11,6 +11,7 @@
     "response": "./bin/stateset-response.js",
     "response-whatsapp": "./bin/stateset-whatsapp.js",
     "response-slack": "./bin/stateset-slack.js",
+    "response-telegram": "./bin/stateset-telegram.js",
     "response-gateway": "./bin/stateset-gateway.js"
   },
   "main": "dist/cli.js",

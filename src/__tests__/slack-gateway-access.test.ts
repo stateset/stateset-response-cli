@@ -11,7 +11,7 @@ vi.mock('../config.js', () => ({
       graphqlEndpoint: 'https://api.example.com/graphql',
       adminSecret: 'secret',
     },
-    anthropicApiKey: 'sk-ant-test',
+    anthropicApiKey: 'anthropic-example-key',
   })),
 }));
 
@@ -45,8 +45,8 @@ describe('SlackGateway channel gating', () => {
     vi.clearAllMocks();
     gateway = new SlackGateway({});
     postMessageMock = vi.fn().mockResolvedValue({});
-    (gateway as unknown as { anthropicApiKey: string }).anthropicApiKey = 'sk-ant-test';
-    (gateway as unknown as { botToken: string }).botToken = 'xoxb-test';
+    (gateway as unknown as { anthropicApiKey: string }).anthropicApiKey = 'anthropic-example-key';
+    (gateway as unknown as { botToken: string }).botToken = 'slack-bot-token-example';
     (gateway as unknown as { app: unknown }).app = {
       client: {
         chat: {

@@ -142,8 +142,8 @@ describe('getAmazonConfigFromEnv', () => {
     env.set('AMAZON_LWA_CLIENT_ID', 'amzn-client-id-123456');
     env.set('AMAZON_LWA_CLIENT_SECRET', 'amzn-client-secret-123456');
     env.set('AMAZON_LWA_REFRESH_TOKEN', 'amzn-refresh-token-123456');
-    env.set('AMAZON_AWS_ACCESS_KEY_ID', 'AKIAIOSFODNN7EXAMPLE');
-    env.set('AMAZON_AWS_SECRET_ACCESS_KEY', 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY');
+    env.set('AMAZON_AWS_ACCESS_KEY_ID', 'aws-access-key-example-0001');
+    env.set('AMAZON_AWS_SECRET_ACCESS_KEY', 'aws-secret-access-key-example-0001');
     env.set('AMAZON_SP_MARKETPLACE_ID', 'ATVPDKIKX0DER');
     const { getAmazonConfigFromEnv } = await import('../integrations/config.js');
     const result = getAmazonConfigFromEnv();

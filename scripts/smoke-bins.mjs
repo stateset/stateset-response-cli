@@ -100,6 +100,12 @@ const cases = [
     expect: [],
   },
   {
+    name: 'response-telegram --help',
+    bin: bins['response-telegram'],
+    args: ['--help'],
+    expect: [],
+  },
+  {
     name: 'response-whatsapp --help',
     bin: bins['response-whatsapp'],
     args: ['--help'],

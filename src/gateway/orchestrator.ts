@@ -1,7 +1,7 @@
 /**
  * Multi-Channel Orchestrator for StateSet Response
  *
- * Runs multiple channel gateways (Slack, WhatsApp) simultaneously
+ * Runs multiple channel gateways (Slack, Telegram, WhatsApp) simultaneously
  * from a single process with shared config and unified lifecycle.
  */
 
@@ -20,6 +20,9 @@ export interface OrchestratorOptions {
   // Slack-specific
   slackEnabled?: boolean;
   slackAllowList?: string[];
+  // Telegram-specific
+  telegramEnabled?: boolean;
+  telegramAllowList?: string[];
   // WhatsApp-specific
   whatsappEnabled?: boolean;
   whatsappAllowList?: string[];
@@ -28,9 +31,17 @@ export interface OrchestratorOptions {
   whatsappAuthDir?: string;
 }
 
+export interface OrchestratorHealthSnapshot {
+  running: boolean;
+  ready: boolean;
+  activeChannels: number;
+  channels: Array<Record<string, unknown>>;
+}
+
 interface ChannelGateway {
   name: string;
   stop: () => Promise<void>;
+  getHealth?: () => Record<string, unknown>;
 }
 
 interface ChannelStartResult {
@@ -38,8 +49,10 @@ interface ChannelStartResult {
   skippedReason?: string;
 }
 
+type ChannelName = 'Slack' | 'Telegram' | 'WhatsApp';
+
 interface ChannelPlan {
-  name: 'Slack' | 'WhatsApp';
+  name: ChannelName;
   start: () => Promise<ChannelStartResult>;
 }
 
@@ -82,9 +95,13 @@ export class Orchestrator {
   }
 
   async start(): Promise<void> {
-    if (this.options.slackEnabled === false && this.options.whatsappEnabled === false) {
+    if (
+      this.options.slackEnabled === false &&
+      this.options.telegramEnabled === false &&
+      this.options.whatsappEnabled === false
+    ) {
       throw new Error(
-        'No channels enabled. Remove --no-slack and/or --no-whatsapp to run at least one channel.',
+        'No channels enabled. Remove --no-slack, --no-telegram, and/or --no-whatsapp to run at least one channel.',
       );
     }
 
@@ -92,14 +109,12 @@ export class Orchestrator {
       ? resolveModelOrThrow(this.options.model, 'valid')
       : getConfiguredModel();
 
-    // Validate shared prerequisites (org, credentials, endpoint, API key)
     validateRuntimeConfig();
 
     const results: Array<{ name: string; status: 'ok' | 'skipped' | 'error'; reason?: string }> =
       [];
     const plans: ChannelPlan[] = [];
 
-    // Start Slack gateway
     if (this.options.slackEnabled !== false) {
       plans.push({
         name: 'Slack',
@@ -109,7 +124,15 @@ export class Orchestrator {
       results.push({ name: 'Slack', status: 'skipped', reason: 'disabled' });
     }
 
-    // Start WhatsApp gateway
+    if (this.options.telegramEnabled !== false) {
+      plans.push({
+        name: 'Telegram',
+        start: () => this.startTelegram(model),
+      });
+    } else {
+      results.push({ name: 'Telegram', status: 'skipped', reason: 'disabled' });
+    }
+
     if (this.options.whatsappEnabled !== false) {
       plans.push({
         name: 'WhatsApp',
@@ -119,7 +142,6 @@ export class Orchestrator {
       results.push({ name: 'WhatsApp', status: 'skipped', reason: 'disabled' });
     }
 
-    // Start enabled channels in parallel so one channel does not block another
     const startupResults = await Promise.allSettled(plans.map((plan) => plan.start()));
     for (let i = 0; i < plans.length; i += 1) {
       const plan = plans[i];
@@ -138,7 +160,8 @@ export class Orchestrator {
         continue;
       }
 
-      const depReason = optionalDependencyErrorReason(startup.reason, plan.name);
+      const depReason =
+        plan.name === 'Telegram' ? null : optionalDependencyErrorReason(startup.reason, plan.name);
       if (depReason) {
         results.push({ name: plan.name, status: 'skipped', reason: depReason });
         continue;
@@ -149,12 +172,11 @@ export class Orchestrator {
       this.log.error(`${plan.name} failed to start: ${msg}`);
     }
 
-    // Summary (user-facing output — keep as console.log)
     console.log('\n  Channel Status:');
-    for (const r of results) {
-      const icon = r.status === 'ok' ? '+' : r.status === 'skipped' ? '-' : 'x';
-      const detail = r.reason ? ` (${r.reason})` : '';
-      console.log(`    [${icon}] ${r.name}${detail}`);
+    for (const result of results) {
+      const icon = result.status === 'ok' ? '+' : result.status === 'skipped' ? '-' : 'x';
+      const detail = result.reason ? ` (${result.reason})` : '';
+      console.log(`    [${icon}] ${result.name}${detail}`);
     }
     console.log();
 
@@ -179,12 +201,37 @@ export class Orchestrator {
     this.log.info(`${this.gateways.length} channel(s) active.`);
   }
 
+  getHealth(): OrchestratorHealthSnapshot {
+    const channels: Array<Record<string, unknown> & { connected?: boolean; running?: boolean }> =
+      this.gateways.map((gateway) => ({
+        name: gateway.name,
+        ...(gateway.getHealth ? gateway.getHealth() : {}),
+      }));
+    const ready =
+      channels.length > 0 &&
+      channels.some((channel) => {
+        if (typeof channel.connected === 'boolean') {
+          return channel.connected;
+        }
+        if (typeof channel.running === 'boolean') {
+          return channel.running;
+        }
+        return true;
+      });
+    return {
+      running: this.gateways.length > 0,
+      ready,
+      activeChannels: this.gateways.length,
+      channels,
+    };
+  }
+
   async stop(): Promise<void> {
     this.log.info('Shutting down all channels...');
-    const stops = this.gateways.map((gw) => {
-      this.log.info(`Stopping ${gw.name}...`);
-      return gw.stop().catch((err) => {
-        this.log.error(`Error stopping ${gw.name}: ${getErrorMessage(err)}`);
+    const stops = this.gateways.map((gateway) => {
+      this.log.info(`Stopping ${gateway.name}...`);
+      return gateway.stop().catch((err) => {
+        this.log.error(`Error stopping ${gateway.name}: ${getErrorMessage(err)}`);
       });
     });
     await Promise.all(stops);
@@ -227,7 +274,39 @@ export class Orchestrator {
       throw err;
     }
 
-    return { gateway: { name: 'Slack', stop: () => gateway.stop() } };
+    return {
+      gateway: {
+        name: 'Slack',
+        stop: () => gateway.stop(),
+        getHealth: () => gateway.getHealth(),
+      },
+    };
+  }
+
+  private async startTelegram(model: ModelId): Promise<ChannelStartResult> {
+    if (!process.env.TELEGRAM_BOT_TOKEN) {
+      if (this.options.verbose) {
+        this.log.debug('Telegram: TELEGRAM_BOT_TOKEN not set, skipping.');
+      }
+      return { gateway: null, skippedReason: 'missing env vars' };
+    }
+
+    const { TelegramGateway } = await import('../telegram/gateway.js');
+    const gateway = new TelegramGateway({
+      model,
+      allowList: this.options.telegramAllowList,
+      verbose: this.options.verbose,
+    });
+
+    await gateway.start();
+
+    return {
+      gateway: {
+        name: 'Telegram',
+        stop: () => gateway.stop(),
+        getHealth: () => gateway.getHealth(),
+      },
+    };
   }
 
   private async startWhatsApp(model: ModelId): Promise<ChannelStartResult> {
@@ -261,6 +340,12 @@ export class Orchestrator {
       throw err;
     }
 
-    return { gateway: { name: 'WhatsApp', stop: () => gateway.stop() } };
+    return {
+      gateway: {
+        name: 'WhatsApp',
+        stop: () => gateway.stop(),
+        getHealth: () => gateway.getHealth(),
+      },
+    };
   }
 }

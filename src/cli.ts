@@ -26,7 +26,7 @@ import { installGlobalErrorHandlers, getErrorMessage } from './lib/errors.js';
 import { setOutputMode, type OutputMode } from './lib/output.js';
 import { exportOrg, importOrg, type ImportResult } from './export-import.js';
 import { EventsRunner, validateEventsPrereqs } from './events.js';
-import { assertNodeVersion } from './cli/utils.js';
+import { assertNodeVersion, parseToggleValue } from './cli/utils.js';
 import { registerAuthCommands, runAuthLogin, type AuthLoginOptions } from './cli/auth.js';
 import { registerIntegrationsCommands, runIntegrationsSetup } from './cli/commands-integrations.js';
 import { registerDoctorCommand, runDoctorChecks } from './cli/commands-doctor.js';
@@ -34,6 +34,55 @@ import { registerShortcutTopLevelCommands } from './cli/commands-shortcuts.js';
 import { resolveOneShotInput, runOneShotPrompt, startChatSession } from './cli/chat-action.js';
 import { exportAgentRunbook } from './cli/runbook.js';
 import { listAgentTemplates, scaffoldAgentTemplate } from './cli/agent-templates.js';
+import { listCapabilityAreas, printCapabilityMap } from './cli/capabilities.js';
+import { renderCompletionScript } from './cli/shell-completion.js';
+import {
+  pullBrandStudioConfig,
+  pushBrandStudioConfig,
+  validateBrandStudioConfig,
+} from './cli/engine-config.js';
+import {
+  applyBrandToLocalStack,
+  activateBrandConfig,
+  bootstrapBrandStudio,
+  createBrandConnectorFromFile,
+  createBrandFromFile,
+  createPolicySetFromFile,
+  createWorkflowTemplateFromFile,
+  checkBrandConnectorHealth,
+  checkHealth,
+  runDispatchGuardView,
+  listBrands,
+  listBrandExecutions,
+  listOnboardingRunsView,
+  listPolicySetsView,
+  listWorkflowTemplatesView,
+  ingestBrandEventFromFile,
+  resolveBrandDlqItem,
+  runWorkflowStudioTest,
+  showBrandDlq,
+  showBrandConfigHistory,
+  showBrandConnectorSyncPlan,
+  showBrandConnectorSecretEnv,
+  showBrandConnectors,
+  showBrandDetails,
+  showDispatchHealthDashboard,
+  showEngineStatus,
+  showEffectiveBrandConfig,
+  showBrandMigrationState,
+  showBrandParityDashboard,
+  showOnboardingRunView,
+  startOnboardingRun,
+  syncBrandConnectors,
+  retryBrandDlqItem,
+  updateBrandFromFile,
+  updateBrandMigrationStateFromFile,
+  updateOnboardingRunView,
+  updatePolicySetFromFile,
+  updateWorkflowTemplateFromFile,
+  validateEngineBrand,
+} from './cli/commands-engine.js';
+import { parseLocalStackServices } from './lib/workflow-studio-local-stack.js';
 
 import { parseProfileArgs, applyProfile } from './lib/profile.js';
 
@@ -87,6 +136,7 @@ program.addHelpText(
     '  response chat --session ops --model sonnet',
     '  response batch prompts.txt --output results.jsonl',
     '  response engine setup',
+    '  response capabilities workflow-studio',
     '  response init --from-env --integration shopify',
     '  response serve --port 3000 --forward-to-engine',
     '  response doctor',
@@ -357,95 +407,60 @@ program
   .description('Generate shell completion scripts (bash, zsh, fish)')
   .argument('[shell]', 'Shell type: bash, zsh, or fish', 'bash')
   .action((shell: string) => {
-    const commands = [
-      'chat',
-      'ask',
-      'init',
-      'config',
-      'export',
-      'import',
-      'events',
-      'doctor',
-      'auth',
-      'integrations',
-      'engine',
-      'batch',
-      'completion',
-    ];
-    const globalFlags = [
-      '--model',
-      '--session',
-      '--apply',
-      '--redact',
-      '--dry-run',
-      '--json',
-      '--usage',
-      '--verbose',
-      '--help',
-      '--version',
-      '--profile',
-      '--dev',
-    ];
-
-    switch (shell.toLowerCase()) {
-      case 'bash':
-        console.log(`# bash completion for response CLI
-# Add to ~/.bashrc: eval "$(response completion bash)"
-_response_completions() {
-  local cur="\${COMP_WORDS[COMP_CWORD]}"
-  local prev="\${COMP_WORDS[COMP_CWORD-1]}"
-  if [ "$COMP_CWORD" -eq 1 ]; then
-    COMPREPLY=($(compgen -W "${commands.join(' ')}" -- "$cur"))
-    return
-  fi
-  case "$prev" in
-    --model) COMPREPLY=($(compgen -W "sonnet haiku opus" -- "$cur")); return;;
-    --output) COMPREPLY=($(compgen -W "json pretty minimal" -- "$cur")); return;;
-    --profile) return;;
-    engine) COMPREPLY=($(compgen -W "setup status brands health" -- "$cur")); return;;
-    config) COMPREPLY=($(compgen -W "path show" -- "$cur")); return;;
-  esac
-  COMPREPLY=($(compgen -W "${globalFlags.join(' ')}" -- "$cur"))
-}
-complete -F _response_completions response`);
-        break;
-
-      case 'zsh':
-        console.log(`# zsh completion for response CLI
-# Add to ~/.zshrc: eval "$(response completion zsh)"
-_response() {
-  local -a commands=(${commands.map((c) => `'${c}:${c} command'`).join(' ')})
-  local -a flags=(${globalFlags.map((f) => `'${f}'`).join(' ')})
-  _arguments '1:command:->cmds' '*:flags:->flags'
-  case "$state" in
-    cmds) _describe 'command' commands;;
-    flags) _values 'flags' $flags;;
-  esac
-}
-compdef _response response`);
-        break;
-
-      case 'fish':
-        console.log(`# fish completion for response CLI
-# Save to ~/.config/fish/completions/response.fish
-${commands.map((c) => `complete -c response -n '__fish_use_subcommand' -a '${c}' -d '${c}'`).join('\n')}
-complete -c response -l model -xa 'sonnet haiku opus'
-complete -c response -l output -xa 'json pretty minimal'
-complete -c response -l profile
-complete -c response -l apply
-complete -c response -l redact
-complete -c response -l dry-run
-complete -c response -l json
-complete -c response -l verbose
-complete -c response -n '__fish_seen_subcommand_from engine' -a 'setup status brands health'
-complete -c response -n '__fish_seen_subcommand_from config' -a 'path show'`);
-        break;
-
-      default:
-        console.error(formatError(`Unknown shell: ${shell}. Use bash, zsh, or fish.`));
-        process.exitCode = 1;
+    try {
+      console.log(renderCompletionScript(shell, program, ['--profile', '--dev']));
+    } catch (error) {
+      console.error(
+        formatError(error instanceof Error ? error.message : 'Unable to render shell completion.'),
+      );
+      process.exitCode = 1;
     }
   });
+
+program
+  .command('capabilities')
+  .alias('caps')
+  .description('Show the CLI grouped by common workflows instead of raw command count')
+  .argument(
+    '[area]',
+    `Capability area: ${listCapabilityAreas()
+      .map((area) => area.id)
+      .join(', ')}`,
+  )
+  .option('--json', 'Output capability areas and workflows as JSON')
+  .action((area: string | undefined, options: { json?: boolean }) => {
+    const json = Boolean(options.json || program.opts().json);
+    printCapabilityMap(area, json);
+  });
+
+function parseLoopModeOption(value?: string): 'subscriptions' | 'returns' | 'both' | undefined {
+  if (!value) {
+    return undefined;
+  }
+  if (value === 'subscriptions' || value === 'returns' || value === 'both') {
+    return value;
+  }
+  throw new CommanderError(
+    1,
+    'response.engine',
+    `Invalid --loop-mode value "${value}". Use subscriptions, returns, or both.`,
+  );
+}
+
+function parseServicesOption(value?: string): string[] | undefined {
+  if (!value) {
+    return undefined;
+  }
+  try {
+    return parseLocalStackServices(value);
+  } catch (err) {
+    throw new CommanderError(
+      1,
+      'response.engine',
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+}
 
 // Engine commands
 const engineCmd = program
@@ -549,28 +564,7 @@ engineCmd
   .command('status')
   .description('Show workflow engine connection status')
   .action(async () => {
-    const config = getWorkflowEngineConfig();
-    if (!config) {
-      console.log(chalk.yellow('  Workflow engine not configured.'));
-      console.log(chalk.gray('  Run "response engine setup" to configure.'));
-      return;
-    }
-
-    console.log(chalk.bold('  Workflow Engine'));
-    console.log(chalk.gray(`  URL:       ${config.url}`));
-    console.log(chalk.gray(`  API Key:   ${'*'.repeat(8)}...${config.apiKey.slice(-4)}`));
-    if (config.tenantId) {
-      console.log(chalk.gray(`  Tenant ID: ${config.tenantId}`));
-    }
-
-    const { EngineClient } = await import('./lib/engine-client.js');
-    const client = new EngineClient(config);
-    try {
-      await client.health();
-      console.log(chalk.green('  Status:    connected'));
-    } catch (e: unknown) {
-      console.log(chalk.red(`  Status:    unreachable (${getErrorMessage(e)})`));
-    }
+    await showEngineStatus();
   });
 
 engineCmd
@@ -579,40 +573,66 @@ engineCmd
   .option('--slug <slug>', 'Filter by brand slug')
   .option('--status <status>', 'Filter by status')
   .action(async (options: { slug?: string; status?: string }) => {
-    const config = getWorkflowEngineConfig();
-    if (!config) {
-      console.log(chalk.yellow('  Workflow engine not configured.'));
-      return;
+    await listBrands(options.slug, options.status);
+  });
+
+engineCmd
+  .command('brand-create')
+  .description('Create a brand from a JSON file')
+  .argument('<file>', 'JSON file containing the create-brand payload')
+  .action(async (file: string) => {
+    const ok = await createBrandFromFile(file);
+    if (!ok) {
+      process.exitCode = 1;
     }
+  });
 
-    const { EngineClient } = await import('./lib/engine-client.js');
-    const client = new EngineClient(config);
-    try {
-      const result = (await client.listBrands({
-        slug: options.slug,
-        status: options.status,
-        limit: 50,
-      })) as { items?: Array<Record<string, unknown>> };
-      const items =
-        result?.items ?? (Array.isArray(result) ? (result as Array<Record<string, unknown>>) : []);
-
-      if (!items.length) {
-        console.log(chalk.gray('  No brands found.'));
-        return;
+engineCmd
+  .command('brand-bootstrap')
+  .description('Create or repair a workflow-studio brand and bootstrap response automation')
+  .argument('<brand>', 'Brand slug or brand id')
+  .option('--display-name <name>', 'Display name to use when creating a missing brand')
+  .option('--template <template>', 'Workflow-studio template id from the engine bootstrap catalog')
+  .option('--activate', 'Activate the latest config after bootstrapping')
+  .action(
+    async (
+      brand: string,
+      options: { displayName?: string; template?: string; activate?: boolean },
+    ) => {
+      const template =
+        typeof options.template === 'string' && options.template.trim()
+          ? options.template.trim().toLowerCase()
+          : undefined;
+      const ok = await bootstrapBrandStudio(brand, {
+        displayName: options.displayName,
+        templateId: template,
+        activate: Boolean(options.activate),
+      });
+      if (!ok) {
+        process.exitCode = 1;
       }
+    },
+  );
 
-      console.log(chalk.bold(`  Brands (${items.length})`));
-      for (const brand of items) {
-        const id = String(brand.id ?? '').slice(0, 8);
-        const name = brand.name ?? brand.slug ?? 'unnamed';
-        const st = brand.status ?? 'unknown';
-        const mode = brand.routing_mode ?? '-';
-        console.log(
-          `  ${chalk.gray(id)}  ${String(name).padEnd(24)} ${String(st).padEnd(12)} ${chalk.gray(String(mode))}`,
-        );
-      }
-    } catch (e: unknown) {
-      console.error(formatError(getErrorMessage(e)));
+engineCmd
+  .command('brand-show')
+  .description('Show brand details from the workflow engine')
+  .argument('<brand>', 'Brand slug or brand id')
+  .action(async (brand: string) => {
+    const ok = await showBrandDetails(brand);
+    if (!ok) {
+      process.exitCode = 1;
+    }
+  });
+
+engineCmd
+  .command('brand-update')
+  .description('Update a brand from a JSON patch file')
+  .argument('<brand>', 'Brand slug or brand id')
+  .argument('<file>', 'JSON file containing the brand patch')
+  .action(async (brand: string, file: string) => {
+    const ok = await updateBrandFromFile(brand, file);
+    if (!ok) {
       process.exitCode = 1;
     }
   });
@@ -621,24 +641,501 @@ engineCmd
   .command('health')
   .description('Check workflow engine health')
   .action(async () => {
-    const config = getWorkflowEngineConfig();
-    if (!config) {
-      console.log(chalk.yellow('  Workflow engine not configured.'));
-      return;
-    }
+    await checkHealth();
+  });
 
-    const { EngineClient } = await import('./lib/engine-client.js');
-    const client = new EngineClient(config);
-    try {
-      const result = await client.health();
-      console.log(chalk.green('  Engine healthy'));
-      if (result && typeof result === 'object') {
-        console.log(chalk.gray(`  ${JSON.stringify(result, null, 2)}`));
+engineCmd
+  .command('dispatch-health')
+  .description('Show dispatch health dashboard across brands')
+  .option('--tenant-id <tenantId>', 'Optional tenant id override')
+  .option('--limit <limit>', 'Maximum number of rows to return')
+  .option('--offset <offset>', 'Dashboard row offset')
+  .action(async (options: { tenantId?: string; limit?: string; offset?: string }) => {
+    const limit = options.limit ? Number.parseInt(options.limit, 10) : undefined;
+    const offset = options.offset ? Number.parseInt(options.offset, 10) : undefined;
+    await showDispatchHealthDashboard({
+      tenantId: options.tenantId,
+      limit: Number.isFinite(limit) ? limit : undefined,
+      offset: Number.isFinite(offset) ? offset : undefined,
+    });
+  });
+
+engineCmd
+  .command('dispatch-guard')
+  .description('Plan or apply dispatch guard actions for unhealthy brands')
+  .option('--tenant-id <tenantId>', 'Optional tenant id override')
+  .option('--apply <true|false>', 'Apply planned actions instead of running in plan mode')
+  .option(
+    '--minimum-health-status <status>',
+    'Minimum health threshold to act on: warning or critical',
+  )
+  .option('--max-actions <maxActions>', 'Maximum number of actions to plan or apply')
+  .action(
+    async (options: {
+      tenantId?: string;
+      apply?: string;
+      minimumHealthStatus?: string;
+      maxActions?: string;
+    }) => {
+      const apply = parseToggleValue(options.apply);
+      if (options.apply !== undefined && apply === undefined) {
+        console.error(formatError('Apply must be one of: true, false, on, off, yes, no.'));
+        process.exitCode = 1;
+        return;
       }
-    } catch (e: unknown) {
-      console.error(chalk.red(`  Engine unreachable: ${getErrorMessage(e)}`));
+
+      const threshold = options.minimumHealthStatus?.trim().toLowerCase();
+      if (threshold && threshold !== 'warning' && threshold !== 'critical') {
+        console.error(formatError('Minimum health status must be one of: warning, critical.'));
+        process.exitCode = 1;
+        return;
+      }
+
+      const maxActions = options.maxActions ? Number.parseInt(options.maxActions, 10) : undefined;
+      await runDispatchGuardView({
+        tenantId: options.tenantId,
+        apply,
+        minimumHealthStatus: threshold as 'warning' | 'critical' | undefined,
+        maxActions: Number.isFinite(maxActions) ? maxActions : undefined,
+      });
+    },
+  );
+
+engineCmd
+  .command('activate')
+  .description('Activate the current config version for a brand')
+  .argument('<brand>', 'Brand slug or brand id')
+  .option('--config-version <version>', 'Expected config version')
+  .action(async (brand: string, options: { configVersion?: string }) => {
+    const parsed = options.configVersion ? Number.parseInt(options.configVersion, 10) : undefined;
+    await activateBrandConfig(brand, Number.isFinite(parsed) ? parsed : undefined);
+  });
+
+engineCmd
+  .command('validate')
+  .description('Run remote engine validation for a brand')
+  .argument('<brand>', 'Brand slug or brand id')
+  .action(async (brand: string) => {
+    const ok = await validateEngineBrand(brand);
+    if (!ok) {
       process.exitCode = 1;
     }
+  });
+
+engineCmd
+  .command('executions')
+  .description('List recent workflow executions for a brand')
+  .argument('<brand>', 'Brand slug or brand id')
+  .option('--status <status>', 'Filter by execution status')
+  .option('--limit <limit>', 'Maximum number of executions to list', '20')
+  .option('--offset <offset>', 'Execution list offset', '0')
+  .action(async (brand: string, options: { status?: string; limit?: string; offset?: string }) => {
+    const limit = Number.parseInt(options.limit ?? '', 10);
+    const offset = Number.parseInt(options.offset ?? '', 10);
+    await listBrandExecutions(brand, {
+      status: options.status,
+      limit: Number.isFinite(limit) ? limit : 20,
+      offset: Number.isFinite(offset) ? offset : 0,
+    });
+  });
+
+engineCmd
+  .command('connectors')
+  .description('List connectors for a brand')
+  .argument('<brand>', 'Brand slug or brand id')
+  .action(async (brand: string) => {
+    await showBrandConnectors(brand);
+  });
+
+engineCmd
+  .command('connector-health')
+  .description('Run a health check for a brand connector')
+  .argument('<brand>', 'Brand slug or brand id')
+  .argument('<connector-id>', 'Connector id')
+  .action(async (brand: string, connectorId: string) => {
+    await checkBrandConnectorHealth(brand, connectorId);
+  });
+
+engineCmd
+  .command('connector-create')
+  .description('Create a connector for a brand from a JSON file')
+  .argument('<brand>', 'Brand slug or brand id')
+  .argument('<file>', 'JSON file containing the connector payload')
+  .action(async (brand: string, file: string) => {
+    const ok = await createBrandConnectorFromFile(brand, file);
+    if (!ok) {
+      process.exitCode = 1;
+    }
+  });
+
+engineCmd
+  .command('connector-plan')
+  .description('Plan workflow-studio connector sync from local or platform credentials')
+  .argument('<brand>', 'Brand slug or brand id')
+  .option('--loop-mode <mode>', 'Loop sync mode: subscriptions, returns, or both')
+  .option('--source <source>', 'Connector sync source: local or platform', 'local')
+  .action(async (brand: string, options: { loopMode?: string; source?: string }) => {
+    const loopMode = parseLoopModeOption(options.loopMode);
+    const source =
+      options.source === 'local' || options.source === 'platform' ? options.source : undefined;
+    if (options.source && !source) {
+      console.error(formatError('Source must be one of: local, platform.'));
+      process.exitCode = 1;
+      return;
+    }
+    await showBrandConnectorSyncPlan(brand, { loopMode, source });
+  });
+
+engineCmd
+  .command('connector-sync')
+  .description('Sync workflow-studio connectors from local or platform credentials')
+  .argument('<brand>', 'Brand slug or brand id')
+  .option('--loop-mode <mode>', 'Loop sync mode: subscriptions, returns, or both')
+  .option('--source <source>', 'Connector sync source: local or platform', 'local')
+  .action(async (brand: string, options: { loopMode?: string; source?: string }) => {
+    const loopMode = parseLoopModeOption(options.loopMode);
+    const source =
+      options.source === 'local' || options.source === 'platform' ? options.source : undefined;
+    if (options.source && !source) {
+      console.error(formatError('Source must be one of: local, platform.'));
+      process.exitCode = 1;
+      return;
+    }
+    const ok = await syncBrandConnectors(brand, { loopMode, source });
+    if (!ok) {
+      process.exitCode = 1;
+    }
+  });
+
+engineCmd
+  .command('connector-env')
+  .description('Inspect or export brand-scoped connector secret env vars for local workers')
+  .argument('<brand>', 'Brand slug or brand id')
+  .option('--loop-mode <mode>', 'Loop sync mode: subscriptions, returns, or both')
+  .option('--format <format>', 'Output format when writing: dotenv, shell, or json', 'dotenv')
+  .option('--out <path>', 'Write the rendered secret env file to a path')
+  .option('--unsafe-path', 'Allow writing outside the default safe output roots')
+  .action(
+    async (
+      brand: string,
+      options: {
+        loopMode?: string;
+        format?: string;
+        out?: string;
+        unsafePath?: boolean;
+      },
+    ) => {
+      const loopMode = parseLoopModeOption(options.loopMode);
+      const format = options.format ?? 'dotenv';
+      if (!['dotenv', 'shell', 'json'].includes(format)) {
+        console.error(formatError('Format must be one of: dotenv, shell, json.'));
+        process.exitCode = 1;
+        return;
+      }
+      const ok = await showBrandConnectorSecretEnv(brand, {
+        loopMode,
+        format: format as 'dotenv' | 'shell' | 'json',
+        outPath: options.out,
+        allowUnsafePath: Boolean(options.unsafePath),
+      });
+      if (!ok) {
+        process.exitCode = 1;
+      }
+    },
+  );
+
+engineCmd
+  .command('local-apply')
+  .description('Write brand-scoped env and update the local Temporal stack services')
+  .argument('<brand>', 'Brand slug or brand id')
+  .option('--loop-mode <mode>', 'Loop sync mode: subscriptions, returns, or both')
+  .option('--out <path>', 'Write the generated dotenv env file to a path')
+  .option('--compose-file <path>', 'Local next-temporal-rs docker compose file')
+  .option(
+    '--services <services>',
+    'Comma-separated services to refresh',
+    'api,worker,dispatcher,tools',
+  )
+  .option('--write-only', 'Only write the env file and print the docker compose command')
+  .option('--unsafe-path', 'Allow writing outside the default safe output roots')
+  .action(
+    async (
+      brand: string,
+      options: {
+        loopMode?: string;
+        out?: string;
+        composeFile?: string;
+        services?: string;
+        writeOnly?: boolean;
+        unsafePath?: boolean;
+      },
+    ) => {
+      const loopMode = parseLoopModeOption(options.loopMode);
+      const services = parseServicesOption(options.services);
+      const ok = await applyBrandToLocalStack(brand, {
+        loopMode,
+        outPath: options.out,
+        composeFilePath: options.composeFile,
+        services,
+        writeOnly: Boolean(options.writeOnly),
+        allowUnsafePath: Boolean(options.unsafePath),
+      });
+      if (!ok) {
+        process.exitCode = 1;
+      }
+    },
+  );
+
+engineCmd
+  .command('test')
+  .description('Run a dry-run workflow-studio test event for a brand')
+  .argument('<brand>', 'Brand slug or brand id')
+  .argument('<ticket-id>', 'Ticket id or external ticket identifier')
+  .action(async (brand: string, ticketId: string) => {
+    await runWorkflowStudioTest(brand, ticketId);
+  });
+
+engineCmd
+  .command('event')
+  .description('Ingest a workflow engine event payload from a JSON file')
+  .argument('<brand>', 'Brand slug or brand id')
+  .argument('<file>', 'JSON file containing the event payload')
+  .option('--idempotency-key <key>', 'Custom idempotency key for the event')
+  .action(async (brand: string, file: string, options: { idempotencyKey?: string }) => {
+    const ok = await ingestBrandEventFromFile(brand, file, process.cwd(), options.idempotencyKey);
+    if (!ok) {
+      process.exitCode = 1;
+    }
+  });
+
+engineCmd
+  .command('onboard')
+  .description('Start an onboarding run for a brand')
+  .argument('<brand>', 'Brand slug or brand id')
+  .option('--notes <notes>', 'Optional onboarding notes')
+  .action(async (brand: string, options: { notes?: string }) => {
+    await startOnboardingRun(brand, options.notes);
+  });
+
+engineCmd
+  .command('onboard-runs')
+  .description('List onboarding runs for a brand')
+  .argument('<brand>', 'Brand slug or brand id')
+  .action(async (brand: string) => {
+    await listOnboardingRunsView(brand);
+  });
+
+engineCmd
+  .command('onboard-show')
+  .description('Show a specific onboarding run')
+  .argument('<brand>', 'Brand slug or brand id')
+  .argument('<run-id>', 'Onboarding run id')
+  .action(async (brand: string, runId: string) => {
+    await showOnboardingRunView(brand, runId);
+  });
+
+engineCmd
+  .command('onboard-update')
+  .description('Update an onboarding run status or notes')
+  .argument('<brand>', 'Brand slug or brand id')
+  .argument('<run-id>', 'Onboarding run id')
+  .option('--status <status>', 'Next onboarding status')
+  .option('--notes <notes>', 'Optional onboarding notes')
+  .action(async (brand: string, runId: string, options: { status?: string; notes?: string }) => {
+    if (!options.status && !options.notes) {
+      throw new CommanderError(
+        1,
+        'response.engine',
+        'Provide --status, --notes, or both for onboard-update.',
+      );
+    }
+    await updateOnboardingRunView(brand, runId, {
+      status: options.status,
+      notes: options.notes,
+    });
+  });
+
+engineCmd
+  .command('dlq')
+  .description('List dead-letter queue items for a brand')
+  .argument('<brand>', 'Brand slug or brand id')
+  .option('--status <status>', 'Filter by DLQ status')
+  .option('--limit <limit>', 'Maximum number of DLQ items to list', '20')
+  .option('--offset <offset>', 'DLQ list offset', '0')
+  .action(async (brand: string, options: { status?: string; limit?: string; offset?: string }) => {
+    const limit = Number.parseInt(options.limit ?? '', 10);
+    const offset = Number.parseInt(options.offset ?? '', 10);
+    await showBrandDlq(brand, {
+      status: options.status,
+      limit: Number.isFinite(limit) ? limit : 20,
+      offset: Number.isFinite(offset) ? offset : 0,
+    });
+  });
+
+engineCmd
+  .command('dlq-retry')
+  .description('Retry a dead-letter queue item')
+  .argument('<brand>', 'Brand slug or brand id')
+  .argument('<dlq-id>', 'DLQ item id')
+  .action(async (brand: string, dlqId: string) => {
+    await retryBrandDlqItem(brand, dlqId);
+  });
+
+engineCmd
+  .command('dlq-resolve')
+  .description('Resolve a dead-letter queue item')
+  .argument('<brand>', 'Brand slug or brand id')
+  .argument('<dlq-id>', 'DLQ item id')
+  .option('--action <action>', 'Resolution action')
+  .option('--notes <notes>', 'Optional resolution notes')
+  .action(async (brand: string, dlqId: string, options: { action?: string; notes?: string }) => {
+    await resolveBrandDlqItem(brand, dlqId, {
+      action: options.action,
+      notes: options.notes,
+    });
+  });
+
+engineCmd
+  .command('migration')
+  .description('Show migration state for a brand')
+  .argument('<brand>', 'Brand slug or brand id')
+  .action(async (brand: string) => {
+    await showBrandMigrationState(brand);
+  });
+
+engineCmd
+  .command('migration-update')
+  .description('Update migration state for a brand from a JSON file')
+  .argument('<brand>', 'Brand slug or brand id')
+  .argument('<file>', 'JSON file containing the migration patch')
+  .action(async (brand: string, file: string) => {
+    await updateBrandMigrationStateFromFile(brand, file);
+  });
+
+engineCmd
+  .command('parity')
+  .description('Show parity dashboard for a brand')
+  .argument('<brand>', 'Brand slug or brand id')
+  .argument('[from]', 'ISO start date/time')
+  .argument('[to]', 'ISO end date/time')
+  .action(async (brand: string, from?: string, to?: string) => {
+    await showBrandParityDashboard(brand, { from, to });
+  });
+
+engineCmd
+  .command('templates')
+  .description('List workflow templates or get a specific template')
+  .argument('[template-key]', 'Template key')
+  .option('--version <version>', 'Specific template version')
+  .action(async (templateKey: string | undefined, options: { version?: string }) => {
+    const version = Number.parseInt(options.version ?? '', 10);
+    await listWorkflowTemplatesView(templateKey, Number.isFinite(version) ? version : undefined);
+  });
+
+engineCmd
+  .command('template-create')
+  .description('Create a workflow template from a JSON file')
+  .argument('<file>', 'JSON file containing the template payload')
+  .action(async (file: string) => {
+    await createWorkflowTemplateFromFile(file);
+  });
+
+engineCmd
+  .command('template-update')
+  .description('Update a workflow template version from a JSON file')
+  .argument('<template-key>', 'Template key')
+  .argument('<version>', 'Template version')
+  .argument('<file>', 'JSON file containing the template patch')
+  .action(async (templateKey: string, versionText: string, file: string) => {
+    const version = Number.parseInt(versionText, 10);
+    await updateWorkflowTemplateFromFile(templateKey, version, file);
+  });
+
+engineCmd
+  .command('policy-sets')
+  .description('List policy sets or get a specific policy set')
+  .argument('[policy-set-key]', 'Policy set key')
+  .option('--version <version>', 'Specific policy set version')
+  .action(async (policySetKey: string | undefined, options: { version?: string }) => {
+    const version = Number.parseInt(options.version ?? '', 10);
+    await listPolicySetsView(policySetKey, Number.isFinite(version) ? version : undefined);
+  });
+
+engineCmd
+  .command('policy-set-create')
+  .description('Create a policy set from a JSON file')
+  .argument('<file>', 'JSON file containing the policy set payload')
+  .action(async (file: string) => {
+    await createPolicySetFromFile(file);
+  });
+
+engineCmd
+  .command('policy-set-update')
+  .description('Update a policy set version from a JSON file')
+  .argument('<policy-set-key>', 'Policy set key')
+  .argument('<version>', 'Policy set version')
+  .argument('<file>', 'JSON file containing the policy set patch')
+  .action(async (policySetKey: string, versionText: string, file: string) => {
+    const version = Number.parseInt(versionText, 10);
+    await updatePolicySetFromFile(policySetKey, version, file);
+  });
+
+const engineConfigCmd = engineCmd
+  .command('config')
+  .description('Pull, validate, and push local brand workflow studio config');
+
+engineConfigCmd
+  .command('show')
+  .description('Show the effective remote workflow studio config for a brand')
+  .argument('<brand>', 'Brand slug or brand id')
+  .action(async (brand: string) => {
+    const ok = await showEffectiveBrandConfig(brand);
+    if (!ok) {
+      process.exitCode = 1;
+    }
+  });
+
+engineConfigCmd
+  .command('pull')
+  .description('Pull workflow studio config for a brand into .stateset/<brand>')
+  .argument('<brand>', 'Brand slug or brand id')
+  .action(async (brand: string) => {
+    const ok = await pullBrandStudioConfig(brand);
+    if (!ok) {
+      process.exitCode = 1;
+    }
+  });
+
+engineConfigCmd
+  .command('push')
+  .description('Push local .stateset/<brand> workflow studio config to the engine')
+  .argument('<brand>', 'Brand slug')
+  .action(async (brand: string) => {
+    const ok = await pushBrandStudioConfig(brand);
+    if (!ok) {
+      process.exitCode = 1;
+    }
+  });
+
+engineConfigCmd
+  .command('validate')
+  .description('Validate local .stateset/<brand> workflow studio config')
+  .argument('<brand>', 'Brand slug')
+  .action((brand: string) => {
+    const ok = validateBrandStudioConfig(brand);
+    if (!ok) {
+      process.exitCode = 1;
+    }
+  });
+
+engineConfigCmd
+  .command('history')
+  .description('Show config version history for a brand')
+  .argument('<brand>', 'Brand slug or brand id')
+  .option('--limit <limit>', 'Maximum number of versions to list', '20')
+  .action(async (brand: string, options: { limit?: string }) => {
+    const limit = Number.parseInt(options.limit ?? '', 10);
+    await showBrandConfigHistory(brand, Number.isFinite(limit) ? limit : 20);
   });
 
 // Config commands

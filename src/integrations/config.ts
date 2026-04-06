@@ -125,8 +125,9 @@ function loadStoredConfig(
   id: IntegrationId,
   requiredFields: string[],
   label: string,
+  cwd: string = process.cwd(),
 ): Record<string, string | undefined> | null {
-  const stored = getIntegrationConfigFromStore(id);
+  const stored = getIntegrationConfigFromStore(id, cwd);
   if (!stored) return null;
   for (const field of requiredFields) {
     if (!stored[field]) {
@@ -186,7 +187,7 @@ function validateAccessToken(token: string): string {
   return trimmed;
 }
 
-export function getShopifyConfigFromEnv(): ShopifyConfig | null {
+export function getShopifyConfigFromEnv(cwd: string = process.cwd()): ShopifyConfig | null {
   const apiVersion =
     readFirstEnvVar(['SHOPIFY_API_VERSION', 'SHOPIFY_API_VER', 'STATESET_SHOPIFY_API_VERSION']) ||
     '2025-04';
@@ -215,7 +216,7 @@ export function getShopifyConfigFromEnv(): ShopifyConfig | null {
     return { shop, accessToken, apiVersion };
   }
 
-  const stored = loadStoredConfig('shopify', ['shop', 'accessToken'], 'Shopify');
+  const stored = loadStoredConfig('shopify', ['shop', 'accessToken'], 'Shopify', cwd);
   if (!stored) return null;
   return {
     shop: normalizeShopDomain(stored.shop!),
@@ -232,7 +233,7 @@ function normalizeGorgiasDomain(domain: string): string {
   return normalized;
 }
 
-export function getGorgiasConfigFromEnv(): GorgiasConfig | null {
+export function getGorgiasConfigFromEnv(cwd: string = process.cwd()): GorgiasConfig | null {
   const rawDomain = readFirstEnvVar(['GORGIAS_DOMAIN', 'STATESET_GORGIAS_DOMAIN']);
   const apiKey = readFirstEnvVar(['GORGIAS_API_KEY', 'STATESET_GORGIAS_API_KEY']);
   const email = readFirstEnvVar(['GORGIAS_EMAIL', 'STATESET_GORGIAS_EMAIL']);
@@ -249,7 +250,7 @@ export function getGorgiasConfigFromEnv(): GorgiasConfig | null {
     };
   }
 
-  const stored = loadStoredConfig('gorgias', ['domain', 'apiKey', 'email'], 'Gorgias');
+  const stored = loadStoredConfig('gorgias', ['domain', 'apiKey', 'email'], 'Gorgias', cwd);
   if (!stored) return null;
   return {
     domain: normalizeGorgiasDomain(stored.domain!),
@@ -266,7 +267,7 @@ function validateRechargeToken(token: string): string {
   return trimmed;
 }
 
-export function getRechargeConfigFromEnv(): RechargeConfig | null {
+export function getRechargeConfigFromEnv(cwd: string = process.cwd()): RechargeConfig | null {
   const apiVersion =
     readFirstEnvVar([
       'RECHARGE_API_VERSION',
@@ -286,7 +287,7 @@ export function getRechargeConfigFromEnv(): RechargeConfig | null {
     return { accessToken, apiVersion };
   }
 
-  const stored = loadStoredConfig('recharge', ['accessToken'], 'Recharge');
+  const stored = loadStoredConfig('recharge', ['accessToken'], 'Recharge', cwd);
   if (!stored) return null;
   return {
     accessToken: validateRechargeToken(stored.accessToken!),
@@ -294,7 +295,7 @@ export function getRechargeConfigFromEnv(): RechargeConfig | null {
   };
 }
 
-export function getSkioConfigFromEnv(): SkioConfig | null {
+export function getSkioConfigFromEnv(cwd: string = process.cwd()): SkioConfig | null {
   const defaultBaseUrl = 'https://api.skio.com/v1';
   const apiVersion =
     readFirstEnvVar(['SKIO_API_VERSION', 'STATESET_SKIO_API_VERSION']) || '2024-01';
@@ -310,7 +311,7 @@ export function getSkioConfigFromEnv(): SkioConfig | null {
     };
   }
 
-  const stored = loadStoredConfig('skio', ['apiKey'], 'Skio');
+  const stored = loadStoredConfig('skio', ['apiKey'], 'Skio', cwd);
   if (!stored) return null;
   return {
     apiKey: validateGenericKey(stored.apiKey!, 'Skio API key', 'SKIO_API_KEY'),
@@ -319,7 +320,7 @@ export function getSkioConfigFromEnv(): SkioConfig | null {
   };
 }
 
-export function getStayAiConfigFromEnv(): StayAiConfig | null {
+export function getStayAiConfigFromEnv(cwd: string = process.cwd()): StayAiConfig | null {
   const defaultBaseUrl = 'https://api.stay.ai/v1';
   const apiVersion =
     readFirstEnvVar(['STAYAI_API_VERSION', 'STAY_AI_API_VERSION', 'STATESET_STAYAI_API_VERSION']) ||
@@ -343,7 +344,7 @@ export function getStayAiConfigFromEnv(): StayAiConfig | null {
     };
   }
 
-  const stored = loadStoredConfig('stayai', ['apiKey'], 'Stay.ai');
+  const stored = loadStoredConfig('stayai', ['apiKey'], 'Stay.ai', cwd);
   if (!stored) return null;
   return {
     apiKey: validateGenericKey(stored.apiKey!, 'Stay.ai API key', 'STAYAI_API_KEY'),
@@ -661,18 +662,18 @@ export function getKlaviyoConfigFromEnv(): KlaviyoConfig | null {
   return { apiKey: validateKlaviyoKey(stored.apiKey!), revision: stored.revision || revision };
 }
 
-export function getLoopConfigFromEnv(): LoopConfig | null {
+export function getLoopConfigFromEnv(cwd: string = process.cwd()): LoopConfig | null {
   const rawKey = readFirstEnvVar(['LOOP_API_KEY', 'STATESET_LOOP_API_KEY']);
   if (rawKey) {
     return { apiKey: validateGenericKey(rawKey, 'Loop API key', 'LOOP_API_KEY') };
   }
 
-  const stored = loadStoredConfig('loop', ['apiKey'], 'Loop');
+  const stored = loadStoredConfig('loop', ['apiKey'], 'Loop', cwd);
   if (!stored) return null;
   return { apiKey: validateGenericKey(stored.apiKey!, 'Loop API key', 'LOOP_API_KEY') };
 }
 
-export function getShipStationConfigFromEnv(): ShipStationConfig | null {
+export function getShipStationConfigFromEnv(cwd: string = process.cwd()): ShipStationConfig | null {
   const apiKey = readFirstEnvVar(['SHIPSTATION_API_KEY', 'STATESET_SHIPSTATION_API_KEY']);
   const apiSecret = readFirstEnvVar(['SHIPSTATION_API_SECRET', 'STATESET_SHIPSTATION_API_SECRET']);
   if (apiKey || apiSecret) {
@@ -684,7 +685,7 @@ export function getShipStationConfigFromEnv(): ShipStationConfig | null {
     };
   }
 
-  const stored = loadStoredConfig('shipstation', ['apiKey', 'apiSecret'], 'ShipStation');
+  const stored = loadStoredConfig('shipstation', ['apiKey', 'apiSecret'], 'ShipStation', cwd);
   if (!stored) return null;
   return {
     apiKey: validateGenericKey(stored.apiKey!, 'ShipStation API key', 'SHIPSTATION_API_KEY'),
@@ -696,7 +697,7 @@ export function getShipStationConfigFromEnv(): ShipStationConfig | null {
   };
 }
 
-export function getShipHeroConfigFromEnv(): ShipHeroConfig | null {
+export function getShipHeroConfigFromEnv(cwd: string = process.cwd()): ShipHeroConfig | null {
   const rawToken = readFirstEnvVar(['SHIPHERO_ACCESS_TOKEN', 'STATESET_SHIPHERO_ACCESS_TOKEN']);
   if (rawToken) {
     return {
@@ -704,7 +705,7 @@ export function getShipHeroConfigFromEnv(): ShipHeroConfig | null {
     };
   }
 
-  const stored = loadStoredConfig('shiphero', ['accessToken'], 'ShipHero');
+  const stored = loadStoredConfig('shiphero', ['accessToken'], 'ShipHero', cwd);
   if (!stored) return null;
   return {
     accessToken: validateGenericKey(
@@ -746,7 +747,7 @@ export function getShipHawkConfigFromEnv(): ShipHawkConfig | null {
   return { apiKey: validateGenericKey(stored.apiKey!, 'ShipHawk API key', 'SHIPHAWK_API_KEY') };
 }
 
-export function getZendeskConfigFromEnv(): ZendeskConfig | null {
+export function getZendeskConfigFromEnv(cwd: string = process.cwd()): ZendeskConfig | null {
   const rawSubdomain = readFirstEnvVar(['ZENDESK_SUBDOMAIN', 'STATESET_ZENDESK_SUBDOMAIN']);
   const email = readFirstEnvVar(['ZENDESK_EMAIL', 'STATESET_ZENDESK_EMAIL']);
   const apiToken = readFirstEnvVar(['ZENDESK_API_TOKEN', 'STATESET_ZENDESK_API_TOKEN']);
@@ -763,7 +764,7 @@ export function getZendeskConfigFromEnv(): ZendeskConfig | null {
     };
   }
 
-  const stored = loadStoredConfig('zendesk', ['subdomain', 'email', 'apiToken'], 'Zendesk');
+  const stored = loadStoredConfig('zendesk', ['subdomain', 'email', 'apiToken'], 'Zendesk', cwd);
   if (!stored) return null;
   return {
     subdomain: normalizeZendeskSubdomain(stored.subdomain!),

@@ -3,6 +3,9 @@ import { handleSessionCommand } from './commands-session.js';
 import { handleExportCommand } from './commands-export.js';
 import { handleShortcutCommand } from './commands-shortcuts.js';
 import { handleEngineCommand, handleWorkflowsCommand } from './commands-engine.js';
+import { handleOnboardCommand } from './commands-onboard.js';
+import { handleFinetuneCommand, handleEvalsSuggestCommand } from './commands-finetune.js';
+import { handleRulesGenerateCommand } from './commands-rules-generate.js';
 import { findCommand, registerAllCommands } from './command-registry.js';
 import type { ChatContext, CommandResult } from './types.js';
 import { formatError } from '../utils/display.js';
@@ -109,6 +112,50 @@ export async function routeSlashCommand(input: string, ctx: ChatContext): Promis
     const workflowResult = await handleWorkflowsCommand(routedInput, ctx);
     if (workflowResult.handled) {
       return workflowResult;
+    }
+  } catch (err) {
+    console.error(formatError(getErrorMessage(err)));
+    return { handled: true, needsPrompt: true };
+  }
+
+  // Onboard command: /onboard, /onboard init
+  try {
+    const onboardResult = await handleOnboardCommand(routedInput, ctx);
+    if (onboardResult.handled) {
+      return onboardResult;
+    }
+  } catch (err) {
+    console.error(formatError(getErrorMessage(err)));
+    return { handled: true, needsPrompt: true };
+  }
+
+  // Finetune commands: /finetune [list|export|create|deploy]
+  try {
+    const finetuneResult = await handleFinetuneCommand(routedInput, ctx);
+    if (finetuneResult.handled) {
+      return finetuneResult;
+    }
+  } catch (err) {
+    console.error(formatError(getErrorMessage(err)));
+    return { handled: true, needsPrompt: true };
+  }
+
+  // Evals suggest: /evals suggest
+  try {
+    const evalsSuggestResult = await handleEvalsSuggestCommand(routedInput, ctx);
+    if (evalsSuggestResult.handled) {
+      return evalsSuggestResult;
+    }
+  } catch (err) {
+    console.error(formatError(getErrorMessage(err)));
+    return { handled: true, needsPrompt: true };
+  }
+
+  // Rules generate: /rules generate [brand-slug]
+  try {
+    const rulesGenResult = await handleRulesGenerateCommand(routedInput, ctx);
+    if (rulesGenResult.handled) {
+      return rulesGenResult;
     }
   } catch (err) {
     console.error(formatError(getErrorMessage(err)));

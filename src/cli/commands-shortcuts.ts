@@ -14,6 +14,8 @@ import { formatError } from '../utils/display.js';
 import { getErrorMessage } from '../lib/errors.js';
 
 import { runRulesCommand, runTopLevelRules } from './shortcuts/rules.js';
+import { runEvalsCommand, runTopLevelEvals } from './shortcuts/evals.js';
+import { runDatasetsCommand, runTopLevelDatasets } from './shortcuts/datasets.js';
 import { runKnowledgeBaseCommand, runTopLevelKb } from './shortcuts/knowledge-base.js';
 import { runAgentsCommand, runTopLevelAgents } from './shortcuts/agents.js';
 import {
@@ -61,6 +63,7 @@ import {
 } from './shortcuts/monitoring.js';
 import { runTestCommand, runTopLevelTest } from './shortcuts/test.js';
 import { runDriftCommand } from './shortcuts/drift.js';
+import { runTopLevelFinetune } from './commands-finetune.js';
 
 export async function handleShortcutCommand(input: string, ctx: ChatContext) {
   const logger = buildSlashLogger(ctx);
@@ -73,6 +76,26 @@ export async function handleShortcutCommand(input: string, ctx: ChatContext) {
   try {
     if (command === '/rules') {
       await runRulesCommand(
+        tokens,
+        { callTool: ctx.agent.callTool.bind(ctx.agent) },
+        logger,
+        slashOptions.json,
+      );
+      logger.done();
+      return { handled: true };
+    }
+    if (command === '/evals') {
+      await runEvalsCommand(
+        tokens,
+        { callTool: ctx.agent.callTool.bind(ctx.agent) },
+        logger,
+        slashOptions.json,
+      );
+      logger.done();
+      return { handled: true };
+    }
+    if (command === '/datasets') {
+      await runDatasetsCommand(
         tokens,
         { callTool: ctx.agent.callTool.bind(ctx.agent) },
         logger,
@@ -405,6 +428,179 @@ export function registerShortcutTopLevelCommands(program: Command): void {
       },
     );
   addCommonJsonOption(rules, 'rules');
+
+  const evals = program
+    .command('evals')
+    .description('Manage evals with direct MCP shortcuts')
+    .argument(
+      '[args...]',
+      'Evals command: list|create|create-from-response|get|update|delete|export|review|suggest|<id>',
+    )
+    .option('--limit <n>', 'Limit the number of evals returned')
+    .option('--offset <n>', 'Offset for paginated eval listing')
+    .option('--status <status>', 'Filter evals by status')
+    .option('--name <name>', 'Eval name')
+    .option('--type <type>', 'Eval type')
+    .option('--status <status>', 'Eval status')
+    .option('--response-id <id>', 'Associated response ID')
+    .option('--ticket-id <id>', 'Associated ticket ID')
+    .option('--description <text>', 'Eval description')
+    .option('--message <text>', 'User message')
+    .option('--preferred <text>', 'Preferred output')
+    .option('--rejected <text>', 'Non-preferred output')
+    .option('--reason <text>', 'Reason type')
+    .option('--impact <text>', 'Customer impact')
+    .option(
+      '--seed <mode>',
+      'For create-from-response, seed agent output into preferred|rejected|none fields',
+    )
+    .option('--out <path>', 'Write exported evals to a file')
+    .action(
+      async (
+        args: string[],
+        opts: {
+          json?: boolean;
+          limit?: string;
+          offset?: string;
+          status?: string;
+          name?: string;
+          type?: string;
+          responseId?: string;
+          ticketId?: string;
+          description?: string;
+          message?: string;
+          preferred?: string;
+          rejected?: string;
+          reason?: string;
+          impact?: string;
+          seed?: string;
+          out?: string;
+        },
+      ) => {
+        try {
+          const forwarded = [...args];
+          if (opts.limit) forwarded.push('--limit', opts.limit);
+          if (opts.offset) forwarded.push('--offset', opts.offset);
+          if (opts.status) forwarded.push('--status', opts.status);
+          if (opts.name) forwarded.push('--name', opts.name);
+          if (opts.type) forwarded.push('--type', opts.type);
+          if (opts.status) forwarded.push('--status', opts.status);
+          if (opts.responseId) forwarded.push('--response-id', opts.responseId);
+          if (opts.ticketId) forwarded.push('--ticket-id', opts.ticketId);
+          if (opts.description) forwarded.push('--description', opts.description);
+          if (opts.message) forwarded.push('--message', opts.message);
+          if (opts.preferred) forwarded.push('--preferred', opts.preferred);
+          if (opts.rejected) forwarded.push('--rejected', opts.rejected);
+          if (opts.reason) forwarded.push('--reason', opts.reason);
+          if (opts.impact) forwarded.push('--impact', opts.impact);
+          if (opts.seed) forwarded.push('--seed', opts.seed);
+          if (opts.out) forwarded.push('--out', opts.out);
+          await runTopLevelEvals(forwarded, { json: opts.json });
+        } catch (error) {
+          if (error instanceof Error) {
+            console.error(formatError(error.message));
+            process.exitCode = 1;
+          }
+          throw error;
+        }
+      },
+    );
+  addCommonJsonOption(evals, 'evals');
+
+  const datasets = program
+    .command('datasets')
+    .description('Manage datasets and dataset entries for training-data curation')
+    .argument(
+      '[args...]',
+      'Datasets command: list|create|get|update|delete|add-entry|update-entry|delete-entry|import|export|<id>',
+    )
+    .option('--limit <n>', 'Limit the number of datasets returned')
+    .option('--offset <n>', 'Offset for paginated dataset listing')
+    .option('--name <name>', 'Dataset name')
+    .option('--description <text>', 'Dataset description')
+    .option('--status <status>', 'Dataset status')
+    .option('--metadata <json>', 'Dataset metadata JSON')
+    .option('--messages <json>', 'Dataset entry messages JSON array')
+    .option('--file <path>', 'JSON/JSONL file used for entry import or update')
+    .option('--out <path>', 'Write exported dataset JSON to a file')
+    .action(
+      async (
+        args: string[],
+        opts: {
+          json?: boolean;
+          limit?: string;
+          offset?: string;
+          name?: string;
+          description?: string;
+          status?: string;
+          metadata?: string;
+          messages?: string;
+          file?: string;
+          out?: string;
+        },
+      ) => {
+        try {
+          const forwarded = [...args];
+          if (opts.limit) forwarded.push('--limit', opts.limit);
+          if (opts.offset) forwarded.push('--offset', opts.offset);
+          if (opts.name) forwarded.push('--name', opts.name);
+          if (opts.description) forwarded.push('--description', opts.description);
+          if (opts.status) forwarded.push('--status', opts.status);
+          if (opts.metadata) forwarded.push('--metadata', opts.metadata);
+          if (opts.messages) forwarded.push('--messages', opts.messages);
+          if (opts.file) forwarded.push('--file', opts.file);
+          if (opts.out) forwarded.push('--out', opts.out);
+          await runTopLevelDatasets(forwarded, { json: opts.json });
+        } catch (error) {
+          if (error instanceof Error) {
+            console.error(formatError(error.message));
+            process.exitCode = 1;
+          }
+          throw error;
+        }
+      },
+    );
+  addCommonJsonOption(datasets, 'datasets');
+
+  program
+    .command('finetune')
+    .description('Export, validate, and stage fine-tuning datasets')
+    .argument('[args...]', 'Finetune command: list|export|validate|create|deploy')
+    .option(
+      '--format <format>',
+      'Dataset format filter: all|sft|dpo|openai-sft|studio-sft|trl-sft|studio-dpo|pair-dpo',
+    )
+    .option('--status <status>', 'Eval status filter for export (default: approved)')
+    .option('--validation-ratio <ratio>', 'Optional validation split ratio for export, such as 0.1')
+    .option('--method <method>', 'Training method override for create: supervised|dpo')
+    .action(
+      async (
+        args: string[],
+        opts: {
+          format?: string;
+          status?: string;
+          validationRatio?: string;
+          method?: string;
+        },
+      ) => {
+        try {
+          const forwarded = [...args];
+          if (opts.format) forwarded.push('--format', opts.format);
+          if (opts.status) forwarded.push('--status', opts.status);
+          if (opts.validationRatio) {
+            forwarded.push('--validation-ratio', opts.validationRatio);
+          }
+          if (opts.method) forwarded.push('--method', opts.method);
+          await runTopLevelFinetune(forwarded);
+        } catch (error) {
+          if (error instanceof Error) {
+            console.error(formatError(error.message));
+            process.exitCode = 1;
+          }
+          throw error;
+        }
+      },
+    );
 
   const kb = program
     .command('kb')
@@ -878,8 +1074,8 @@ export function registerShortcutTopLevelCommands(program: Command): void {
 
   program
     .command('webhooks')
-    .description('Manage webhook subscriptions')
-    .argument('[args...]', 'Webhook command: list|create|test|logs|delete')
+    .description('Manage remote webhook subscriptions and delivery history')
+    .argument('[args...]', 'Webhook command: list|get|create|update|deliveries|logs|delete')
     .option('--json', 'Output as JSON')
     .action(async (args: string[], opts: { json?: boolean }) => {
       try {

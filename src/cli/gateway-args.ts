@@ -14,8 +14,10 @@ export interface GatewayParseResult {
 
 export interface GatewayCLIArgs extends GatewayParseResult {
   slackEnabled: boolean;
+  telegramEnabled: boolean;
   whatsappEnabled: boolean;
   slackAllowList?: string[];
+  telegramAllowList?: string[];
   whatsappAllowList?: string[];
   whatsappAllowGroups: boolean;
   whatsappSelfChatOnly: boolean;
@@ -23,6 +25,10 @@ export interface GatewayCLIArgs extends GatewayParseResult {
 }
 
 export interface SlackCLIArgs extends GatewayParseResult {
+  allowList?: string[];
+}
+
+export interface TelegramCLIArgs extends GatewayParseResult {
   allowList?: string[];
 }
 
@@ -41,8 +47,10 @@ export function parseGatewayArgs(args: string[]): GatewayCLIArgs {
     showHelp: false,
     showVersion: false,
     slackEnabled: true,
+    telegramEnabled: true,
     whatsappEnabled: true,
     slackAllowList: undefined,
+    telegramAllowList: undefined,
     whatsappAllowList: undefined,
     whatsappAllowGroups: false,
     whatsappSelfChatOnly: false,
@@ -71,6 +79,12 @@ export function parseGatewayArgs(args: string[]): GatewayCLIArgs {
         i = value.index;
         break;
       }
+      case '--telegram-allow': {
+        const value = readOptionValue(args, i, '--telegram-allow', inlineValue);
+        parsed.telegramAllowList = parseCommaSeparated(value.value);
+        i = value.index;
+        break;
+      }
       case '--whatsapp-allow': {
         const value = readOptionValue(args, i, '--whatsapp-allow', inlineValue);
         parsed.whatsappAllowList = parseCommaSeparated(value.value);
@@ -91,6 +105,9 @@ export function parseGatewayArgs(args: string[]): GatewayCLIArgs {
       }
       case '--no-slack':
         parsed.slackEnabled = false;
+        break;
+      case '--no-telegram':
+        parsed.telegramEnabled = false;
         break;
       case '--no-whatsapp':
         parsed.whatsappEnabled = false;
@@ -120,6 +137,60 @@ export function parseGatewayArgs(args: string[]): GatewayCLIArgs {
 
 export function parseSlackArgs(args: string[]): SlackCLIArgs {
   const parsed: SlackCLIArgs = {
+    model: undefined,
+    verbose: false,
+    showHelp: false,
+    showVersion: false,
+    allowList: undefined,
+  };
+
+  for (let i = 0; i < args.length; i += 1) {
+    const token = args[i];
+    const { option, inlineValue } = splitOptionToken(token);
+
+    if (token === '') {
+      continue;
+    }
+
+    switch (option) {
+      case '--model':
+      case '-m': {
+        const { value, index } = readOptionValue(args, i, '--model', inlineValue);
+        parsed.model = value;
+        i = index;
+        break;
+      }
+      case '--allow': {
+        const value = readOptionValue(args, i, '--allow', inlineValue);
+        parsed.allowList = parseCommaSeparated(value.value);
+        i = value.index;
+        break;
+      }
+      case '--verbose':
+      case '-v':
+        parsed.verbose = true;
+        break;
+      case '--version':
+      case '-V':
+        parsed.showVersion = true;
+        break;
+      case '--help':
+      case '-h':
+        parsed.showHelp = true;
+        break;
+      default:
+        if (isOptionToken(token)) {
+          throw new Error(`Unknown option "${token}".`);
+        }
+        throw new Error(`Unexpected argument "${token}".`);
+    }
+  }
+
+  return parsed;
+}
+
+export function parseTelegramArgs(args: string[]): TelegramCLIArgs {
+  const parsed: TelegramCLIArgs = {
     model: undefined,
     verbose: false,
     showHelp: false,

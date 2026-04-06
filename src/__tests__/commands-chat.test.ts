@@ -222,6 +222,26 @@ describe('handleChatCommand', () => {
     consoleSpy.mockRestore();
   });
 
+  it('/capabilities prints the workflow-area capability map', async () => {
+    const ctx = createMockCtx();
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await handleChatCommand('/capabilities workflow', ctx);
+
+    expect(result).toEqual({ handled: true });
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) => typeof line === 'string' && line.includes('Workflow Studio'),
+      ),
+    ).toBe(true);
+    expect(
+      consoleSpy.mock.calls.some(
+        ([line]) => typeof line === 'string' && line.includes('response engine config pull'),
+      ),
+    ).toBe(true);
+    consoleSpy.mockRestore();
+  });
+
   it('handles /skill and ignores command collisions', async () => {
     const ctx = createMockCtx();
 

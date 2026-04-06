@@ -13,6 +13,23 @@ function handleFatalError(err) {
   process.exit(1);
 }
 
+function parseCommaSeparatedEnv(value) {
+  if (!value) {
+    return undefined;
+  }
+  const items = [];
+  const seen = new Set();
+  for (const part of value.split(',')) {
+    const trimmed = part.trim();
+    if (!trimmed || seen.has(trimmed)) {
+      continue;
+    }
+    seen.add(trimmed);
+    items.push(trimmed);
+  }
+  return items.length > 0 ? items : undefined;
+}
+
 async function main() {
   const { ensureSupportedNodeRuntime } = await import('../dist/runtime/node-launcher.js');
   await ensureSupportedNodeRuntime(import.meta.url);
@@ -22,11 +39,13 @@ async function main() {
     { logger },
     { installGlobalErrorHandlers },
     { parseWhatsAppArgs },
+    { ensureGatewayRuntimeConfigFromEnv },
   ] = await Promise.all([
     import('../dist/config.js'),
     import('../dist/lib/logger.js'),
     import('../dist/lib/errors.js'),
     import('../dist/cli/gateway-args.js'),
+    import('../dist/gateway/runtime-config.js'),
   ]);
 
   installGlobalErrorHandlers();
@@ -42,20 +61,25 @@ async function main() {
     }
     if (parsed.showHelp) {
       console.log(`
-StateSet Response — WhatsApp Gateway
+StateSet Response - WhatsApp Gateway
 
 Usage: response-whatsapp [options]
 
 Options:
   --model <name>, -m  Model to use (sonnet, haiku, opus or full model ID) [default: config]
-  --allow <phones>   Comma-separated allowlist of phone numbers
-  --groups           Allow messages from group chats           [default: false]
-  --self-chat        Only respond to messages you send to yourself
-  --auth-dir <path>  WhatsApp auth credential directory        [default: ~/.stateset/whatsapp-auth]
-  --reset            Clear stored WhatsApp auth and re-scan QR
-  --version, -V      Show this version
-  --verbose, -v      Enable debug logging
-  --help, -h         Show this help message
+  --allow <phones>    Comma-separated allowlist of phone numbers
+  --groups            Allow messages from group chats           [default: false]
+  --self-chat         Only respond to messages you send to yourself
+  --auth-dir <path>   WhatsApp auth credential directory        [default: ~/.stateset/whatsapp-auth]
+  --reset             Clear stored WhatsApp auth and re-scan QR
+  --version, -V       Show this version
+  --verbose, -v       Enable debug logging
+  --help, -h          Show this help message
+
+Environment:
+  WHATSAPP_ALLOW      Optional comma-separated phone number allowlist
+  ANTHROPIC_API_KEY   Anthropic API key (required)
+  STATESET_ALLOW_APPLY Enable state-changing operations [default: false]
 
 Examples:
   response-whatsapp                           Start with default settings
@@ -68,7 +92,7 @@ Examples:
     }
     options = {
       model: parsed.model,
-      allow: parsed.allowList,
+      allow: parsed.allowList ?? parseCommaSeparatedEnv(process.env.WHATSAPP_ALLOW),
       groups: parsed.allowGroups,
       selfChat: parsed.selfChatOnly,
       authDir: parsed.authDir,
@@ -83,9 +107,18 @@ Examples:
 
   logger.configure({ level: options.verbose ? 'debug' : 'info' });
 
+  try {
+    ensureGatewayRuntimeConfigFromEnv();
+  } catch (err) {
+    console.error(`Error: ${err instanceof Error ? err.message : err}`);
+    process.exit(1);
+  }
+
   if (!configExists()) {
     console.error('Error: No configuration found.');
-    console.error('Run "response auth login" to set up your credentials first.');
+    console.error(
+      'Run "response auth login" or set STATESET_ORG_ID, STATESET_GRAPHQL_ENDPOINT, and STATESET_CLI_TOKEN/STATESET_ADMIN_SECRET.',
+    );
     process.exit(1);
   }
 
@@ -127,14 +160,15 @@ Examples:
   }
 
   console.log(`
-╔═══════════════════════════════════════════════════╗
-║       StateSet Response — WhatsApp Gateway        ║
-╠═══════════════════════════════════════════════════╣
-║  Organization: ${orgId.padEnd(34)}║
-║  Model:        ${(options.model ?? 'default').padEnd(34)}║
-║  Groups:       ${(options.groups ? 'allowed' : 'disabled').padEnd(34)}║
-║  Self chat:    ${(options.selfChat ? 'enabled' : 'disabled').padEnd(34)}║
-${options.allow ? `║  Allowlist:    ${options.allow.length + ' number(s)'.padEnd(30)}     ║\n` : ''}╚═══════════════════════════════════════════════════╝
++---------------------------------------------------+
+|       StateSet Response - WhatsApp Gateway        |
++---------------------------------------------------+
+|  Organization: ${orgId.padEnd(34)}|
+|  Model:        ${(options.model ?? 'default').padEnd(34)}|
+|  Groups:       ${(options.groups ? 'allowed' : 'disabled').padEnd(34)}|
+|  Self chat:    ${(options.selfChat ? 'enabled' : 'disabled').padEnd(34)}|
+${options.allow ? `|  Allowlist:    ${(options.allow.length + ' number(s)').padEnd(34)}|
+` : ''}+---------------------------------------------------+
 `);
 
   const { WhatsAppGateway } = await import('../dist/whatsapp/gateway.js');

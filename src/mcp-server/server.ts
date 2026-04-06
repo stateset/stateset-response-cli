@@ -38,6 +38,7 @@ import { registerChannelTools } from './tools/channels.js';
 import { registerMessageTools } from './tools/messages.js';
 import { registerSettingsTools } from './tools/settings.js';
 import { registerOrganizationTools } from './tools/organizations.js';
+import { registerWebhookTools } from './tools/webhooks.js';
 import { registerShopifyHoldsTools } from './tools/shopify-holds.js';
 import { registerShopifyOrderTools } from './tools/shopify-orders.js';
 import { registerShopifyRefundTools } from './tools/shopify-refunds.js';
@@ -207,6 +208,7 @@ export function createServer(): McpServer {
   registerMessageTools(server, graphqlClient, orgId);
   registerSettingsTools(server, graphqlClient, orgId);
   registerOrganizationTools(server, graphqlClient, orgId);
+  registerWebhookTools(server, graphqlClient, orgId);
 
   // Workflow engine (optional)
   try {

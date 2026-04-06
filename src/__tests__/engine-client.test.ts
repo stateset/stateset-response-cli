@@ -10,10 +10,15 @@ function makeConfig(overrides: Partial<{ url: string; apiKey: string; tenantId: 
 }
 
 function jsonResponse(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
+  return {
+    ok: status >= 200 && status < 300,
     status,
-    headers: { 'content-type': 'application/json' },
-  });
+    headers: {
+      get: (name: string) => (name.toLowerCase() === 'content-type' ? 'application/json' : null),
+    },
+    json: async () => body,
+    text: async () => JSON.stringify(body),
+  };
 }
 
 describe('EngineClientError', () => {
@@ -110,7 +115,7 @@ describe('EngineClient error handling', () => {
   });
 
   it('wraps AbortError as timeout', async () => {
-    const abortErr = new DOMException('aborted', 'AbortError');
+    const abortErr = Object.assign(new Error('aborted'), { name: 'AbortError' });
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(abortErr));
 
     const client = new EngineClient(makeConfig());
@@ -156,6 +161,18 @@ describe('EngineClient API methods', () => {
     expect(fetchMock.mock.calls[0][0]).toContain('/v1/brands');
   });
 
+  it('listBootstrapTemplates() calls GET /v1/bootstrap/templates', async () => {
+    await client.listBootstrapTemplates();
+    expect(fetchMock.mock.calls[0][0]).toContain('/v1/bootstrap/templates');
+  });
+
+  it('bootstrapBrand() calls POST /v1/bootstrap/brands', async () => {
+    await client.bootstrapBrand({ slug: 'acme' });
+    const opts = fetchMock.mock.calls[0][1];
+    expect(opts.method).toBe('POST');
+    expect(fetchMock.mock.calls[0][0]).toContain('/v1/bootstrap/brands');
+  });
+
   it('startWorkflow() calls POST', async () => {
     await client.startWorkflow({ brand: 'acme', ticket_id: '123' });
     const opts = fetchMock.mock.calls[0][1];
@@ -173,6 +190,31 @@ describe('EngineClient API methods', () => {
     await client.cancelWorkflow('wf-123');
     const opts = fetchMock.mock.calls[0][1];
     expect(opts.method).toBe('POST');
+    expect(fetchMock.mock.calls[0][0]).toContain('/v1/workflows/wf-123/cancel');
+  });
+
+  it('cancelWorkflow() routes rav2 workflow ids to the typed endpoint', async () => {
+    await client.cancelWorkflow('rav2-123');
+    expect(fetchMock.mock.calls[0][0]).toContain(
+      '/v1/workflows/response-automation-v2/rav2-123/cancel',
+    );
+  });
+
+  it('restartWorkflow() calls the rav2 restart endpoint', async () => {
+    await client.restartWorkflow('rav2-123');
+    expect(fetchMock.mock.calls[0][0]).toContain(
+      '/v1/workflows/response-automation-v2/rav2-123/restart',
+    );
+  });
+
+  it('terminateWorkflow() routes connector workflow ids correctly', async () => {
+    await client.terminateWorkflow('connector-123');
+    expect(fetchMock.mock.calls[0][0]).toContain('/v1/workflows/connector/connector-123/terminate');
+  });
+
+  it('reviewWorkflow() routes legacy workflow ids to the signal endpoint', async () => {
+    await client.reviewWorkflow('legacy-123', { approved: true });
+    expect(fetchMock.mock.calls[0][0]).toContain('/v1/workflows/legacy-123/signal/review');
   });
 
   it('listDlq() calls GET with query params', async () => {
@@ -189,6 +231,46 @@ describe('EngineClient API methods', () => {
   it('getSnoozeStatus() calls GET', async () => {
     await client.getSnoozeStatus('snz-1');
     expect(fetchMock.mock.calls[0][0]).toContain('/v1/workflows/snooze/snz-1/status');
+  });
+
+  it('listBrandConfigVersions() calls GET with query params', async () => {
+    await client.listBrandConfigVersions('brand-1', { limit: 10 });
+    expect(fetchMock.mock.calls[0][0]).toContain('/v1/brands/brand-1/config-versions?limit=10');
+  });
+
+  it('listBrandWorkflows() calls GET with query params', async () => {
+    await client.listBrandWorkflows('brand-1', { status: 'completed', limit: 5 });
+    expect(fetchMock.mock.calls[0][0]).toContain('/v1/brands/brand-1/workflows?status=completed');
+    expect(fetchMock.mock.calls[0][0]).toContain('limit=5');
+  });
+
+  it('getDispatchHealthDashboard() calls GET with query params', async () => {
+    await client.getDispatchHealthDashboard({
+      tenantId: 'tenant-1',
+      limit: 10,
+      offset: 5,
+    });
+    expect(fetchMock.mock.calls[0][0]).toContain(
+      '/v1/dispatch/health?tenant_id=tenant-1&limit=10&offset=5',
+    );
+  });
+
+  it('runDispatchGuard() calls POST with request body', async () => {
+    await client.runDispatchGuard({
+      tenantId: 'tenant-1',
+      apply: true,
+      minimumHealthStatus: 'warning',
+      maxActions: 3,
+    });
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toContain('/v1/dispatch/guard');
+    expect(options.method).toBe('POST');
+    expect(JSON.parse(String(options.body))).toEqual({
+      tenant_id: 'tenant-1',
+      apply: true,
+      minimum_health_status: 'warning',
+      max_actions: 3,
+    });
   });
 });
 

@@ -211,6 +211,7 @@ export function printWelcome(
   console.log('');
   console.log(chalk.gray('  Essential commands:'));
   console.log(chalk.cyan('    /help       ') + chalk.gray('Full command reference'));
+  console.log(chalk.cyan('    /capabilities') + chalk.gray('Capability map by workflow area'));
   console.log(chalk.cyan('    /agents     ') + chalk.gray('Manage agents'));
   console.log(chalk.cyan('    /rules      ') + chalk.gray('Manage rules'));
   console.log(chalk.cyan('    /kb         ') + chalk.gray('Knowledge base'));

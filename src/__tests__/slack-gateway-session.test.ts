@@ -18,7 +18,7 @@ vi.mock('../config.js', () => ({
       graphqlEndpoint: 'https://api.example.com/graphql',
       adminSecret: 'secret',
     },
-    anthropicApiKey: 'sk-ant-test',
+    anthropicApiKey: 'anthropic-example-key',
   })),
 }));
 
@@ -116,8 +116,8 @@ function makeSession(
 function createGateway(opts?: { allowList?: string[] }): SlackGateway {
   const gw = new SlackGateway(opts ?? {});
   const g = internals(gw);
-  g.anthropicApiKey = 'sk-ant-test';
-  g.botToken = 'xoxb-test';
+  g.anthropicApiKey = 'anthropic-example-key';
+  g.botToken = 'slack-bot-token-example';
   g.orgId = 'org-test';
   g.app = {
     client: {

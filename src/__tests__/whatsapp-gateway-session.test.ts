@@ -18,7 +18,7 @@ vi.mock('../config.js', () => ({
       graphqlEndpoint: 'https://api.example.com/graphql',
       adminSecret: 'secret',
     },
-    anthropicApiKey: 'sk-ant-test',
+    anthropicApiKey: 'anthropic-example-key',
   })),
 }));
 
@@ -135,7 +135,7 @@ function createGateway(opts?: {
 }): WhatsAppGateway {
   const gw = new WhatsAppGateway(opts ?? {});
   const g = internals(gw);
-  g.anthropicApiKey = 'sk-ant-test';
+  g.anthropicApiKey = 'anthropic-example-key';
   g.orgId = 'org-test';
   g.sock = {
     sendMessage: vi.fn().mockResolvedValue({ key: { id: 'msg-out-1' } }),
