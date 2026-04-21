@@ -98,21 +98,6 @@ function parseConnectors(value: unknown): ConnectorSpec[] {
   return Array.isArray(value) ? (value as ConnectorSpec[]) : [];
 }
 
-function connectorIdentity(connector: Record<string, unknown> | ConnectorSpec): string {
-  const raw = connector as unknown as Record<string, unknown>;
-  const connectorKey = String(raw.connector_key ?? raw.key ?? '').trim();
-  if (connectorKey) {
-    return connectorKey;
-  }
-  const type = String(raw.connector_type ?? raw.type ?? '').trim();
-  const baseUrl = isObject(raw.target)
-    ? String(raw.target.base_url ?? '').trim()
-    : isObject(raw.config)
-      ? String(raw.config.base_url ?? raw.config.baseUrl ?? '').trim()
-      : '';
-  return `${type}:${baseUrl}`;
-}
-
 async function findRemoteBrandBySlug(
   client: EngineClient,
   brandSlug: string,
@@ -269,16 +254,29 @@ export async function pushBrandStudioConfig(
     let remoteBrand = await findRemoteBrandBySlug(client, bundle.brandSlug);
 
     if (!remoteBrand) {
+      if (!config.tenantId) {
+        throw new Error(
+          'Brand create requires tenant_id. Set WORKFLOW_ENGINE_TENANT_ID in CLI config before pushing a new brand.',
+        );
+      }
       console.log(chalk.gray(`  Creating remote brand "${bundle.brandSlug}"...`));
       remoteBrand = (await client.createBrand({
+        tenant_id: config.tenantId,
         slug: bundle.manifest.slug,
         display_name: bundle.manifest.display_name,
         region: bundle.manifest.region,
         default_locale: bundle.manifest.default_locale,
         routing_mode:
           bundle.manifest.routing_mode === 'live' ? 'shadow' : bundle.manifest.routing_mode,
+        canary_percent:
+          bundle.manifest.routing_mode === 'canary' ? bundle.manifest.canary_percent : undefined,
         quotas: bundle.manifest.quotas,
         metadata: bundle.manifest.metadata,
+        workflow_bindings:
+          bundle.manifest.workflow_bindings.length > 0
+            ? bundle.manifest.workflow_bindings
+            : buildDefaultManifest(bundle.manifest.slug, bundle.manifest.display_name)
+                .workflow_bindings,
       })) as RemoteBrandRecord;
     }
 
@@ -287,26 +285,10 @@ export async function pushBrandStudioConfig(
       throw new Error('Remote brand did not return an id.');
     }
 
-    const existingConnectors = parseConnectors(await client.listConnectors(brandId));
-    const existingConnectorIds = new Set(
-      existingConnectors.map((connector) => connectorIdentity(connector)),
+    await client.replaceConnectors(
+      brandId,
+      bundle.connectors as unknown as Array<Record<string, unknown>>,
     );
-    let createdConnectors = 0;
-
-    for (const connector of bundle.connectors) {
-      const identity = connectorIdentity(connector);
-      if (existingConnectorIds.has(identity)) {
-        continue;
-      }
-      try {
-        await client.createConnector(brandId, connector as unknown as Record<string, unknown>);
-        createdConnectors++;
-        existingConnectorIds.add(identity);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.log(chalk.yellow(`  Warning: could not create connector "${identity}" (${msg}).`));
-      }
-    }
 
     const brandPatch: Record<string, unknown> = {
       workflow_bindings: bundle.manifest.workflow_bindings,
@@ -332,9 +314,7 @@ export async function pushBrandStudioConfig(
     console.log(
       chalk.green(`  Pushed brand config for ${bundle.brandSlug} (${brandId.slice(0, 8)}).`),
     );
-    if (createdConnectors > 0) {
-      console.log(chalk.gray(`  Created ${createdConnectors} missing connector(s).`));
-    }
+    console.log(chalk.gray(`  Reconciled ${bundle.connectors.length} connector(s).`));
     return true;
   } catch (err) {
     const msg =

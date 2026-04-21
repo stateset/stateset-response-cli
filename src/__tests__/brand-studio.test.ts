@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   buildBrandStudioBundle,
   loadBrandStudioBundle,
+  normalizeBrandSlugOrThrow,
+  validateBrandSlug,
   validateBrandStudioBundle,
   writeBrandStudioBundle,
 } from '../lib/brand-studio.js';
@@ -32,6 +34,15 @@ afterEach(() => {
 });
 
 describe('brand-studio helpers', () => {
+  it('accepts valid brand slugs and rejects traversal input', () => {
+    expect(normalizeBrandSlugOrThrow('acme-2')).toBe('acme-2');
+    expect(validateBrandSlug('acme')).toBe(true);
+    expect(validateBrandSlug('..')).toMatch(/Brand slug must use lowercase letters/);
+    expect(() => normalizeBrandSlugOrThrow('../acme')).toThrow(
+      /Brand slug must use lowercase letters/,
+    );
+  });
+
   it('writes and reloads a canonical brand bundle', () => {
     const cwd = makeTempDir();
     const brandSlug = 'acme';

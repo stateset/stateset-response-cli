@@ -5,6 +5,7 @@ import {
   renderBashCompletion,
   renderCompletionScript,
   renderFishCompletion,
+  renderPowerShellCompletion,
   renderZshCompletion,
 } from '../cli/shell-completion.js';
 
@@ -49,6 +50,8 @@ describe('shell completion', () => {
     expect(spec.rootFlags).toEqual(
       expect.arrayContaining(['--json', '--output', '--profile', '--dev']),
     );
+    expect(spec.flagArgumentMap['']).toEqual(expect.arrayContaining(['--output', '--profile']));
+    expect(spec.flagArgumentMap['']).not.toContain('--json');
     expect(spec.pathMap.engine).toEqual(expect.arrayContaining(['config', 'status']));
     expect(spec.pathMap['engine config']).toEqual(expect.arrayContaining(['pull']));
     expect(spec.pathMap.evals).toEqual(
@@ -59,8 +62,14 @@ describe('shell completion', () => {
     expect(spec.flagMap.evals).toEqual(
       expect.arrayContaining(['--help', '--out', '--seed', '--status']),
     );
+    expect(spec.flagArgumentMap.evals).toEqual(
+      expect.arrayContaining(['--out', '--seed', '--status']),
+    );
     expect(spec.flagMap['evals create-from-response']).toEqual(
       expect.arrayContaining(['--help', '--out', '--seed', '--status']),
+    );
+    expect(spec.flagArgumentMap['evals create-from-response']).toEqual(
+      expect.arrayContaining(['--out', '--seed', '--status']),
     );
     expect(spec.flagMap.bulk).toEqual(expect.arrayContaining(['--dry-run', '--help', '--out']));
     expect(spec.flagValueMap['::--model']).toEqual(
@@ -77,37 +86,50 @@ describe('shell completion', () => {
     );
   });
 
-  it('renders bash, zsh, and fish scripts from the same spec', () => {
+  it('renders bash, zsh, fish, and powershell scripts from the same spec', () => {
     const spec = createCompletionSpec(buildProgram(), ['--profile', '--dev']);
 
     expect(renderBashCompletion(spec)).toContain('capabilities');
     expect(renderBashCompletion(spec)).toContain('_response_subcommands');
     expect(renderBashCompletion(spec)).toContain('_response_flags');
+    expect(renderBashCompletion(spec)).toContain('_response_flags_with_values');
     expect(renderBashCompletion(spec)).toContain('_response_flag_values');
     expect(renderBashCompletion(spec)).toContain('evals create');
     expect(renderBashCompletion(spec)).toContain("_response_flags['evals create-from-response']");
+    expect(renderBashCompletion(spec)).toContain("_response_flags_with_values['']");
     expect(renderBashCompletion(spec)).toContain(
       "_response_flag_values['evals create-from-response::--seed']",
     );
     expect(renderBashCompletion(spec)).toContain('--seed');
     expect(renderZshCompletion(spec)).toContain('compdef _response response');
     expect(renderZshCompletion(spec)).toContain('_response_flags');
+    expect(renderZshCompletion(spec)).toContain('_response_flags_with_values');
     expect(renderZshCompletion(spec)).toContain('_response_flag_values');
     expect(renderZshCompletion(spec)).toContain('engine config');
     expect(renderFishCompletion(spec)).toContain(
       'complete -c response -n \'__response_path_is ""\'',
     );
+    expect(renderFishCompletion(spec)).toContain('function __response_flag_takes_value');
     expect(renderFishCompletion(spec)).toContain('bulk capabilities config engine evals');
-    expect(renderFishCompletion(spec)).toContain("-l model -xa 'haiku opus sonnet'");
+    expect(renderFishCompletion(spec)).toContain("-l model -r -xa 'haiku opus sonnet'");
+    expect(renderFishCompletion(spec)).toContain('-l profile -r');
     expect(renderFishCompletion(spec)).toContain(
-      `complete -c response -n '__response_path_is "evals create-from-response"' -l seed -xa 'none preferred rejected'`,
+      `complete -c response -n '__response_path_is "evals create-from-response"' -l seed -r -xa 'none preferred rejected'`,
     );
     expect(renderFishCompletion(spec)).toContain('__response_path_is "evals"');
+    expect(renderPowerShellCompletion(spec)).toContain(
+      'Register-ArgumentCompleter -Native -CommandName response',
+    );
+    expect(renderPowerShellCompletion(spec)).toContain('$script:ResponseFlagsWithValues');
+    expect(renderPowerShellCompletion(spec)).toContain('$script:ResponseFlagValues');
+    expect(renderCompletionScript('powershell', buildProgram())).toContain(
+      'Register-ArgumentCompleter -Native -CommandName response',
+    );
   });
 
   it('rejects unsupported shells', () => {
-    expect(() => renderCompletionScript('powershell', buildProgram())).toThrow(
-      'Unknown shell: powershell. Use bash, zsh, or fish.',
+    expect(() => renderCompletionScript('tcsh', buildProgram())).toThrow(
+      'Unknown shell: tcsh. Use bash, zsh, fish, or powershell.',
     );
   });
 });

@@ -17,6 +17,8 @@ import { sleep, normalizeInstanceUrl } from './utils.js';
 import { requestJson } from '../integrations/http.js';
 
 const HTTP_PROTOCOLS = new Set(['http:', 'https:']);
+const DEFAULT_INSTANCE_URL = 'https://response.stateset.app';
+const DEFAULT_GRAPHQL_ENDPOINT = `${DEFAULT_INSTANCE_URL}/v1/graphql`;
 
 type LoginMethod = 'device' | 'manual';
 
@@ -165,6 +167,14 @@ function validateGraphQLEndpoint(value: string): string {
   return validateHttpUrl(value, 'GraphQL endpoint');
 }
 
+function resolveInstanceUrl(value: string | undefined): string {
+  return (value || process.env.STATESET_INSTANCE_URL || DEFAULT_INSTANCE_URL).trim();
+}
+
+function resolveGraphQLEndpoint(value: string | undefined): string {
+  return (value || process.env.STATESET_GRAPHQL_ENDPOINT || DEFAULT_GRAPHQL_ENDPOINT).trim();
+}
+
 function tryOpenBrowser(url: string): boolean {
   try {
     let command: string;
@@ -256,7 +266,7 @@ export async function runAuthLogin(options: AuthLoginOptions = {}): Promise<void
     // Validate API key with a real API call (non-blocking)
     if (!options.nonInteractive) {
       try {
-        const Anthropic = (await import('@anthropic-ai/sdk')).default;
+        const Anthropic = (await import('../lib/anthropic-sdk.js')).default;
         const testClient = new Anthropic({ apiKey: anthropicApiKey });
         const ora = (await import('ora')).default;
         const spinner = ora('Verifying API key...').start();
@@ -288,8 +298,8 @@ export async function runAuthLogin(options: AuthLoginOptions = {}): Promise<void
         {
           type: 'input',
           name: 'instanceUrl',
-          message: 'StateSet ResponseCX instance URL:',
-          default: (process.env.STATESET_INSTANCE_URL || '').trim(),
+          message: 'StateSet Response app URL:',
+          default: resolveInstanceUrl(instanceUrl),
           filter: (v: string) => v.trim(),
           validate: (v: string) => {
             try {
@@ -303,14 +313,7 @@ export async function runAuthLogin(options: AuthLoginOptions = {}): Promise<void
       ]);
       instanceUrl = answer.instanceUrl;
     }
-    if (!instanceUrl) {
-      instanceUrl = (process.env.STATESET_INSTANCE_URL || '').trim();
-    }
-    if (!instanceUrl) {
-      throw new Error(
-        'Instance URL is required. Pass --instance-url or set STATESET_INSTANCE_URL.',
-      );
-    }
+    instanceUrl = resolveInstanceUrl(instanceUrl);
 
     const normalizedInstance = validateInstanceUrl(instanceUrl);
     const { device_code, user_code, verification_url, expires_in, interval } =
@@ -373,7 +376,7 @@ export async function runAuthLogin(options: AuthLoginOptions = {}): Promise<void
           type: 'input',
           name: 'graphqlEndpoint',
           message: 'GraphQL endpoint:',
-          default: graphqlEndpoint || (process.env.STATESET_GRAPHQL_ENDPOINT || '').trim(),
+          default: resolveGraphQLEndpoint(graphqlEndpoint),
           filter: (v: string) => v.trim(),
           validate: (v: string) => {
             try {
@@ -397,9 +400,8 @@ export async function runAuthLogin(options: AuthLoginOptions = {}): Promise<void
       orgName = String(answers.orgName || '').trim();
       graphqlEndpoint = String(answers.graphqlEndpoint || '').trim();
       adminSecret = String(answers.adminSecret || '').trim();
-    } else if (!graphqlEndpoint) {
-      graphqlEndpoint = (process.env.STATESET_GRAPHQL_ENDPOINT || '').trim();
     }
+    graphqlEndpoint = resolveGraphQLEndpoint(graphqlEndpoint);
 
     if (!orgId) {
       throw new Error('Organization ID is required. Pass --org-id.');
@@ -447,7 +449,7 @@ export function registerAuthCommands(program: Command): void {
     .description('Configure credentials for an organization')
     .option('--device', 'Use browser/device code authentication')
     .option('--manual', 'Use manual admin-secret authentication')
-    .option('--instance-url <url>', 'StateSet ResponseCX instance URL')
+    .option('--instance-url <url>', 'StateSet Response app URL')
     .option('--org-id <id>', 'Organization ID (manual mode)')
     .option('--org-name <name>', 'Organization name (manual mode)')
     .option('--graphql-endpoint <url>', 'GraphQL endpoint (manual mode)')

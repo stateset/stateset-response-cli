@@ -23,7 +23,6 @@ function createCtx(payload: unknown): ChatContext {
 
 describe('handleFinetuneCommand', () => {
   let handleFinetuneCommand: typeof import('../cli/commands-finetune.js').handleFinetuneCommand;
-  let cwdSpy: ReturnType<typeof vi.spyOn> | undefined;
 
   beforeEach(async () => {
     vi.resetModules();
@@ -33,13 +32,12 @@ describe('handleFinetuneCommand', () => {
   });
 
   afterEach(() => {
-    cwdSpy?.mockRestore();
-    cwdSpy = undefined;
+    vi.restoreAllMocks();
   });
 
   it('exports studio dpo datasets from approved evals', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'response-finetune-export-'));
-    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tempDir);
+    vi.spyOn(process, 'cwd').mockReturnValue(tempDir);
     const ctx = createCtx([
       {
         id: 'eval-1',
@@ -64,7 +62,7 @@ describe('handleFinetuneCommand', () => {
 
   it('creates a job spec from a validated dataset', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'response-finetune-create-'));
-    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tempDir);
+    vi.spyOn(process, 'cwd').mockReturnValue(tempDir);
     const finetuneDir = path.join(tempDir, '.stateset', 'finetune');
     fs.mkdirSync(finetuneDir, { recursive: true });
     const datasetPath = path.join(finetuneDir, 'sft-openai-sample.jsonl');
@@ -99,5 +97,36 @@ describe('handleFinetuneCommand', () => {
     expect(jobSpec.dataset_format).toBe('openai-sft');
     expect(jobSpec.method).toBe('supervised');
     expect(jobSpec.base_model).toBe('gpt-4.1');
+  });
+
+  it('refuses symlinked training datasets without creating a job spec', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'response-finetune-symlink-'));
+    vi.spyOn(process, 'cwd').mockReturnValue(tempDir);
+    const finetuneDir = path.join(tempDir, '.stateset', 'finetune');
+    fs.mkdirSync(finetuneDir, { recursive: true });
+    const realDatasetPath = path.join(tempDir, 'real-dataset.jsonl');
+    fs.writeFileSync(
+      realDatasetPath,
+      `${JSON.stringify({
+        messages: [
+          { role: 'system', content: 'You are helpful.' },
+          { role: 'user', content: 'Hi' },
+          { role: 'assistant', content: 'Hello' },
+        ],
+      })}\n`,
+      'utf-8',
+    );
+    const linkedDatasetPath = path.join(finetuneDir, 'linked-dataset.jsonl');
+    fs.symlinkSync(realDatasetPath, linkedDatasetPath);
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await handleFinetuneCommand(
+      `/finetune create ${linkedDatasetPath}`,
+      createCtx([]),
+    );
+
+    expect(result).toEqual({ handled: true });
+    expect(fs.existsSync(path.join(finetuneDir, 'jobs'))).toBe(false);
+    expect(logSpy.mock.calls.flat().join('\n')).toContain('not a safe regular file');
   });
 });

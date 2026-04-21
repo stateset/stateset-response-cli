@@ -174,6 +174,8 @@ export function parseCommandArgs(tokens: string[]) {
   const options: Record<string, string> = {};
   const positionals: string[] = [];
   const booleanOptions = new Set([
+    'apply',
+    'analyze',
     'json',
     'help',
     'yes',
@@ -190,6 +192,7 @@ export function parseCommandArgs(tokens: string[]) {
     'allow-writes',
     'allowWrites',
     'all',
+    'push',
   ]);
   let i = 0;
   while (i < tokens.length) {

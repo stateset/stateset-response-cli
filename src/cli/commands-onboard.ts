@@ -18,7 +18,12 @@ import inquirer from 'inquirer';
 import type { ChatContext, CommandResult } from './types.js';
 import { configExists, getWorkflowEngineConfig } from '../config.js';
 import { EngineClient, EngineClientError } from '../lib/engine-client.js';
-import { buildBrandStudioBundle, writeBrandStudioBundle } from '../lib/brand-studio.js';
+import {
+  buildBrandStudioBundle,
+  normalizeBrandSlugOrThrow,
+  validateBrandSlug,
+  writeBrandStudioBundle,
+} from '../lib/brand-studio.js';
 import {
   buildDefaultAutomationConfig,
   buildDefaultManifest,
@@ -34,6 +39,7 @@ import {
   type ConnectorType,
 } from '../lib/manifest-builder.js';
 import { processPath } from '../lib/kb-ingest.js';
+import { writePrivateTextFileSecure } from '../utils/secure-file.js';
 
 const NOT_HANDLED: CommandResult = { handled: false };
 
@@ -47,13 +53,24 @@ function statesetDir(): string {
 
 function ensureDir(dir: string): void {
   if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
 }
 
 function writeJson(filePath: string, data: unknown): void {
   ensureDir(path.dirname(filePath));
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+  writePrivateTextFileSecure(filePath, JSON.stringify(data, null, 2) + '\n', {
+    label: 'Onboard output file',
+    atomic: true,
+  });
+}
+
+function writeText(filePath: string, content: string): void {
+  ensureDir(path.dirname(filePath));
+  writePrivateTextFileSecure(filePath, content, {
+    label: 'Onboard output file',
+    atomic: true,
+  });
 }
 
 function printStep(step: number, total: number, label: string): void {
@@ -98,10 +115,7 @@ async function stepBrand(): Promise<{
           .toLowerCase()
           .replace(/[^a-z0-9]+/g, '-')
           .replace(/(^-|-$)/g, ''),
-      validate: (v: string) =>
-        /^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(v) || v.length <= 2
-          ? true
-          : 'Lowercase letters, numbers, and hyphens only',
+      validate: validateBrandSlug,
     },
     {
       type: 'list',
@@ -124,7 +138,10 @@ async function stepBrand(): Promise<{
     },
   ]);
 
-  return answers;
+  return {
+    ...answers,
+    slug: normalizeBrandSlugOrThrow(answers.slug),
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -893,13 +910,13 @@ function stepWriteConfig(
     })
     .join('\n');
   if (envLines) {
-    fs.writeFileSync(path.join(baseDir, '.env.example'), envLines + '\n', 'utf-8');
+    writeText(path.join(baseDir, '.env.example'), envLines + '\n');
     printSuccess('.env.example');
   }
 
   // gitignore for secrets
   const gitignore = ['.env', '.env.local', '*.secret', '*.key'].join('\n');
-  fs.writeFileSync(path.join(baseDir, '.gitignore'), gitignore + '\n', 'utf-8');
+  writeText(path.join(baseDir, '.gitignore'), gitignore + '\n');
   printSuccess('.gitignore');
 
   printInfo(`Config written to ${baseDir}`);
@@ -942,12 +959,27 @@ async function stepDeploy(
     return;
   }
 
+  if (!engineConfig.tenantId) {
+    console.log(
+      chalk.yellow(
+        '  Workflow engine tenant ID is required to create a brand. Set WORKFLOW_ENGINE_TENANT_ID, then run /engine config push.',
+      ),
+    );
+    return;
+  }
+
   const client = new EngineClient(engineConfig);
 
   try {
+    const workflowBindings =
+      manifest.workflow_bindings.length > 0
+        ? manifest.workflow_bindings
+        : buildDefaultManifest(manifest.slug, manifest.display_name).workflow_bindings;
+
     // Create brand
     console.log(chalk.gray('  Creating brand...'));
     const brand = (await client.createBrand({
+      tenant_id: engineConfig.tenantId,
       slug: manifest.slug,
       display_name: manifest.display_name,
       region: manifest.region,
@@ -955,25 +987,22 @@ async function stepDeploy(
       routing_mode: 'shadow',
       quotas: manifest.quotas,
       metadata: manifest.metadata,
+      workflow_bindings: workflowBindings,
     })) as Record<string, unknown>;
     const brandId = String(brand.id ?? brand.brand_id ?? '');
     printSuccess(`Brand created: ${brandId}`);
 
-    // Create connectors
-    for (const conn of connectors) {
-      try {
-        await client.createConnector(brandId, conn as unknown as Record<string, unknown>);
-        printSuccess(`Connector: ${conn.connector_type}`);
-      } catch (err) {
-        const msg = err instanceof EngineClientError ? err.message : String(err);
-        console.log(chalk.yellow(`  Warning: ${conn.connector_type}: ${msg}`));
-      }
-    }
+    // Reconcile connectors
+    await client.replaceConnectors(
+      brandId,
+      connectors as unknown as Array<Record<string, unknown>>,
+    );
+    printSuccess(`Connectors reconciled: ${connectors.length}`);
 
     // Update brand config (workflow binding)
-    if (manifest.workflow_bindings.length > 0) {
+    if (workflowBindings.length > 0) {
       await client.updateBrand(brandId, {
-        workflow_bindings: manifest.workflow_bindings,
+        workflow_bindings: workflowBindings,
       });
       printSuccess('Workflow binding configured');
     }
@@ -1109,10 +1138,12 @@ async function runInit(brandSlug?: string): Promise<void> {
         type: 'input',
         name: 'slug',
         message: 'Brand slug:',
-        validate: (v: string) => (v.trim().length > 0 ? true : 'Required'),
+        validate: validateBrandSlug,
       },
     ]);
-    brandSlug = slug;
+    brandSlug = normalizeBrandSlugOrThrow(slug);
+  } else {
+    brandSlug = normalizeBrandSlugOrThrow(brandSlug);
   }
 
   const baseDir = path.join(statesetDir(), brandSlug!);
@@ -1142,7 +1173,7 @@ async function runInit(brandSlug?: string): Promise<void> {
   writeBrandStudioBundle(bundle);
 
   const gitignore = ['.env', '.env.local', '*.secret', '*.key'].join('\n');
-  fs.writeFileSync(path.join(baseDir, '.gitignore'), gitignore + '\n', 'utf-8');
+  writeText(path.join(baseDir, '.gitignore'), gitignore + '\n');
 
   printSuccess(`Initialized .stateset/${brandSlug}/`);
   printInfo(`Edit the config files, then run /engine config push ${brandSlug} to deploy.`);

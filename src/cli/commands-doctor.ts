@@ -23,6 +23,39 @@ export interface DoctorCheck {
   fixDescription?: string;
 }
 
+export interface DoctorSummary {
+  passed: number;
+  warnings: number;
+  failed: number;
+}
+
+export interface DoctorRepairResult {
+  description?: string;
+  error?: string;
+  name: string;
+  status: 'applied' | 'failed';
+}
+
+interface SerializableDoctorCheck {
+  fixDescription?: string;
+  fixable: boolean;
+  message: string;
+  name: string;
+  status: DoctorCheck['status'];
+}
+
+interface DoctorCommandOptions {
+  fix?: boolean;
+  json?: boolean;
+  nonInteractive?: boolean;
+  repair?: boolean;
+}
+
+interface DoctorCommandDeps {
+  log?: (message: string) => void;
+  runChecks?: typeof runDoctorChecks;
+}
+
 const STATUS_ICONS: Record<DoctorCheck['status'], string> = {
   pass: chalk.green('[PASS]'),
   fail: chalk.red('[FAIL]'),
@@ -169,7 +202,14 @@ function checkFilePermissions(): DoctorCheck {
   }
 
   try {
-    const stat = fs.statSync(configPath);
+    const stat = fs.lstatSync(configPath);
+    if (stat.isSymbolicLink()) {
+      return {
+        name: 'Permissions',
+        status: 'warn',
+        message: 'Config file path is a symlink; refusing to inspect or chmod it automatically',
+      };
+    }
     const mode = stat.mode & 0o777;
     if (mode !== 0o600) {
       return {
@@ -180,7 +220,10 @@ function checkFilePermissions(): DoctorCheck {
           fs.chmodSync(configPath, 0o600);
           const statesetDir = getStateSetDir();
           if (fs.existsSync(statesetDir)) {
-            fs.chmodSync(statesetDir, 0o700);
+            const stateDirStat = fs.lstatSync(statesetDir);
+            if (!stateDirStat.isSymbolicLink()) {
+              fs.chmodSync(statesetDir, 0o700);
+            }
           }
         },
         fixDescription: 'Set config file to 0o600 and directory to 0o700',
@@ -227,7 +270,7 @@ function checkSessionHealth(): DoctorCheck {
       return {
         name: 'Sessions',
         status: 'warn',
-        message: `${message}. Consider running "response doctor --fix" or "/session cleanup".`,
+        message: `${message}. Consider running "response doctor --repair" or "response reset sessions --yes".`,
         fix: () => {
           cleanupSessions({ maxAgeDays: 90 });
         },
@@ -286,13 +329,13 @@ function checkDiskSpace(): DoctorCheck {
       return {
         name: 'Disk',
         status: 'warn',
-        message: `~/.stateset uses ${sizeMB.toFixed(0)} MB (> 500 MB threshold)`,
+        message: `${statesetDir} uses ${sizeMB.toFixed(0)} MB (> 500 MB threshold)`,
       };
     }
     return {
       name: 'Disk',
       status: 'pass',
-      message: `~/.stateset uses ${sizeMB.toFixed(1)} MB`,
+      message: `${statesetDir} uses ${sizeMB.toFixed(1)} MB`,
     };
   } catch (e) {
     return {
@@ -377,6 +420,149 @@ export async function runDoctorChecks(): Promise<DoctorCheck[]> {
   return checks;
 }
 
+export function summarizeDoctorChecks(checks: DoctorCheck[]): DoctorSummary {
+  return {
+    passed: checks.filter((check) => check.status === 'pass').length,
+    warnings: checks.filter((check) => check.status === 'warn').length,
+    failed: checks.filter((check) => check.status === 'fail').length,
+  };
+}
+
+function serializeDoctorCheck(check: DoctorCheck): SerializableDoctorCheck {
+  return {
+    name: check.name,
+    status: check.status,
+    message: check.message,
+    fixable: Boolean(check.fix),
+    fixDescription: check.fixDescription,
+  };
+}
+
+function printDoctorChecks(checks: DoctorCheck[], log: (message: string) => void): void {
+  for (const check of checks) {
+    log(`  ${STATUS_ICONS[check.status]} ${check.message}`);
+  }
+}
+
+function printDoctorSummary(summary: DoctorSummary, log: (message: string) => void): void {
+  log('');
+  log(
+    chalk.gray(
+      `  ${summary.passed} passed, ${summary.warnings} warning(s), ${summary.failed} failed`,
+    ),
+  );
+}
+
+export function applyDoctorFixes(checks: DoctorCheck[]): DoctorRepairResult[] {
+  const results: DoctorRepairResult[] = [];
+
+  for (const check of checks) {
+    if (check.status === 'pass' || !check.fix) {
+      continue;
+    }
+
+    try {
+      check.fix();
+      results.push({
+        name: check.name,
+        status: 'applied',
+        description: check.fixDescription,
+      });
+    } catch (error) {
+      results.push({
+        name: check.name,
+        status: 'failed',
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
+  return results;
+}
+
+export async function runDoctorCommand(
+  options: DoctorCommandOptions = {},
+  deps: DoctorCommandDeps = {},
+): Promise<number> {
+  const log = deps.log ?? console.log;
+  const runChecks = deps.runChecks ?? runDoctorChecks;
+  const repairRequested = Boolean(options.fix || options.repair);
+  const checks = await runChecks();
+  const summary = summarizeDoctorChecks(checks);
+
+  let repairResults: DoctorRepairResult[] = [];
+  let postRepairChecks: DoctorCheck[] | undefined;
+  let finalSummary = summary;
+
+  if (repairRequested) {
+    repairResults = applyDoctorFixes(checks);
+    if (repairResults.length > 0) {
+      postRepairChecks = await runChecks();
+      finalSummary = summarizeDoctorChecks(postRepairChecks);
+    }
+  }
+
+  if (options.json) {
+    log(
+      JSON.stringify(
+        {
+          checks: checks.map(serializeDoctorCheck),
+          summary,
+          repairRequested,
+          repairs: repairResults,
+          postRepair: postRepairChecks
+            ? {
+                checks: postRepairChecks.map(serializeDoctorCheck),
+                summary: finalSummary,
+              }
+            : null,
+        },
+        null,
+        2,
+      ),
+    );
+    return finalSummary.failed > 0 ? 1 : 0;
+  }
+
+  log('');
+  log(chalk.bold('  response doctor'));
+  log('');
+  printDoctorChecks(checks, log);
+  printDoctorSummary(summary, log);
+
+  if (!repairRequested) {
+    log('');
+    return summary.failed > 0 ? 1 : 0;
+  }
+
+  if (repairResults.length === 0) {
+    log(chalk.gray('  No auto-fixable issues found.'));
+    log('');
+    return summary.failed > 0 ? 1 : 0;
+  }
+
+  log('');
+  log(chalk.bold('  Applying repairs:'));
+  for (const result of repairResults) {
+    if (result.status === 'applied') {
+      log(chalk.green(`  [FIXED] ${result.name}: ${result.description ?? 'Applied repair'}`));
+    } else {
+      log(chalk.red(`  [ERROR] ${result.name}: ${result.error ?? 'Repair failed'}`));
+    }
+  }
+
+  if (postRepairChecks) {
+    log('');
+    log(chalk.bold('  After repair:'));
+    log('');
+    printDoctorChecks(postRepairChecks, log);
+    printDoctorSummary(finalSummary, log);
+  }
+
+  log('');
+  return finalSummary.failed > 0 ? 1 : 0;
+}
+
 function checkMetricsStorageSize(): DoctorCheck {
   try {
     const metricsDir = `${getStateSetDir()}/metrics`;
@@ -402,7 +588,7 @@ function checkMetricsStorageSize(): DoctorCheck {
       return {
         name: 'Metrics Storage',
         status: 'warn',
-        message: `Metrics directory is ${sizeMb.toFixed(0)}MB. Consider pruning old session metrics.`,
+        message: `Metrics directory is ${sizeMb.toFixed(0)}MB. Consider "response reset metrics --yes".`,
       };
     }
     return {
@@ -422,7 +608,11 @@ function checkSessionIntegrity(): DoctorCheck {
       return {
         name: 'Session Integrity',
         status: 'warn',
-        message: `${stats.emptySessions} empty sessions found. Run "/session cleanup" to remove stale sessions.`,
+        message: `${stats.emptySessions} empty sessions found. Run "response doctor --repair" or "response reset sessions --yes".`,
+        fix: () => {
+          cleanupSessions({ maxAgeDays: 90 });
+        },
+        fixDescription: 'Remove empty sessions older than 90 days',
       };
     }
     return {
@@ -443,48 +633,33 @@ export function registerDoctorCommand(program: Command): void {
   program
     .command('doctor')
     .description('Run pre-flight diagnostics to verify configuration and connectivity')
+    .option('--repair', 'Attempt to repair issues that have a known local fix')
     .option('--fix', 'Attempt to auto-fix issues that have a known fix')
-    .action(async (opts: { fix?: boolean }) => {
-      console.log('');
-      console.log(chalk.bold('  response doctor'));
-      console.log('');
-
-      const checks = await runDoctorChecks();
-
-      for (const check of checks) {
-        console.log(`  ${STATUS_ICONS[check.status]} ${check.message}`);
-      }
-
-      const passed = checks.filter((c) => c.status === 'pass').length;
-      const warnings = checks.filter((c) => c.status === 'warn').length;
-      const failed = checks.filter((c) => c.status === 'fail').length;
-
-      console.log('');
-      console.log(chalk.gray(`  ${passed} passed, ${warnings} warning(s), ${failed} failed`));
-
-      if (opts.fix) {
-        const fixable = checks.filter((c) => c.status !== 'pass' && c.fix);
-        if (fixable.length === 0) {
-          console.log(chalk.gray('  No auto-fixable issues found.'));
-        } else {
-          console.log('');
-          console.log(chalk.bold('  Applying fixes:'));
-          for (const check of fixable) {
-            try {
-              check.fix!();
-              console.log(chalk.green(`  [FIXED] ${check.name}: ${check.fixDescription}`));
-            } catch (e) {
-              console.log(chalk.red(`  [ERROR] ${check.name}: ${getErrorMessage(e)}`));
-            }
-          }
-        }
-      }
-
-      console.log('');
-
-      if (failed > 0) {
+    .option('--json', 'Output diagnostics as JSON')
+    .option('--non-interactive', 'Run without prompts (for automation compatibility)')
+    .addHelpText(
+      'after',
+      [
+        '',
+        'Examples:',
+        '  response doctor',
+        '  response doctor --repair',
+        '  response doctor --json',
+        '',
+      ].join('\n'),
+    )
+    .action(async (opts: DoctorCommandOptions, command: Command) => {
+      try {
+        const exitCode = await runDoctorCommand({
+          fix: Boolean(opts.fix),
+          repair: Boolean(opts.repair),
+          json: Boolean(opts.json) || Boolean(command.parent?.opts()?.json),
+          nonInteractive: Boolean(opts.nonInteractive),
+        });
+        process.exitCode = exitCode;
+      } catch (error) {
+        console.error(chalk.red(`Error: ${getErrorMessage(error)}`));
         process.exitCode = 1;
-        return;
       }
     });
 }

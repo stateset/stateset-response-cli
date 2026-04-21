@@ -149,6 +149,19 @@ describe('EngineClient API methods', () => {
     expect(fetchMock.mock.calls[0][0]).toContain('/health');
   });
 
+  it('healthz(), readyz(), and metrics() call operational endpoints', async () => {
+    await client.healthz();
+    expect(fetchMock.mock.calls[0][0]).toContain('/healthz');
+
+    fetchMock.mockClear();
+    await client.readyz();
+    expect(fetchMock.mock.calls[0][0]).toContain('/readyz');
+
+    fetchMock.mockClear();
+    await client.metrics();
+    expect(fetchMock.mock.calls[0][0]).toContain('/metrics');
+  });
+
   it('listBrands() calls GET /v1/brands', async () => {
     await client.listBrands({ slug: 'acme' });
     expect(fetchMock.mock.calls[0][0]).toContain('/v1/brands?slug=acme');
@@ -178,6 +191,17 @@ describe('EngineClient API methods', () => {
     const opts = fetchMock.mock.calls[0][1];
     expect(opts.method).toBe('POST');
     expect(fetchMock.mock.calls[0][0]).toContain('/v1/workflows/response-automation-v2/start');
+  });
+
+  it('startLegacyResponseWorkflow() calls the legacy response start endpoint', async () => {
+    await client.startLegacyResponseWorkflow({ brand: 'acme', ticket_id: '123' }, 'response-123');
+    const opts = fetchMock.mock.calls[0][1];
+    expect(opts.method).toBe('POST');
+    expect(fetchMock.mock.calls[0][0]).toContain('/v1/workflows/response/start');
+    expect(JSON.parse(String(opts.body))).toEqual({
+      request: { brand: 'acme', ticket_id: '123' },
+      workflow_id: 'response-123',
+    });
   });
 
   it('ingestEvent() includes idempotency-key header', async () => {
@@ -212,6 +236,34 @@ describe('EngineClient API methods', () => {
     expect(fetchMock.mock.calls[0][0]).toContain('/v1/workflows/connector/connector-123/terminate');
   });
 
+  it('routes sandbox agent loop workflows to typed endpoints', async () => {
+    await client.startSandboxAgentLoop({
+      brand_id: '550e8400-e29b-41d4-a716-446655440000',
+      request_id: '550e8400-e29b-41d4-a716-446655440001',
+      loop: { commands: [['echo', 'ok']] },
+    });
+    expect(fetchMock.mock.calls[0][0]).toContain('/v1/workflows/sandbox-agent-loop/start');
+    expect(fetchMock.mock.calls[0][1].method).toBe('POST');
+
+    fetchMock.mockClear();
+    await client.getWorkflowStatusForType('sandbox-agent-123', 'sandbox-agent-loop');
+    expect(fetchMock.mock.calls[0][0]).toContain(
+      '/v1/workflows/sandbox-agent-loop/sandbox-agent-123/status',
+    );
+
+    fetchMock.mockClear();
+    await client.cancelWorkflow('sandbox-agent-123');
+    expect(fetchMock.mock.calls[0][0]).toContain(
+      '/v1/workflows/sandbox-agent-loop/sandbox-agent-123/cancel',
+    );
+
+    fetchMock.mockClear();
+    await client.terminateWorkflow('sandbox-agent-123');
+    expect(fetchMock.mock.calls[0][0]).toContain(
+      '/v1/workflows/sandbox-agent-loop/sandbox-agent-123/terminate',
+    );
+  });
+
   it('reviewWorkflow() routes legacy workflow ids to the signal endpoint', async () => {
     await client.reviewWorkflow('legacy-123', { approved: true });
     expect(fetchMock.mock.calls[0][0]).toContain('/v1/workflows/legacy-123/signal/review');
@@ -238,10 +290,81 @@ describe('EngineClient API methods', () => {
     expect(fetchMock.mock.calls[0][0]).toContain('/v1/brands/brand-1/config-versions?limit=10');
   });
 
+  it('covers the brand billing control-plane routes', async () => {
+    await client.upsertBrandBillingProfile('brand-1', { provider: 'stripe' });
+    expect(fetchMock.mock.calls[0][0]).toContain('/v1/brands/brand-1/billing');
+    expect(fetchMock.mock.calls[0][1].method).toBe('PUT');
+
+    fetchMock.mockClear();
+    await client.syncBrandBillingEvents('brand-1', { limit: 25 });
+    expect(fetchMock.mock.calls[0][0]).toContain('/v1/brands/brand-1/billing/sync');
+    expect(fetchMock.mock.calls[0][1].method).toBe('POST');
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1].body))).toEqual({ limit: 25 });
+
+    fetchMock.mockClear();
+    await client.getBrandBillingContract('brand-1');
+    expect(fetchMock.mock.calls[0][0]).toContain('/v1/brands/brand-1/billing/contract');
+
+    fetchMock.mockClear();
+    await client.upsertBrandBillingContract('brand-1', { rates: [] });
+    expect(fetchMock.mock.calls[0][0]).toContain('/v1/brands/brand-1/billing/contract');
+    expect(fetchMock.mock.calls[0][1].method).toBe('PUT');
+
+    fetchMock.mockClear();
+    await client.listBrandBillingPeriods('brand-1', { status: 'open', limit: 10 });
+    expect(fetchMock.mock.calls[0][0]).toContain(
+      '/v1/brands/brand-1/billing/periods?status=open&limit=10',
+    );
+
+    fetchMock.mockClear();
+    await client.closeBrandBillingPeriod('brand-1', 'period-1');
+    expect(fetchMock.mock.calls[0][0]).toContain(
+      '/v1/brands/brand-1/billing/periods/period-1/close',
+    );
+    expect(fetchMock.mock.calls[0][1].method).toBe('POST');
+
+    fetchMock.mockClear();
+    await client.listBrandRatedOutcomes('brand-1', {
+      ratingKind: 'usage',
+      periodId: 'period-1',
+    });
+    expect(fetchMock.mock.calls[0][0]).toContain(
+      '/v1/brands/brand-1/billing/rated-outcomes?rating_kind=usage&period_id=period-1',
+    );
+
+    fetchMock.mockClear();
+    await client.getBrandBillingReconciliation('brand-1');
+    expect(fetchMock.mock.calls[0][0]).toContain('/v1/brands/brand-1/billing/reconciliation');
+  });
+
   it('listBrandWorkflows() calls GET with query params', async () => {
     await client.listBrandWorkflows('brand-1', { status: 'completed', limit: 5 });
     expect(fetchMock.mock.calls[0][0]).toContain('/v1/brands/brand-1/workflows?status=completed');
     expect(fetchMock.mock.calls[0][0]).toContain('limit=5');
+  });
+
+  it('covers brand outcome list and record routes', async () => {
+    await client.listBrandOutcomes('brand-1', {
+      status: 'confirmed',
+      outcomeType: 'automated_resolution',
+      source: 'workflow',
+      limit: 25,
+    });
+    expect(fetchMock.mock.calls[0][0]).toContain(
+      '/v1/brands/brand-1/outcomes?status=confirmed&outcome_type=automated_resolution&source=workflow&limit=25',
+    );
+
+    fetchMock.mockClear();
+    await client.recordBrandOutcome('brand-1', {
+      outcome_type: 'automated_resolution',
+      status: 'confirmed',
+    });
+    expect(fetchMock.mock.calls[0][0]).toContain('/v1/brands/brand-1/outcomes');
+    expect(fetchMock.mock.calls[0][1].method).toBe('POST');
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1].body))).toEqual({
+      outcome_type: 'automated_resolution',
+      status: 'confirmed',
+    });
   });
 
   it('getDispatchHealthDashboard() calls GET with query params', async () => {

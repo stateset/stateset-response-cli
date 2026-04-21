@@ -1,5 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { readJsonFile as readJsonFileSafe } from '../utils/file-read.js';
+import { ensurePrivateDirectory, writePrivateTextFileSecure } from '../utils/secure-file.js';
 import {
   buildDefaultAutomationConfig,
   buildDefaultManifest,
@@ -13,6 +15,7 @@ import {
 const PRIMARY_WORKFLOW_TYPE = 'response-automation-v2';
 const PRIMARY_TEMPLATE_KEY = 'ResponseAutomationV2';
 const PRIMARY_TASK_QUEUE = 'stateset-response-automation-v2';
+const BRAND_SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 
 type BrandWorkflowBinding = BrandManifest['workflow_bindings'][number];
 
@@ -74,13 +77,37 @@ function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
+export function normalizeBrandSlugOrThrow(value: string): string {
+  const normalized = value.trim();
+  if (!normalized) {
+    throw new Error('Brand slug is required.');
+  }
+  if (!BRAND_SLUG_PATTERN.test(normalized)) {
+    throw new Error('Brand slug must use lowercase letters, numbers, and internal hyphens only.');
+  }
+  return normalized;
+}
+
+export function validateBrandSlug(value: string): true | string {
+  try {
+    normalizeBrandSlugOrThrow(value);
+    return true;
+  } catch (error) {
+    return error instanceof Error ? error.message : 'Invalid brand slug.';
+  }
+}
+
 function readJsonFile<T>(filePath: string): T {
-  return JSON.parse(fs.readFileSync(filePath, 'utf-8')) as T;
+  return readJsonFileSafe(filePath, {
+    label: 'Brand studio file',
+  }) as T;
 }
 
 function writeJsonFile(filePath: string, data: unknown): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+  writePrivateTextFileSecure(filePath, JSON.stringify(data, null, 2) + '\n', {
+    label: 'Brand studio file',
+    atomic: true,
+  });
 }
 
 function arraysEqual(a: unknown, b: unknown): boolean {
@@ -187,8 +214,9 @@ export function getBrandStudioPaths(
   brandSlug: string,
   cwd: string = process.cwd(),
 ): BrandStudioPaths {
+  const normalizedBrandSlug = normalizeBrandSlugOrThrow(brandSlug);
   const statesetDir = path.resolve(cwd, '.stateset');
-  const dir = path.join(statesetDir, brandSlug);
+  const dir = path.join(statesetDir, normalizedBrandSlug);
   return {
     statesetDir,
     dir,
@@ -206,7 +234,7 @@ export function brandStudioExists(brandSlug: string, cwd: string = process.cwd()
 }
 
 export function buildBrandStudioBundle(options: BuildBrandStudioBundleOptions): BrandStudioBundle {
-  const brandSlug = options.brandSlug.trim();
+  const brandSlug = normalizeBrandSlugOrThrow(options.brandSlug);
   const displayName =
     options.displayName?.trim() ||
     options.manifest?.display_name ||
@@ -336,7 +364,10 @@ export function loadBrandStudioBundle(
 }
 
 export function writeBrandStudioBundle(bundle: BrandStudioBundle): string {
-  fs.mkdirSync(bundle.dir, { recursive: true });
+  ensurePrivateDirectory(bundle.dir, {
+    symlinkErrorPrefix: 'Brand studio directory must not be a symlink',
+    nonDirectoryErrorPrefix: 'Brand studio path is not a directory',
+  });
   writeJsonFile(bundle.paths.manifest, bundle.manifest);
   writeJsonFile(bundle.paths.automationConfig, bundle.automationConfig);
   writeJsonFile(bundle.paths.connectors, bundle.connectors);
@@ -422,6 +453,17 @@ export function validateBrandStudioBundle(bundle: BrandStudioBundle): string[] {
 
   if (bundle.rawManifest && !arraysEqual(bundle.rawManifest.connectors ?? [], bundle.connectors)) {
     issues.push('manifest.json connectors are out of sync with connectors.json.');
+  }
+
+  for (const connector of bundle.connectors) {
+    if (connector.direction !== 'inbound' && connector.direction !== 'outbound') {
+      issues.push(
+        `Connector "${connector.connector_key}" direction must be "inbound" or "outbound".`,
+      );
+    }
+    if (!connector.auth?.secret_ref?.startsWith('env://')) {
+      issues.push(`Connector "${connector.connector_key}" auth.secret_ref must use env://VAR.`);
+    }
   }
 
   if (bundle.sourceFiles.connectorsRoot && bundle.sourceFiles.connectorsLegacy) {

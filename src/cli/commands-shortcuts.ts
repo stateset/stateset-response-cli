@@ -441,7 +441,6 @@ export function registerShortcutTopLevelCommands(program: Command): void {
     .option('--status <status>', 'Filter evals by status')
     .option('--name <name>', 'Eval name')
     .option('--type <type>', 'Eval type')
-    .option('--status <status>', 'Eval status')
     .option('--response-id <id>', 'Associated response ID')
     .option('--ticket-id <id>', 'Associated ticket ID')
     .option('--description <text>', 'Eval description')
@@ -484,7 +483,6 @@ export function registerShortcutTopLevelCommands(program: Command): void {
           if (opts.status) forwarded.push('--status', opts.status);
           if (opts.name) forwarded.push('--name', opts.name);
           if (opts.type) forwarded.push('--type', opts.type);
-          if (opts.status) forwarded.push('--status', opts.status);
           if (opts.responseId) forwarded.push('--response-id', opts.responseId);
           if (opts.ticketId) forwarded.push('--ticket-id', opts.ticketId);
           if (opts.description) forwarded.push('--description', opts.description);

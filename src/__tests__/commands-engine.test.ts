@@ -94,6 +94,81 @@ vi.mock('../lib/engine-client.js', () => {
           ...patch,
         })),
       getBrandConfig: vi.fn().mockResolvedValue({ config_version: 4 }),
+      getBrandBillingState: vi.fn().mockResolvedValue({
+        profile: {
+          provider: 'stripe',
+          pricing_model: 'outcomes',
+          default_currency: 'USD',
+          enabled: true,
+        },
+        summary: {
+          pending_events: 1,
+          failed_events: 0,
+          sent_events: 5,
+          pending_billable_outcomes: 2,
+          last_sent_at: '2026-04-07T12:00:00Z',
+        },
+        forecast: {
+          currency: 'USD',
+          estimated_total_minor: 3200,
+          period_start: '2026-04-01T00:00:00Z',
+          period_end: '2026-04-30T23:59:59Z',
+          line_items: [],
+        },
+      }),
+      getBrandOutcomeSummary: vi.fn().mockResolvedValue({
+        brand_id: '12345678-abcd',
+        window: {
+          from: '2026-04-01T00:00:00Z',
+          to: '2026-04-30T23:59:59Z',
+        },
+        total_count: 8,
+        confirmed_count: 7,
+        billable_count: 5,
+        total_quantity: 8,
+        values: [
+          {
+            currency: 'USD',
+            total_value_minor: 12000,
+            confirmed_value_minor: 11000,
+            billable_value_minor: 9000,
+          },
+        ],
+        by_type: [
+          {
+            outcome_type: 'automated_resolution',
+            total_count: 5,
+            confirmed_count: 5,
+            billable_count: 5,
+            total_quantity: 5,
+            values: [
+              {
+                currency: 'USD',
+                total_value_minor: 9000,
+                confirmed_value_minor: 9000,
+                billable_value_minor: 9000,
+              },
+            ],
+          },
+        ],
+      }),
+      listBrandOutcomes: vi.fn().mockResolvedValue({
+        items: [
+          {
+            id: 'outcome-1',
+            outcome_type: 'automated_resolution',
+            status: 'confirmed',
+            source: 'workflow',
+            channel: 'email',
+            quantity: 1,
+            value_minor: 9000,
+            currency: 'USD',
+            billable: true,
+            occurred_at: '2026-04-15T12:00:00Z',
+          },
+        ],
+      }),
+      recordBrandOutcome: vi.fn().mockResolvedValue({ id: 'outcome-2' }),
       listBrandConfigVersions: vi.fn().mockResolvedValue({
         items: [{ version: 4, status: 'active', is_active: true, published_at: null }],
       }),
@@ -132,6 +207,7 @@ vi.mock('../lib/engine-client.js', () => {
         ],
       }),
       createConnector: vi.fn().mockResolvedValue({ id: 'connector-2' }),
+      replaceConnectors: vi.fn().mockResolvedValue({ items: [] }),
       checkConnectorHealth: vi.fn().mockResolvedValue({ ok: true }),
       ingestEvent: vi.fn().mockResolvedValue({ workflow_id: 'rav2-123', status: 'accepted' }),
       getWorkflowStatusForType: vi.fn().mockResolvedValue({ status: 'completed' }),
@@ -241,6 +317,31 @@ vi.mock('../lib/workflow-studio-platform-sync.js', () => ({
   })),
 }));
 
+vi.mock('../lib/workflow-studio-feedback-store.js', () => ({
+  syncWorkflowStudioFeedbackFromGorgias: vi.fn(async () => ({
+    brandSlug: 'ecoriginals-au',
+    provider: 'gorgias',
+    storeDir: '/tmp/.stateset/feedback/ecoriginals-au',
+    syncedAt: '2026-04-14T00:00:00.000Z',
+    ticketsScanned: 12,
+    ticketsUpserted: 3,
+    responsesUpserted: 5,
+    pagesFetched: 1,
+    newestTicketUpdatedAt: '2026-04-14T00:00:00.000Z',
+  })),
+  syncWorkflowStudioFeedbackFromZendesk: vi.fn(async () => ({
+    brandSlug: 'ecoriginals-au',
+    provider: 'zendesk',
+    storeDir: '/tmp/.stateset/feedback-zendesk/ecoriginals-au',
+    syncedAt: '2026-04-14T00:00:00.000Z',
+    ticketsScanned: 18,
+    ticketsUpserted: 4,
+    responsesUpserted: 6,
+    pagesFetched: 2,
+    newestTicketUpdatedAt: '2026-04-14T00:00:00.000Z',
+  })),
+}));
+
 import { handleEngineCommand, handleWorkflowsCommand } from '../cli/commands-engine.js';
 import { getWorkflowEngineConfig } from '../config.js';
 import { EngineClient } from '../lib/engine-client.js';
@@ -256,6 +357,11 @@ import {
   buildPlatformConnectorSyncPlanFromCredentials,
   fetchCurrentOrgPlatformConnectorCredentials,
 } from '../lib/workflow-studio-platform-sync.js';
+import { buildBrandStudioBundle, writeBrandStudioBundle } from '../lib/brand-studio.js';
+import {
+  syncWorkflowStudioFeedbackFromGorgias,
+  syncWorkflowStudioFeedbackFromZendesk,
+} from '../lib/workflow-studio-feedback-store.js';
 
 function makeJsonFile(data: Record<string, unknown>): string {
   const filePath = path.join(
@@ -263,6 +369,14 @@ function makeJsonFile(data: Record<string, unknown>): string {
     `stateset-engine-test-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.json`,
   );
   fs.writeFileSync(filePath, JSON.stringify(data), 'utf-8');
+  return filePath;
+}
+
+function makeTextFile(name: string, content: string, rootDir?: string): string {
+  const dir = rootDir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'stateset-engine-text-'));
+  const filePath = path.join(dir, name);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, content, 'utf-8');
   return filePath;
 }
 
@@ -299,6 +413,11 @@ describe('handleEngineCommand', () => {
     vi.mocked(EngineClient).mockClear();
     vi.mocked(spawnSync).mockClear();
     vi.mocked(spawnSync).mockReturnValue({ status: 0 } as never);
+    vi.mocked(pullBrandStudioConfig).mockClear();
+    vi.mocked(pushBrandStudioConfig).mockClear();
+    vi.mocked(validateBrandStudioConfig).mockClear();
+    vi.mocked(syncWorkflowStudioFeedbackFromGorgias).mockClear();
+    vi.mocked(syncWorkflowStudioFeedbackFromZendesk).mockClear();
     vi.spyOn(console, 'log').mockImplementation(() => {});
   });
 
@@ -669,12 +788,14 @@ describe('handleEngineCommand', () => {
     expect(result.handled).toBe(true);
     const client = latestEngineClientMock();
     expect(fetchCurrentOrgPlatformConnectorCredentials).toHaveBeenCalled();
-    expect(client.createConnector).toHaveBeenCalledWith(
+    expect(client.replaceConnectors).toHaveBeenCalledWith(
       '12345678-abcd',
-      expect.objectContaining({
-        connector_key: 'shopify-primary',
-        connector_type: 'shopify',
-      }),
+      expect.arrayContaining([
+        expect.objectContaining({
+          connector_key: 'shopify-primary',
+          connector_type: 'shopify',
+        }),
+      ]),
     );
   });
 
@@ -697,6 +818,85 @@ describe('handleEngineCommand', () => {
     });
     const result = await handleEngineCommand('/engine validate acme', makeMockCtx());
     expect(result.handled).toBe(true);
+  });
+
+  it('handles /engine billing', async () => {
+    vi.mocked(getWorkflowEngineConfig).mockReturnValue({
+      url: 'http://localhost:8080',
+      apiKey: 'test-key',
+    });
+    const result = await handleEngineCommand('/engine billing acme', makeMockCtx());
+    expect(result.handled).toBe(true);
+    const client = latestEngineClientMock();
+    expect(client.getBrandBillingState).toHaveBeenCalledWith('12345678-abcd');
+  });
+
+  it('handles /engine outcomes with filters', async () => {
+    vi.mocked(getWorkflowEngineConfig).mockReturnValue({
+      url: 'http://localhost:8080',
+      apiKey: 'test-key',
+    });
+    const result = await handleEngineCommand(
+      '/engine outcomes acme --status confirmed --outcome-type automated_resolution --source workflow --from 2026-04-01T00:00:00Z --to 2026-04-30T23:59:59Z',
+      makeMockCtx(),
+    );
+    expect(result.handled).toBe(true);
+    const client = latestEngineClientMock();
+    expect(client.getBrandOutcomeSummary).toHaveBeenCalledWith('12345678-abcd', {
+      status: 'confirmed',
+      outcomeType: 'automated_resolution',
+      source: 'workflow',
+      from: '2026-04-01T00:00:00Z',
+      to: '2026-04-30T23:59:59Z',
+    });
+  });
+
+  it('handles /engine outcomes list with filters', async () => {
+    vi.mocked(getWorkflowEngineConfig).mockReturnValue({
+      url: 'http://localhost:8080',
+      apiKey: 'test-key',
+    });
+    const result = await handleEngineCommand(
+      '/engine outcomes list acme --status confirmed --outcome-type automated_resolution --source workflow --limit 25 --offset 5',
+      makeMockCtx(),
+    );
+    expect(result.handled).toBe(true);
+    const client = latestEngineClientMock();
+    expect(client.listBrandOutcomes).toHaveBeenCalledWith('12345678-abcd', {
+      status: 'confirmed',
+      outcomeType: 'automated_resolution',
+      source: 'workflow',
+      from: undefined,
+      to: undefined,
+      limit: 25,
+      offset: 5,
+    });
+  });
+
+  it('handles /engine outcomes record from file', async () => {
+    vi.mocked(getWorkflowEngineConfig).mockReturnValue({
+      url: 'http://localhost:8080',
+      apiKey: 'test-key',
+    });
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'stateset-outcome-'));
+    const filePath = path.join(cwd, 'outcome.json');
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify({ outcome_type: 'automated_resolution', status: 'confirmed' }),
+      'utf-8',
+    );
+
+    const result = await handleEngineCommand(
+      '/engine outcomes record acme outcome.json',
+      makeMockCtx(cwd),
+    );
+
+    expect(result.handled).toBe(true);
+    const client = latestEngineClientMock();
+    expect(client.recordBrandOutcome).toHaveBeenCalledWith('12345678-abcd', {
+      outcome_type: 'automated_resolution',
+      status: 'confirmed',
+    });
   });
 
   it('handles /engine config show', async () => {
@@ -726,6 +926,54 @@ describe('handleEngineCommand', () => {
       makeMockCtx(),
     );
     expect(result.handled).toBe(true);
+    expect(latestEngineClientMock().createConnector).toHaveBeenCalledWith(
+      '12345678-abcd',
+      expect.objectContaining({
+        connector_key: 'shopify-primary',
+        connector_type: 'shopify',
+        direction: 'outbound',
+        target: { base_url: 'https://acme.myshopify.com' },
+        auth: { secret_ref: 'env://ACME_SHOPIFY_ACCESS_TOKEN' },
+        enabled: true,
+      }),
+    );
+  });
+
+  it('rejects legacy /engine connectors create payloads locally', async () => {
+    vi.mocked(getWorkflowEngineConfig).mockReturnValue({
+      url: 'http://localhost:8080',
+      apiKey: 'test-key',
+    });
+    const filePath = makeJsonFile({
+      connector_type: 'shopify',
+      config: { base_url: 'https://acme.myshopify.com' },
+    });
+    const result = await handleEngineCommand(
+      `/engine connectors acme create ${filePath}`,
+      makeMockCtx(),
+    );
+    expect(result.handled).toBe(true);
+    expect(latestEngineClientMock().createConnector).not.toHaveBeenCalled();
+  });
+
+  it('rejects non-env connector secret refs locally', async () => {
+    vi.mocked(getWorkflowEngineConfig).mockReturnValue({
+      url: 'http://localhost:8080',
+      apiKey: 'test-key',
+    });
+    const filePath = makeJsonFile({
+      connector_key: 'shopify-primary',
+      connector_type: 'shopify',
+      direction: 'outbound',
+      target: { base_url: 'https://acme.myshopify.com' },
+      auth: { secret_ref: 'file:///tmp/token' },
+    });
+    const result = await handleEngineCommand(
+      `/engine connectors acme create ${filePath}`,
+      makeMockCtx(),
+    );
+    expect(result.handled).toBe(true);
+    expect(latestEngineClientMock().createConnector).not.toHaveBeenCalled();
   });
 
   it('handles /engine connectors plan', async () => {
@@ -819,6 +1067,198 @@ describe('handleEngineCommand', () => {
     expect(result.handled).toBe(true);
   });
 
+  it('handles /engine analyze against local exports', async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'stateset-engine-analyze-'));
+    const sourceDir = path.join(cwd, 'ecoriginals');
+    const outDir = path.join(cwd, 'analysis-output');
+    const ticketHeader =
+      'Ticket id,Tags,Initial channel,Priority,Last used integration name,Last used integration type,Created by an agent,Subject,Creation date,Closed date,Survey score,Survey replied date,Assignee name,Assignee email,Customer email,Customer name,First response time (s),Resolution time (s),Number of agent messages,Number of customer messages,Ticket URL,Ticket Field: AI Intent,Ticket Field: Brand,Ticket Field: Customer Type,Ticket Field: Type,Ticket Field: AI Agent Outcome,Ticket Field: AI Agent Sales Opportunity,Ticket Field: AI Agent Sales Discount,Ticket Field: Managed sentiment,Ticket Field: Call status,Customer Field: Customer Type';
+    const responseHeader = 'Date,Channel,Customer Message,Response,Rating,Ticket ID,Handled By';
+
+    makeTextFile(
+      'tickets/tickets.csv',
+      [
+        ticketHeader,
+        '1001,"agent-take-over,Ecoriginals AU",email,normal,Customer service EO,outlook,False,Cancel my subscription,2026-04-14 10:00:00,,,,Elle,response@stateset.io,one@example.com,One Customer,205,800,2,2,https://example.com/tickets/1001,Subscription::Cancel::Other,Ecoriginals - AU,Retail::Retail Subscription,Account Management::Cancellation,,,,,,',
+        '1002,"auto-close,Ecoriginals AU,non-support-related,wholesale",email,normal,Sales Team Ecoriginals,outlook,False,Expo calendar,2026-04-14 10:10:00,,,,,sales@example.com,Wholesale Lead,0,1,0,1,https://example.com/tickets/1002,Other::No Reply::Other,Ecoriginals - AU,Wholesale,Other::No Reply::Other,,,,,,',
+      ].join('\n'),
+      sourceDir,
+    );
+    makeTextFile(
+      'responses-page-export.csv',
+      [
+        responseHeader,
+        '"Apr 14, 10:15 AM","email","Customer asked to cancel.","We can help with that.","positive","1001","Elle"',
+        '"Apr 14, 10:17 AM","email","Can we sell through your channel?","Thanks for reaching out.","","1002","Elle"',
+      ].join('\n'),
+      sourceDir,
+    );
+
+    const result = await handleEngineCommand(
+      `/engine analyze ecoriginals-au --source ${sourceDir} --out ${outDir}`,
+      makeMockCtx(cwd),
+    );
+    expect(result.handled).toBe(true);
+    expect(fs.existsSync(path.join(outDir, 'feedback-analysis.json'))).toBe(true);
+    expect(fs.existsSync(path.join(outDir, 'config-proposal.json'))).toBe(true);
+    expect(fs.existsSync(path.join(outDir, 'feedback-summary.md'))).toBe(true);
+  });
+
+  it('handles /engine feedback-sync', async () => {
+    const result = await handleEngineCommand(
+      '/engine feedback-sync ecoriginals-au --limit 25 --max-pages 2',
+      makeMockCtx('/tmp/project'),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(vi.mocked(syncWorkflowStudioFeedbackFromGorgias)).toHaveBeenCalledWith({
+      brandRef: 'ecoriginals-au',
+      cwd: '/tmp/project',
+      pageLimit: 25,
+      maxPages: 2,
+    });
+  });
+
+  it('handles /engine feedback-sync for zendesk', async () => {
+    const result = await handleEngineCommand(
+      '/engine feedback-sync ecoriginals-au --provider zendesk --max-pages 3 --since-days 14',
+      makeMockCtx('/tmp/project'),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(vi.mocked(syncWorkflowStudioFeedbackFromZendesk)).toHaveBeenCalledWith({
+      brandRef: 'ecoriginals-au',
+      cwd: '/tmp/project',
+      pageLimit: undefined,
+      maxPages: 3,
+      sinceDays: 14,
+    });
+  });
+
+  it('applies analyze proposals into the local brand bundle', async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'stateset-engine-analyze-apply-'));
+    const sourceDir = path.join(cwd, 'ecoriginals');
+    const outDir = path.join(cwd, 'analysis-output');
+    const ticketHeader =
+      'Ticket id,Tags,Initial channel,Priority,Last used integration name,Last used integration type,Created by an agent,Subject,Creation date,Closed date,Survey score,Survey replied date,Assignee name,Assignee email,Customer email,Customer name,First response time (s),Resolution time (s),Number of agent messages,Number of customer messages,Ticket URL,Ticket Field: AI Intent,Ticket Field: Brand,Ticket Field: Customer Type,Ticket Field: Type,Ticket Field: AI Agent Outcome,Ticket Field: AI Agent Sales Opportunity,Ticket Field: AI Agent Sales Discount,Ticket Field: Managed sentiment,Ticket Field: Call status,Customer Field: Customer Type';
+    const responseHeader = 'Date,Channel,Customer Message,Response,Rating,Ticket ID,Handled By';
+
+    writeBrandStudioBundle(
+      buildBrandStudioBundle({
+        brandSlug: 'ecoriginals-au',
+        cwd,
+        displayName: 'Ecoriginals AU',
+      }),
+    );
+
+    makeTextFile(
+      'tickets/tickets.csv',
+      [
+        ticketHeader,
+        '1001,"agent-take-over,Ecoriginals AU",email,normal,Customer service EO,outlook,False,Cancel my subscription,2026-04-14 10:00:00,,,,Elle,response@stateset.io,one@example.com,One Customer,205,800,2,2,https://example.com/tickets/1001,Subscription::Cancel::Other,Ecoriginals - AU,Retail::Retail Subscription,Account Management::Cancellation,,,,,,',
+        '1002,"agent-take-over,Ecoriginals AU",email,normal,Customer service EO,outlook,False,Need to stop my plan,2026-04-14 10:05:00,,,,Elle,response@stateset.io,two@example.com,Two Customer,210,900,2,2,https://example.com/tickets/1002,Subscription::Cancel::Other,Ecoriginals - AU,Retail::Retail Subscription,Account Management::Cancellation,,,,,,',
+        '1003,"auto-close,Ecoriginals AU,non-support-related,wholesale",email,normal,Sales Team Ecoriginals,outlook,False,Expo calendar,2026-04-14 10:10:00,,,,Sales Team,sales@example.com,lead@example.com,Wholesale Lead,0,1,0,1,https://example.com/tickets/1003,Other::No Reply::Other,Ecoriginals - AU,Wholesale,Other::No Reply::Other,,,,,,',
+      ].join('\n'),
+      sourceDir,
+    );
+    makeTextFile(
+      'responses-page-export.csv',
+      [
+        responseHeader,
+        '"Apr 14, 10:15 AM","email","Customer asked to cancel.","We can help with that. If this message was meant for another brand, please let us know.","positive","1001","Elle"',
+        '"Apr 14, 10:16 AM","email","Please stop my subscription.","We have cancelled the next shipment.","positive","1002","Elle"',
+        '"Apr 14, 10:17 AM","email","Can we sell through your channel?","Thanks for reaching out.","","1003","Elle"',
+      ].join('\n'),
+      sourceDir,
+    );
+
+    const result = await handleEngineCommand(
+      `/engine analyze ecoriginals-au --source ${sourceDir} --out ${outDir} --apply`,
+      makeMockCtx(cwd),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(vi.mocked(pushBrandStudioConfig)).not.toHaveBeenCalled();
+
+    const automationConfig = JSON.parse(
+      fs.readFileSync(
+        path.join(cwd, '.stateset', 'ecoriginals-au', 'automation-config.json'),
+        'utf-8',
+      ),
+    ) as {
+      system_prompt_template: string;
+      classification: {
+        enabled: boolean;
+        phases: Array<{ labels?: string[]; gate_labels?: string[] }>;
+      };
+    };
+    const skipRules = JSON.parse(
+      fs.readFileSync(
+        path.join(cwd, '.stateset', 'ecoriginals-au', 'rules', 'skip-rules.json'),
+        'utf-8',
+      ),
+    ) as Array<{ rule_type: string; params?: { match_any?: string[] } }>;
+
+    expect(automationConfig.system_prompt_template).toContain('non-support traffic');
+    expect(automationConfig.system_prompt_template).toContain('another brand');
+    expect(automationConfig.classification.enabled).toBe(true);
+    expect(automationConfig.classification.phases[0]?.labels).toContain(
+      'Subscription::Cancel::Other',
+    );
+    expect(automationConfig.classification.phases[0]?.gate_labels).toContain(
+      'Subscription::Cancel::Other',
+    );
+    expect(skipRules[skipRules.length - 1]).toEqual(
+      expect.objectContaining({
+        rule_type: 'tag_filter',
+        params: expect.objectContaining({
+          match_any: expect.arrayContaining(['non-support-related']),
+        }),
+      }),
+    );
+  });
+
+  it('pushes after applying analyze proposals when requested', async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'stateset-engine-analyze-push-'));
+    const sourceDir = path.join(cwd, 'ecoriginals');
+    const ticketHeader =
+      'Ticket id,Tags,Initial channel,Priority,Last used integration name,Last used integration type,Created by an agent,Subject,Creation date,Closed date,Survey score,Survey replied date,Assignee name,Assignee email,Customer email,Customer name,First response time (s),Resolution time (s),Number of agent messages,Number of customer messages,Ticket URL,Ticket Field: AI Intent,Ticket Field: Brand,Ticket Field: Customer Type,Ticket Field: Type,Ticket Field: AI Agent Outcome,Ticket Field: AI Agent Sales Opportunity,Ticket Field: AI Agent Sales Discount,Ticket Field: Managed sentiment,Ticket Field: Call status,Customer Field: Customer Type';
+    const responseHeader = 'Date,Channel,Customer Message,Response,Rating,Ticket ID,Handled By';
+
+    writeBrandStudioBundle(
+      buildBrandStudioBundle({
+        brandSlug: 'ecoriginals-au',
+        cwd,
+        displayName: 'Ecoriginals AU',
+      }),
+    );
+
+    makeTextFile(
+      'tickets/tickets.csv',
+      [
+        ticketHeader,
+        '1001,"agent-take-over,Ecoriginals AU",email,normal,Customer service EO,outlook,False,Cancel my subscription,2026-04-14 10:00:00,,,,Elle,response@stateset.io,one@example.com,One Customer,205,800,2,2,https://example.com/tickets/1001,Subscription::Cancel::Other,Ecoriginals - AU,Retail::Retail Subscription,Account Management::Cancellation,,,,,,',
+      ].join('\n'),
+      sourceDir,
+    );
+    makeTextFile(
+      'responses-page-export.csv',
+      [
+        responseHeader,
+        '"Apr 14, 10:15 AM","email","Customer asked to cancel.","We can help with that.","positive","1001","Elle"',
+      ].join('\n'),
+      sourceDir,
+    );
+
+    const result = await handleEngineCommand(
+      `/engine analyze ecoriginals-au --source ${sourceDir} --push`,
+      makeMockCtx(cwd),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(vi.mocked(pushBrandStudioConfig)).toHaveBeenCalledWith('ecoriginals-au', cwd);
+  });
+
   it('handles /engine event', async () => {
     vi.mocked(getWorkflowEngineConfig).mockReturnValue({
       url: 'http://localhost:8080',
@@ -880,6 +1320,30 @@ describe('handleEngineCommand', () => {
     });
     const result = await handleEngineCommand(`/engine templates create ${filePath}`, makeMockCtx());
     expect(result.handled).toBe(true);
+    expect(latestEngineClientMock().createWorkflowTemplate).toHaveBeenCalledWith({
+      template_key: 'ResponseAutomationV2',
+      version: 1,
+      workflow_type: 'response-automation-v2',
+      runtime_target: 'temporal-rs',
+      schema: {},
+      determinism_contract: {},
+    });
+  });
+
+  it('rejects legacy /engine templates create payloads locally', async () => {
+    vi.mocked(getWorkflowEngineConfig).mockReturnValue({
+      url: 'http://localhost:8080',
+      apiKey: 'test-key',
+    });
+    const filePath = makeJsonFile({
+      template_key: 'ResponseAutomationV2',
+      workflow_type: 'response-automation-v2',
+      name: 'Response Automation',
+      config: {},
+    });
+    const result = await handleEngineCommand(`/engine templates create ${filePath}`, makeMockCtx());
+    expect(result.handled).toBe(true);
+    expect(latestEngineClientMock().createWorkflowTemplate).not.toHaveBeenCalled();
   });
 
   it('handles /engine templates update', async () => {
@@ -910,6 +1374,29 @@ describe('handleEngineCommand', () => {
       makeMockCtx(),
     );
     expect(result.handled).toBe(true);
+    expect(latestEngineClientMock().createPolicySet).toHaveBeenCalledWith({
+      policy_set_key: 'default',
+      version: 1,
+      definition: {},
+    });
+  });
+
+  it('rejects legacy /engine policy-sets create payloads locally', async () => {
+    vi.mocked(getWorkflowEngineConfig).mockReturnValue({
+      url: 'http://localhost:8080',
+      apiKey: 'test-key',
+    });
+    const filePath = makeJsonFile({
+      policy_set_key: 'default',
+      name: 'Default',
+      policies: {},
+    });
+    const result = await handleEngineCommand(
+      `/engine policy-sets create ${filePath}`,
+      makeMockCtx(),
+    );
+    expect(result.handled).toBe(true);
+    expect(latestEngineClientMock().createPolicySet).not.toHaveBeenCalled();
   });
 
   it('handles /engine policy-sets update', async () => {

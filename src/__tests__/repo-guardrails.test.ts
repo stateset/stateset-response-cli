@@ -14,6 +14,14 @@ function loadPackageVersion(): string {
   return String(pkg.version || '').trim();
 }
 
+function loadPackageJson(): { version?: string; scripts?: Record<string, string> } {
+  const pkgPath = path.join(REPO_ROOT, 'package.json');
+  return JSON.parse(fs.readFileSync(pkgPath, 'utf-8')) as {
+    version?: string;
+    scripts?: Record<string, string>;
+  };
+}
+
 function runNodeScript(
   args: string[],
   options: {
@@ -80,8 +88,8 @@ describe('check-readme-sync.mjs', () => {
   it('passes against the repository README', () => {
     const result = runNodeScript([
       '--no-warnings',
-      '--import',
-      'tsx/esm',
+      '--loader',
+      'tsx',
       'scripts/check-readme-sync.mjs',
       '--check',
     ]);
@@ -119,7 +127,7 @@ describe('check-readme-sync.mjs', () => {
     );
 
     const writeResult = runNodeScript(
-      ['--no-warnings', '--import', 'tsx/esm', 'scripts/check-readme-sync.mjs', '--write'],
+      ['--no-warnings', '--loader', 'tsx', 'scripts/check-readme-sync.mjs', '--write'],
       {
         env: {
           STATESET_PACKAGE_PATH: tempPackagePath,
@@ -135,7 +143,7 @@ describe('check-readme-sync.mjs', () => {
     expect(updatedReadme).toContain('/policy export [local|global] [out=path] [--unsafe-path]');
 
     const checkResult = runNodeScript(
-      ['--no-warnings', '--import', 'tsx/esm', 'scripts/check-readme-sync.mjs', '--check'],
+      ['--no-warnings', '--loader', 'tsx', 'scripts/check-readme-sync.mjs', '--check'],
       {
         env: {
           STATESET_PACKAGE_PATH: tempPackagePath,
@@ -145,5 +153,118 @@ describe('check-readme-sync.mjs', () => {
     );
 
     expect(checkResult.status).toBe(0);
+  });
+});
+
+describe('check-engine-contract-parity.mjs', () => {
+  it('passes when reusable Rust routes are represented by the engine client', () => {
+    const tempDir = createTempDir();
+    const rustMainPath = path.join(tempDir, 'main.rs');
+    const clientPath = path.join(tempDir, 'engine-client.ts');
+
+    fs.writeFileSync(
+      rustMainPath,
+      [
+        'let app = Router::new()',
+        '    .route("/health", get(health))',
+        '    .route("/v1/brands/{brand_id}/billing", get(cp_get).put(cp_put))',
+        '    .route("/v1/workflows/{workflow_id}/events", get(stream_workflow_events))',
+        '    .route("/v1/brands/yse-beauty/tickets", post(start_yse_beauty_workflow));',
+      ].join('\n'),
+      'utf-8',
+    );
+    fs.writeFileSync(
+      clientPath,
+      [
+        "return this.fetchWithRetry('/health');",
+        'return this.request(`/v1/brands/${brandId}/billing`, { method: "PUT" });',
+        "return this.fetchWithRetry(`/v1/brands/${brandId}/config-versions${qs ? `?${qs}` : ''}`);",
+      ].join('\n'),
+      'utf-8',
+    );
+
+    const result = runNodeScript(['scripts/check-engine-contract-parity.mjs', '--strict'], {
+      env: {
+        STATESET_ENGINE_API_MAIN: rustMainPath,
+        STATESET_ENGINE_CLIENT_PATH: clientPath,
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('Engine contract parity check passed');
+  });
+
+  it('rejects reusable Rust routes that are missing from the engine client', () => {
+    const tempDir = createTempDir();
+    const rustMainPath = path.join(tempDir, 'main.rs');
+    const clientPath = path.join(tempDir, 'engine-client.ts');
+
+    fs.writeFileSync(
+      rustMainPath,
+      [
+        'let app = Router::new()',
+        '    .route("/health", get(health))',
+        '    .route("/readyz", get(readyz));',
+      ].join('\n'),
+      'utf-8',
+    );
+    fs.writeFileSync(clientPath, "return this.fetchWithRetry('/health');", 'utf-8');
+
+    const result = runNodeScript(['scripts/check-engine-contract-parity.mjs', '--strict'], {
+      env: {
+        STATESET_ENGINE_API_MAIN: rustMainPath,
+        STATESET_ENGINE_CLIENT_PATH: clientPath,
+      },
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('/readyz');
+  });
+});
+
+describe('dist CLI guardrails', () => {
+  it('keeps built top-level command modules aligned with src/cli.ts', () => {
+    const srcCliPath = path.join(REPO_ROOT, 'src', 'cli.ts');
+    const distCliPath = path.join(REPO_ROOT, 'dist', 'cli.js');
+    const srcCli = fs.readFileSync(srcCliPath, 'utf-8');
+    const distCli = fs.readFileSync(distCliPath, 'utf-8');
+
+    const expectedModules = [
+      {
+        importPath: './cli/commands-dashboard.js',
+        distFile: path.join(REPO_ROOT, 'dist', 'cli', 'commands-dashboard.js'),
+        registerCall: 'registerDashboardCommand(program)',
+      },
+      {
+        importPath: './cli/commands-reset.js',
+        distFile: path.join(REPO_ROOT, 'dist', 'cli', 'commands-reset.js'),
+        registerCall: 'registerResetCommand(program)',
+      },
+      {
+        importPath: './cli/commands-update.js',
+        distFile: path.join(REPO_ROOT, 'dist', 'cli', 'commands-update.js'),
+        registerCall: "registerUpdateCommand(program, pkg.version || '0.0.0')",
+      },
+    ];
+
+    for (const expected of expectedModules) {
+      expect(srcCli).toContain(expected.importPath);
+      expect(srcCli).toContain(expected.registerCall);
+      expect(fs.existsSync(expected.distFile)).toBe(true);
+      expect(distCli).toContain(expected.importPath);
+      expect(distCli).toContain(expected.registerCall);
+    }
+  });
+});
+
+describe('release verification guardrails', () => {
+  it('defines a release verification script that rebuilds, smoke-tests, and dry-runs the package', () => {
+    const pkg = loadPackageJson();
+    const script = pkg.scripts?.['release:verify'];
+
+    expect(script).toBeTruthy();
+    expect(script).toContain('npm run build');
+    expect(script).toContain('npm run smoke:bins');
+    expect(script).toContain('npm pack --dry-run');
   });
 });

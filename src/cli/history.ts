@@ -1,21 +1,31 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
 import { writePrivateTextFile } from './utils.js';
 import { appendLineSecure, ensurePrivateDirectory } from '../utils/secure-file.js';
+import { readTextFile } from '../utils/file-read.js';
+import { getStateSetDir } from '../session.js';
 
-const HISTORY_DIR = path.join(os.homedir(), '.stateset');
-const HISTORY_FILE = path.join(HISTORY_DIR, 'input-history');
 const MAX_HISTORY_LINES = 500;
 
+function getHistoryDirPath(): string {
+  return getStateSetDir();
+}
+
+function resolveHistoryFilePath(): string {
+  return path.join(getHistoryDirPath(), 'input-history');
+}
+
 /**
- * Load input history from ~/.stateset/input-history.
+ * Load input history from the active CLI state directory.
  * Returns the most recent entries (one per line), newest last.
  */
 export function loadInputHistory(): string[] {
   try {
-    if (!fs.existsSync(HISTORY_FILE)) return [];
-    const content = fs.readFileSync(HISTORY_FILE, 'utf-8');
+    const historyFile = resolveHistoryFilePath();
+    if (!fs.existsSync(historyFile)) return [];
+    const content = readTextFile(historyFile, {
+      label: 'input history',
+    });
     const lines = content.split('\n').filter(Boolean);
     return lines.slice(-MAX_HISTORY_LINES);
   } catch {
@@ -35,11 +45,13 @@ export function appendHistoryLine(line: string): void {
   }
 
   try {
-    ensurePrivateDirectory(HISTORY_DIR, {
+    const historyDir = getHistoryDirPath();
+    const historyFile = resolveHistoryFilePath();
+    ensurePrivateDirectory(historyDir, {
       symlinkErrorPrefix: 'Refusing to use symlinked history directory',
       nonDirectoryErrorPrefix: 'History directory path is not a directory',
     });
-    appendLineSecure(HISTORY_FILE, trimmed + '\n', {
+    appendLineSecure(historyFile, trimmed + '\n', {
       symlinkErrorPrefix: 'Refusing to append to symlinked history file',
       nonRegularFileErrorPrefix: 'Refusing to append history to non-regular file',
     });
@@ -54,12 +66,15 @@ export function appendHistoryLine(line: string): void {
  */
 export function trimHistoryFile(): void {
   try {
-    if (!fs.existsSync(HISTORY_FILE)) return;
-    const content = fs.readFileSync(HISTORY_FILE, 'utf-8');
+    const historyFile = resolveHistoryFilePath();
+    if (!fs.existsSync(historyFile)) return;
+    const content = readTextFile(historyFile, {
+      label: 'input history',
+    });
     const lines = content.split('\n').filter(Boolean);
     if (lines.length <= MAX_HISTORY_LINES) return;
     const trimmed = lines.slice(-MAX_HISTORY_LINES);
-    writePrivateTextFile(HISTORY_FILE, trimmed.join('\n') + '\n', {
+    writePrivateTextFile(historyFile, trimmed.join('\n') + '\n', {
       label: 'Input history path',
       atomic: true,
     });
@@ -70,5 +85,5 @@ export function trimHistoryFile(): void {
 
 /** Returns the path to the history file (for testing). */
 export function getHistoryFilePath(): string {
-  return HISTORY_FILE;
+  return resolveHistoryFilePath();
 }

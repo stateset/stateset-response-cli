@@ -93,7 +93,7 @@ export function discoverFiles(dirOrFile: string): string[] {
       if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
       if (entry.isDirectory()) {
         walk(full);
-      } else if (entry.isFile()) {
+      } else if (entry.isFile() || entry.isSymbolicLink()) {
         const ext = path.extname(entry.name).toLowerCase();
         if (SUPPORTED_EXTENSIONS.has(ext)) {
           files.push(full);
@@ -166,9 +166,15 @@ export function chunkText(
 ): string[] {
   const chunkSize = opts.chunkSize ?? DEFAULT_CHUNK_SIZE;
   const overlap = opts.overlap ?? DEFAULT_CHUNK_OVERLAP;
+  const effectiveOverlap = overlap >= chunkSize ? 0 : Math.max(0, overlap);
+  const trimmedText = text.trim();
+
+  if (!trimmedText) {
+    return [];
+  }
 
   if (text.length <= chunkSize) {
-    return [text];
+    return [trimmedText];
   }
 
   // Try to split on markdown headings or double newlines first
@@ -189,9 +195,14 @@ export function chunkText(
         let offset = 0;
         while (offset < section.length) {
           const end = Math.min(offset + chunkSize, section.length);
-          chunks.push(section.slice(offset, end).trim());
-          offset = end - overlap;
-          if (offset >= section.length) break;
+          const chunk = section.slice(offset, end).trim();
+          if (chunk) {
+            chunks.push(chunk);
+          }
+          if (end >= section.length) {
+            break;
+          }
+          offset = Math.max(end - effectiveOverlap, offset + 1);
         }
         current = '';
       } else {

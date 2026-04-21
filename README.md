@@ -1,9 +1,9 @@
-# StateSet ResponseCX CLI
+# StateSet Response CLI
 
-AI-powered CLI for managing the [StateSet ResponseCX](https://response.cx) platform. Chat with an AI agent that can manage your agents, rules, skills, knowledge base, channels, messages, and more — all from the terminal.
+AI-powered CLI for managing the [StateSet Response](https://response.stateset.app) platform. Chat with an AI agent that can manage your agents, rules, skills, knowledge base, channels, messages, and more, all from the terminal.
 
 Includes optional Slack, Telegram, and WhatsApp gateways for connecting your agent to messaging platforms or running a multi-channel bot on Kubernetes.
-Current version: `1.9.3`.
+Current version: `1.9.4`.
 
 ## Features
 
@@ -40,6 +40,7 @@ npm run build
 ## Quick Start
 
 For a shorter onboarding path, see [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md).
+For the Rust Temporal engine contract coverage, see [`docs/WORKFLOW_ENGINE_CONTRACT.md`](docs/WORKFLOW_ENGINE_CONTRACT.md).
 
 ```bash
 # Guided onboarding (recommended)
@@ -48,12 +49,17 @@ response init
 # Or run setup manually
 response auth login
 response doctor
+response doctor --repair
 
 # Send one prompt and exit
 response ask "Summarize the latest failed orders"
 
 # Start an interactive chat session
 response chat
+
+# Preview or clear local CLI state
+response reset sessions
+response reset metrics history --yes
 
 # See the CLI grouped by workflow area
 response capabilities
@@ -81,14 +87,14 @@ You can choose either the browser/device flow or manual setup during login.
 
 ```bash
 # Device flow without prompts
-response auth login --device --instance-url https://response.cx --non-interactive
+response auth login --device --instance-url https://response.stateset.app --non-interactive
 
 # Manual auth without prompts
 response auth login \
   --manual \
   --org-id acme \
   --org-name "Acme" \
-  --graphql-endpoint https://response.cx/v1/graphql \
+  --graphql-endpoint https://response.stateset.app/v1/graphql \
   --admin-secret "$STATESET_ADMIN_SECRET" \
   --non-interactive
 ```
@@ -141,6 +147,7 @@ Use `/help` for the full list. This reference is generated from [`src/cli/comman
 **Core**
 
 - `/help [command|category]` Show help (optionally for a specific command or category) Aliases: `/commands`, `/h`.
+- `/capabilities [area]` Show the CLI grouped by common jobs-to-be-done Aliases: `/caps`.
 - `/clear` Reset conversation history Aliases: `/c`.
 - `/history` Show conversation turn count Aliases: `/hist`.
 - `/model <name>` Switch model (sonnet, haiku, opus) Aliases: `/m`.
@@ -182,29 +189,22 @@ Use `/help` for the full list. This reference is generated from [`src/cli/comman
 **Workflow Engine**
 
 - `/engine` Show workflow engine connection status
-- `/capabilities [area]` Show the CLI grouped by workflow areas such as setup, runtime, workflow-studio, curation, operations, and resources
 - `/engine setup` Configure the workflow engine connection
 - `/engine init [brand-slug]` Initialize .stateset/<brand>/ config-as-code directory with scaffold files
-- `/engine config [pull|push|validate|history] <brand>` Manage local `.stateset/<brand>` workflow studio config against the engine
-- `/engine config show <brand-slug|brand-id>` Show the effective remote workflow studio config for a brand
-- `/engine config pull <brand-slug|brand-id>` Pull brand workflow studio config into `.stateset/<brand>`
-- `/engine config history <brand-slug|brand-id>` Show config version history for a brand
+- `/engine config [pull|push|validate|history] <brand>` Manage local .stateset brand workflow studio config against the engine
+- `/engine config pull <brand-slug|brand-id>` Pull brand workflow studio config into .stateset/<brand>
 - `/engine config validate <brand-slug>` Validate local brand workflow studio config files
+- `/engine config history <brand-slug|brand-id>` Show config version history for a brand
+- `/engine config show <brand-slug|brand-id>` Show the effective remote workflow studio config for a brand
 - `/engine config push <brand-slug>` Push local brand workflow studio config to the engine
 - `/engine activate <brand-slug|brand-id> [config-version]` Activate the current config for a brand
 - `/engine validate <brand-slug|brand-id>` Run remote engine validation for a brand
+- `/engine billing <brand-slug|brand-id> | profile <brand> <json-file> | sync <brand> [--limit <n>] | contract <brand> [upsert <json-file>] | periods <brand> [--status <status>] | close-period <brand> <period-id> | rated-outcomes <brand> [filters] | reconciliation <brand>` Manage brand billing profile, contract, periods, rated outcomes, and reconciliation
 - `/engine brands [slug]` List or search brands in the workflow engine
 - `/engine brands show <brand-slug|brand-id>` Show brand details from the workflow engine
-- `/engine brands create <json-file>` Create a brand from a JSON file, optionally bootstrapping a template-backed workflow config
+- `/engine brands create <json-file>` Create a brand from a JSON file (supports template bootstrap)
 - `/engine brands bootstrap <brand-slug|brand-id> [ecommerce|subscription|knowledge_base] [activate]` Create or repair a workflow-studio brand and bootstrap response automation
 - `/engine brands update <brand-slug|brand-id> <json-file>` Update a brand from a JSON patch file
-- `/engine executions <brand-slug|brand-id> [status]` List recent workflow executions for a brand
-- `/engine connectors <brand-slug|brand-id> [create <json-file>|health <connector-id>|plan [loop-mode] [--source local|platform]|sync [loop-mode] [--source local|platform]]` List connectors, create connectors, plan connector sync from local or platform credentials, or create missing live connectors for a brand
-- `/engine connectors <brand-slug|brand-id> create <json-file>` Create a connector for a brand from a JSON file
-- `/engine connectors <brand-slug|brand-id> plan [subscriptions|returns|both] [--source local|platform]` Show the workflow-studio connector sync plan from local integrations or platform credentials
-- `/engine connectors <brand-slug|brand-id> sync [subscriptions|returns|both] [--source local|platform]` Write local connector config, persist connector preferences, and create missing live connectors from local integrations or platform credentials
-- `/engine connectors <brand-slug|brand-id> env [subscriptions|returns|both] [dotenv|shell|json] [out=path]` Inspect or export the brand-scoped connector secret env vars your local workers need
-- `/engine local apply <brand-slug|brand-id> [subscriptions|returns|both] [out=path] [compose=path] [services=a,b,c] [--write-only]` Write the brand env file and refresh the local Temporal stack services
 - `/engine onboard <brand-slug|brand-id> [notes]` Start an onboarding run for a brand
 - `/engine onboard list <brand-slug|brand-id>` List onboarding runs for a brand
 - `/engine onboard show <brand-slug|brand-id> <run-id>` Show a specific onboarding run
@@ -215,8 +215,18 @@ Use `/help` for the full list. This reference is generated from [`src/cli/comman
 - `/engine health` Check workflow engine health
 - `/engine dispatch-health [--tenant-id <tenant-id>] [--limit <n>] [--offset <n>]` Show dispatch health dashboard across brands
 - `/engine dispatch-guard [--tenant-id <tenant-id>] [--apply true|false] [--minimum-health-status warning|critical] [--max-actions <n>]` Plan or apply dispatch guard actions for unhealthy brands
+- `/engine executions <brand-slug|brand-id> [status]` List recent workflow executions for a brand
+- `/engine connectors <brand-slug|brand-id> [create <json-file>|health <connector-id>|plan [loop-mode] [--source local|platform]|sync [loop-mode] [--source local|platform]|env [loop-mode] [dotenv|shell|json] [out=path] [--unsafe-path]]` List connectors, create connectors, plan sync, export local secret env, or run health checks for a brand
+- `/engine connectors <brand-slug|brand-id> create <json-file>` Create a connector for a brand from a JSON file
+- `/engine connectors <brand-slug|brand-id> plan [subscriptions|returns|both] [--source local|platform]` Show the workflow-studio connector sync plan for a brand from local or platform credentials
+- `/engine connectors <brand-slug|brand-id> sync [subscriptions|returns|both] [--source local|platform]` Write local connector config and create missing live connectors for a brand from local or platform credentials
+- `/engine connectors <brand-slug|brand-id> env [subscriptions|returns|both] [dotenv|shell|json] [out=path] [--unsafe-path]` Inspect or export brand-scoped connector secret env vars for local workers
+- `/engine local apply <brand-slug|brand-id> [subscriptions|returns|both] [out=path] [compose=path] [services=a,b,c] [--write-only] [--unsafe-path]` Write brand-scoped env and optionally run docker compose for the local stack
 - `/engine test <brand-slug|brand-id> <ticket-id>` Dispatch a dry-run workflow-studio test event for a brand
 - `/engine event <brand-slug|brand-id> <json-file> [idempotency-key]` Ingest a workflow engine event payload from a JSON file
+- `/engine outcomes <brand-slug|brand-id> [filters] | list <brand> [filters] [--limit <n>] [--offset <n>] | record <brand> <json-file>` Show outcome summaries, list outcome records, or record an outcome
+- `/engine analyze <brand-slug|brand-id> [--source <dir>] [--tickets <file|dir>] [--responses <file|dir>] [--out <dir>] [--apply] [--push] [--json]` Analyze local ticket and response exports, generate a workflow config proposal, and optionally apply or push it
+- `/engine feedback-sync <brand-slug|brand-id> [--provider <gorgias|zendesk>] [--limit <n>] [--max-pages <n>] [--since-days <n>] [--analyze] [--apply] [--push] [--json]` Sync recent live Gorgias or Zendesk feedback into a normalized local store and optionally analyze or apply the resulting proposal
 - `/engine templates [key] [version]` List or get workflow templates
 - `/engine templates create <json-file>` Create a workflow template version from a JSON file
 - `/engine templates update <template-key> <version> <json-file>` Update a workflow template version from a JSON file
@@ -230,19 +240,11 @@ Use `/help` for the full list. This reference is generated from [`src/cli/comman
 - `/workflows [list|start|status|cancel|terminate|restart|review|retry]` Manage workflow executions in the engine Aliases: `/wf`.
 - `/onboard [init]` Interactive onboarding wizard — brand, integrations, KB, rules, workflow, deploy
 - `/onboard init [brand-slug]` Initialize .stateset/<brand>/ config-as-code directory
-- `/finetune [list|export|validate|create|deploy]` Fine-tuning pipeline: export evals → validate datasets → create job spec → deploy model
-- `/finetune export [output-dir] [--format all|sft|dpo|openai-sft|studio-sft|trl-sft|studio-dpo|pair-dpo] [--status approved] [--validation-ratio 0.1]` Export evals into the SFT and DPO dataset formats used by workflow studio and synthetic-data-studio
-- `/finetune validate [path] [--format auto|openai-sft|studio-sft|trl-sft|studio-dpo|pair-dpo]` Validate exported datasets before training
+- `/finetune [list|export|validate|create|deploy]` Fine-tuning pipeline: export evals → create job → deploy model
+- `/finetune export [output-dir] [--format all|sft|dpo|openai-sft|studio-sft|trl-sft|studio-dpo|pair-dpo] [--status approved] [--validation-ratio 0.1]` Export evals into workflow-studio SFT and DPO dataset files
+- `/finetune validate [path] [--format auto|openai-sft|studio-sft|trl-sft|studio-dpo|pair-dpo]` Validate exported training datasets before fine-tuning
 - `/finetune create [dataset-file] [--method supervised|dpo]` Create a new fine-tuning job spec from a validated dataset
 - `/finetune deploy <model-id>` Deploy a fine-tuned model to workflow config
-- `/evals [list|create|create-from-response|get|update|delete|export|review|suggest|<id>]` Manage eval records and fine-tuning examples
-- `/evals create-from-response <response-id> [--seed preferred|rejected|none]` Seed a new eval from a stored response so curators can turn live agent output into SFT or DPO data
-- `/evals review [eval-id] [--status pending]` Interactively review pending evals
-- `/evals suggest` Auto-suggest eval criteria based on conversation patterns Aliases: `/evals-suggest`.
-- `/datasets [list|create|get|update|delete|add-entry|update-entry|delete-entry|import|export|<id>]` Manage datasets and message-based dataset entries for training-data curation
-- `/datasets add-entry <dataset-id> (--messages <json> | --file <path>)` Add a message-based training example to a dataset
-- `/datasets import <dataset-id> <json|jsonl-file>` Bulk import dataset entries from JSON or JSONL
-- `/datasets export <dataset-id> [--out <path>]` Export a dataset with all of its entries
 - `/rules generate [brand-slug]` Auto-generate rules from KB and business data (with human confirmation)
 
 **Sessions**
@@ -263,6 +265,26 @@ Use `/help` for the full list. This reference is generated from [`src/cli/comman
 
 **Shortcut Commands**
 
+- `/evals [list|create|create-from-response|get|update|delete|export|review|suggest|<id>]` Manage evals and fine-tuning training examples
+- `/evals list [--limit N] [--offset N]` List eval records
+- `/evals create --name <name> --type <type> [--status <status>] [--message <text>] [--preferred <text>]` Create an eval record
+- `/evals create-from-response <response-id> [--seed preferred|rejected|none] [--name <name>] [--type <type>]` Seed an eval from a stored agent response for curation and DPO review
+- `/evals get <eval-id>` Show a single eval record
+- `/evals update <eval-id> [--status <status>] [--preferred <text>] [--rejected <text>]` Update an eval record
+- `/evals delete <eval-id>` Delete an eval record
+- `/evals export [eval-id ...] [--out <path>]` Export evals in fine-tuning format
+- `/evals review [eval-id] [--status pending]` Interactively review pending evals
+- `/evals suggest` Auto-suggest eval criteria based on conversation patterns Aliases: `/evals-suggest`.
+- `/datasets [list|create|get|update|delete|add-entry|update-entry|delete-entry|import|export|<id>]` Manage datasets and dataset entries for training-data curation
+- `/datasets create --name <name> [--description <text>] [--status active|archived|draft] [--metadata <json>]` Create a dataset
+- `/datasets get <dataset-id>` Show a dataset with its entries
+- `/datasets update <dataset-id> [--name <name>] [--description <text>] [--status active|archived|draft] [--metadata <json>]` Update dataset metadata
+- `/datasets delete <dataset-id>` Delete a dataset and all of its entries
+- `/datasets add-entry <dataset-id> (--messages <json> | --file <path>)` Add a message-based training entry to a dataset
+- `/datasets update-entry <entry-id> (--messages <json> | --file <path>)` Update a dataset entry by ID
+- `/datasets delete-entry <entry-id>` Delete a dataset entry by ID
+- `/datasets import <dataset-id> <json|jsonl-file>` Bulk import dataset entries from JSON or JSONL
+- `/datasets export <dataset-id> [--out <path>]` Export a dataset with its entries
 - `/rules [get|list|create|toggle|delete|import|export|agent|<id>]` Manage agent rules Aliases: `/r`.
 - `/kb [search|add|ingest|delete|scroll|list|info]` Manage KB entries
 - `/kb ingest <path> [--chunk_size 2000] [--overlap 200]` Bulk ingest local files/directories into KB with chunking
@@ -686,19 +708,19 @@ No public ingress is required for Slack Socket Mode or Telegram long polling. Th
 | Variable                       | Required      | Description                                                          |
 | ------------------------------ | ------------- | -------------------------------------------------------------------- |
 | `ANTHROPIC_API_KEY`            | Yes           | Anthropic API key for Claude                                         |
-| `STATESET_INSTANCE_URL`        | No            | StateSet ResponseCX instance URL                                     |
+| `STATESET_INSTANCE_URL`        | No            | StateSet Response app URL                                            |
 | `STATESET_GRAPHQL_ENDPOINT`    | No            | GraphQL API endpoint; required when bootstrapping gateway config     |
 | `STATESET_KB_HOST`             | No            | Knowledge base (Qdrant) host URL                                     |
 | `STATESET_KB_BASE_URL`         | No            | Explicit KB/Qdrant base URL for workflow-studio connector sync       |
 | `STATESET_SECRET_PASSPHRASE`   | No            | Optional secret used to encrypt/decrypt stored credentials           |
-| `STATESET_ORG_ID`            | Gateway/K8s   | Organization ID used to bootstrap config in headless deployments     |
-| `STATESET_ORG_NAME`          | Gateway/K8s   | Optional organization display name for env bootstrapping             |
-| `STATESET_CLI_TOKEN`         | Gateway/K8s   | CLI token used to bootstrap config in headless deployments           |
-| `STATESET_ADMIN_SECRET`      | Gateway/K8s   | Admin secret alternative to `STATESET_CLI_TOKEN`                     |
-| `STATESET_MODEL`             | Optional      | Default model for CLI and gateway runtime bootstrap                  |
-| `STATESET_STATE_DIR`         | Optional      | Override the `~/.stateset` runtime state directory                   |
-| `STATESET_GATEWAY_HEALTH_PORT` | Optional    | HTTP health probe port for `response-gateway`                        |
-| `PORT`                       | Optional      | Alias for `STATESET_GATEWAY_HEALTH_PORT`                             |
+| `STATESET_ORG_ID`              | Gateway/K8s   | Organization ID used to bootstrap config in headless deployments     |
+| `STATESET_ORG_NAME`            | Gateway/K8s   | Optional organization display name for env bootstrapping             |
+| `STATESET_CLI_TOKEN`           | Gateway/K8s   | CLI token used to bootstrap config in headless deployments           |
+| `STATESET_ADMIN_SECRET`        | Gateway/K8s   | Admin secret alternative to `STATESET_CLI_TOKEN`                     |
+| `STATESET_MODEL`               | Optional      | Default model for CLI and gateway runtime bootstrap                  |
+| `STATESET_STATE_DIR`           | Optional      | Override the `~/.stateset` runtime state directory                   |
+| `STATESET_GATEWAY_HEALTH_PORT` | Optional      | HTTP health probe port for `response-gateway`                        |
+| `PORT`                         | Optional      | Alias for `STATESET_GATEWAY_HEALTH_PORT`                             |
 | `SHOPIFY_SHOP_DOMAIN`          | Shopify       | Shopify shop domain (e.g., `myshop.myshopify.com`)                   |
 | `SHOPIFY_ACCESS_TOKEN`         | Shopify       | Shopify Admin API access token                                       |
 | `SHOPIFY_API_VERSION`          | Shopify       | Shopify API version (default: `2025-04`)                             |

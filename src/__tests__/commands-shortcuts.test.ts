@@ -1,3 +1,4 @@
+import { Command } from 'commander';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatContext } from '../cli/types.js';
 
@@ -99,7 +100,10 @@ vi.mock('../cli/shortcuts/test.js', () => ({
   runTopLevelTest: vi.fn(async () => undefined),
 }));
 
-import { handleShortcutCommand } from '../cli/commands-shortcuts.js';
+import {
+  handleShortcutCommand,
+  registerShortcutTopLevelCommands,
+} from '../cli/commands-shortcuts.js';
 
 function createCtx(): ChatContext {
   return {
@@ -187,6 +191,22 @@ describe('handleShortcutCommand', () => {
       true,
     );
     expect(mockLogger.done).toHaveBeenCalledTimes(1);
+  });
+
+  it('registers evals shortcut with a single status flag and forwards it once', async () => {
+    const { runTopLevelEvals } = await import('../cli/shortcuts/evals.js');
+    const program = new Command().name('response');
+
+    registerShortcutTopLevelCommands(program);
+
+    const evals = program.commands.find((command) => command.name() === 'evals');
+    expect(evals?.options.filter((option) => option.long === '--status')).toHaveLength(1);
+
+    await program.parseAsync(['node', 'response', 'evals', 'list', '--status', 'approved']);
+
+    expect(runTopLevelEvals).toHaveBeenCalledWith(['list', '--status', 'approved'], {
+      json: undefined,
+    });
   });
 
   it('routes /datasets to datasets shortcut command', async () => {

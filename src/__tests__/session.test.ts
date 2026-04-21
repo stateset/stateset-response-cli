@@ -7,6 +7,8 @@ import {
   SessionStore,
   cleanupSessions,
   getSessionStorageStats,
+  getSessionsDir,
+  getStateSetDir,
 } from '../session.js';
 
 describe('sanitizeSessionId', () => {
@@ -25,6 +27,25 @@ describe('sanitizeSessionId', () => {
 
   it('preserves safe characters', () => {
     expect(sanitizeSessionId('ops-1.2_default')).toBe('ops-1.2_default');
+  });
+});
+
+describe('state directory resolution', () => {
+  const originalStateDir = process.env.STATESET_STATE_DIR;
+
+  afterEach(() => {
+    if (originalStateDir === undefined) {
+      delete process.env.STATESET_STATE_DIR;
+      return;
+    }
+    process.env.STATESET_STATE_DIR = originalStateDir;
+  });
+
+  it('respects STATESET_STATE_DIR for CLI state paths', () => {
+    process.env.STATESET_STATE_DIR = '/tmp/stateset-profile-dev';
+
+    expect(getStateSetDir()).toBe('/tmp/stateset-profile-dev');
+    expect(getSessionsDir()).toBe('/tmp/stateset-profile-dev/sessions');
   });
 });
 

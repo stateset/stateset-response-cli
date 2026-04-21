@@ -43,6 +43,13 @@ describe('kb-ingest', () => {
       expect(chunks).toHaveLength(0);
     });
 
+    it('keeps making progress when overlap exceeds chunk size', () => {
+      const text = 'A'.repeat(120);
+      const chunks = chunkText(text, { chunkSize: 40, overlap: 80 });
+      expect(chunks).toHaveLength(3);
+      expect(chunks.every((chunk) => chunk.length <= 40)).toBe(true);
+    });
+
     it('respects markdown heading boundaries', () => {
       const sections = Array.from({ length: 5 }, (_, i) => `# Section ${i}\n${'x'.repeat(500)}`);
       const text = sections.join('\n\n');

@@ -14,6 +14,8 @@ import type { ChatContext, CommandResult } from './types.js';
 import { getWorkflowEngineConfig } from '../config.js';
 import { EngineClient, EngineClientError } from '../lib/engine-client.js';
 import { loadBrandStudioBundle, writeBrandStudioBundle } from '../lib/brand-studio.js';
+import { readJsonFile, readTextFile } from '../utils/file-read.js';
+import { ensurePrivateDirectory, writePrivateTextFileSecure } from '../utils/secure-file.js';
 import {
   buildDatasetArtifacts,
   inferFinetuneMethod,
@@ -34,15 +36,17 @@ const DATASET_FORMATS: FinetuneDatasetFormat[] = [
   'studio-dpo',
   'pair-dpo',
 ];
+const MAX_FINETUNE_DATASET_BYTES = 16 * 1024 * 1024;
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
 function ensureDir(dir: string): void {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+  ensurePrivateDirectory(dir, {
+    symlinkErrorPrefix: 'Refusing to use symlinked fine-tune directory',
+    nonDirectoryErrorPrefix: 'Fine-tune output path is not a directory',
+  });
 }
 
 interface FinetuneRunner {
@@ -144,6 +148,13 @@ function collectDatasetFiles(dir: string): string[] {
   if (!fs.existsSync(dir)) {
     return [];
   }
+  const stats = fs.lstatSync(dir);
+  if (stats.isSymbolicLink()) {
+    throw new Error(`Refusing to use symlinked fine-tune directory: ${dir}`);
+  }
+  if (!stats.isDirectory()) {
+    throw new Error(`Fine-tune path is not a directory: ${dir}`);
+  }
   return fs
     .readdirSync(dir, { withFileTypes: true })
     .filter((entry) => entry.isFile())
@@ -153,6 +164,21 @@ function collectDatasetFiles(dir: string): string[] {
     .reverse();
 }
 
+function getRegularFileSize(filePath: string): number {
+  const stats = fs.lstatSync(filePath);
+  if (stats.isSymbolicLink() || !stats.isFile()) {
+    throw new Error(`Fine-tune dataset is not a safe regular file: ${filePath}`);
+  }
+  return stats.size;
+}
+
+function readDatasetFile(filePath: string): string {
+  return readTextFile(filePath, {
+    label: 'Fine-tune dataset',
+    maxBytes: MAX_FINETUNE_DATASET_BYTES,
+  });
+}
+
 function writeDatasetFile(
   outDir: string,
   basename: string,
@@ -160,7 +186,10 @@ function writeDatasetFile(
   entries: Record<string, unknown>[],
 ): string {
   const outFile = path.join(outDir, `${basename}-${timestamp}.jsonl`);
-  fs.writeFileSync(outFile, serializeJsonl(entries), 'utf-8');
+  writePrivateTextFileSecure(outFile, serializeJsonl(entries), {
+    label: 'Fine-tune dataset',
+    atomic: true,
+  });
   return outFile;
 }
 
@@ -190,7 +219,10 @@ function writeJobSpec(spec: Record<string, unknown>): string {
   ensureDir(dir);
   const filename = `job-${Date.now()}.json`;
   const jobPath = path.join(dir, filename);
-  fs.writeFileSync(jobPath, JSON.stringify(spec, null, 2) + '\n', 'utf-8');
+  writePrivateTextFileSecure(jobPath, JSON.stringify(spec, null, 2) + '\n', {
+    label: 'Fine-tune job spec',
+    atomic: true,
+  });
   return jobPath;
 }
 
@@ -254,7 +286,12 @@ async function runFinetuneExport(
   }
 
   const outDir = path.resolve(outputPath ?? '.stateset/finetune');
-  ensureDir(outDir);
+  try {
+    ensureDir(outDir);
+  } catch (error) {
+    console.log(chalk.red(`  ${error instanceof Error ? error.message : String(error)}`));
+    return;
+  }
   const timestamp = Date.now();
 
   console.log(chalk.gray(`  Total evals: ${buildResult.totalCount}`));
@@ -268,36 +305,42 @@ async function runFinetuneExport(
       continue;
     }
 
-    if (validationRatio > 0 && artifact.entries.length > 1) {
-      const split = splitDatasetEntries(artifact.entries, validationRatio);
-      if (split.train.length > 0) {
-        const trainPath = writeDatasetFile(
-          outDir,
-          `${artifact.basename}-train`,
-          timestamp,
-          split.train,
-        );
-        printSuccess(`Exported ${split.train.length} ${artifact.format} train rows → ${trainPath}`);
-        writtenFiles += 1;
+    try {
+      if (validationRatio > 0 && artifact.entries.length > 1) {
+        const split = splitDatasetEntries(artifact.entries, validationRatio);
+        if (split.train.length > 0) {
+          const trainPath = writeDatasetFile(
+            outDir,
+            `${artifact.basename}-train`,
+            timestamp,
+            split.train,
+          );
+          printSuccess(
+            `Exported ${split.train.length} ${artifact.format} train rows → ${trainPath}`,
+          );
+          writtenFiles += 1;
+        }
+        if (split.validation.length > 0) {
+          const validationPath = writeDatasetFile(
+            outDir,
+            `${artifact.basename}-val`,
+            timestamp,
+            split.validation,
+          );
+          printSuccess(
+            `Exported ${split.validation.length} ${artifact.format} validation rows → ${validationPath}`,
+          );
+          writtenFiles += 1;
+        }
+        continue;
       }
-      if (split.validation.length > 0) {
-        const validationPath = writeDatasetFile(
-          outDir,
-          `${artifact.basename}-val`,
-          timestamp,
-          split.validation,
-        );
-        printSuccess(
-          `Exported ${split.validation.length} ${artifact.format} validation rows → ${validationPath}`,
-        );
-        writtenFiles += 1;
-      }
-      continue;
-    }
 
-    const outFile = writeDatasetFile(outDir, artifact.basename, timestamp, artifact.entries);
-    printSuccess(`Exported ${artifact.entries.length} ${artifact.format} rows → ${outFile}`);
-    writtenFiles += 1;
+      const outFile = writeDatasetFile(outDir, artifact.basename, timestamp, artifact.entries);
+      printSuccess(`Exported ${artifact.entries.length} ${artifact.format} rows → ${outFile}`);
+      writtenFiles += 1;
+    } catch (error) {
+      console.log(chalk.red(`  ${error instanceof Error ? error.message : String(error)}`));
+    }
   }
 
   if (writtenFiles === 0) {
@@ -341,9 +384,23 @@ async function runFinetuneValidate(
     return;
   }
 
-  const files = fs.statSync(resolvedPath).isDirectory()
-    ? collectDatasetFiles(resolvedPath).map((name) => path.join(resolvedPath, name))
-    : [resolvedPath];
+  let files: string[];
+  try {
+    const stats = fs.lstatSync(resolvedPath);
+    if (stats.isSymbolicLink()) {
+      throw new Error(`Refusing to validate symlinked path: ${resolvedPath}`);
+    }
+    if (stats.isDirectory()) {
+      files = collectDatasetFiles(resolvedPath).map((name) => path.join(resolvedPath, name));
+    } else if (stats.isFile()) {
+      files = [resolvedPath];
+    } else {
+      throw new Error(`Fine-tune path is not a regular file or directory: ${resolvedPath}`);
+    }
+  } catch (error) {
+    console.log(chalk.red(`  ${error instanceof Error ? error.message : String(error)}`));
+    return;
+  }
 
   if (files.length === 0) {
     console.log(chalk.yellow('  No dataset files found.'));
@@ -352,8 +409,14 @@ async function runFinetuneValidate(
 
   let invalidFiles = 0;
   for (const file of files) {
-    const raw = fs.readFileSync(file, 'utf-8');
-    const result = validateDatasetText(raw, expectedFormat);
+    let result: ReturnType<typeof validateDatasetText>;
+    try {
+      result = validateDatasetText(readDatasetFile(file), expectedFormat);
+    } catch (error) {
+      invalidFiles += 1;
+      console.log(chalk.red(`  ${error instanceof Error ? error.message : String(error)}`));
+      continue;
+    }
     if (result.invalidCount > 0 || result.validCount === 0) {
       invalidFiles += 1;
     }
@@ -382,29 +445,48 @@ async function runFinetuneCreate(
   console.log(chalk.gray('  ─'.repeat(24)));
 
   const finetuneDir = path.resolve('.stateset/finetune');
-  if (!fs.existsSync(finetuneDir)) {
+  let trainingPath = datasetPath ? path.resolve(datasetPath) : '';
+
+  if (!trainingPath && !fs.existsSync(finetuneDir)) {
     console.log(chalk.yellow('  No training data found. Run /finetune export first.'));
     return;
   }
 
-  const files = collectDatasetFiles(finetuneDir);
+  let files: string[] = [];
+  if (!trainingPath) {
+    try {
+      files = collectDatasetFiles(finetuneDir);
+    } catch (error) {
+      console.log(chalk.red(`  ${error instanceof Error ? error.message : String(error)}`));
+      return;
+    }
 
-  if (files.length === 0) {
-    console.log(chalk.yellow('  No training data files found.'));
-    return;
+    if (files.length === 0) {
+      console.log(chalk.yellow('  No training data files found.'));
+      return;
+    }
   }
 
-  let trainingPath = datasetPath ? path.resolve(datasetPath) : '';
   if (!trainingPath) {
     const selection = await inquirer.prompt([
       {
         type: 'list',
         name: 'trainingFile',
         message: 'Select training data:',
-        choices: files.map((file) => ({
-          name: `${file} (${fs.statSync(path.join(finetuneDir, file)).size} bytes)`,
-          value: path.join(finetuneDir, file),
-        })),
+        choices: files.map((file) => {
+          const candidate = path.join(finetuneDir, file);
+          const sizeLabel = (() => {
+            try {
+              return `${getRegularFileSize(candidate)} bytes`;
+            } catch {
+              return 'unreadable';
+            }
+          })();
+          return {
+            name: `${file} (${sizeLabel})`,
+            value: candidate,
+          };
+        }),
       },
     ]);
     trainingPath = String(selection.trainingFile);
@@ -415,7 +497,13 @@ async function runFinetuneCreate(
     return;
   }
 
-  const validation = validateDatasetText(fs.readFileSync(trainingPath, 'utf-8'), 'auto');
+  let validation: ReturnType<typeof validateDatasetText>;
+  try {
+    validation = validateDatasetText(readDatasetFile(trainingPath), 'auto');
+  } catch (error) {
+    console.log(chalk.red(`  ${error instanceof Error ? error.message : String(error)}`));
+    return;
+  }
   if (validation.validCount === 0 || validation.invalidCount > 0) {
     console.log(chalk.yellow('  Selected dataset is not ready for training.'));
     printValidationResult(trainingPath, validation.detectedFormat, validation);
@@ -644,11 +732,24 @@ function runFinetuneList(): void {
     return;
   }
 
-  const files = fs
-    .readdirSync(jobsDir)
-    .filter((f) => f.endsWith('.json'))
-    .sort()
-    .reverse();
+  let files: string[];
+  try {
+    const stats = fs.lstatSync(jobsDir);
+    if (stats.isSymbolicLink()) {
+      throw new Error(`Refusing to use symlinked fine-tune jobs directory: ${jobsDir}`);
+    }
+    if (!stats.isDirectory()) {
+      throw new Error(`Fine-tune jobs path is not a directory: ${jobsDir}`);
+    }
+    files = fs
+      .readdirSync(jobsDir)
+      .filter((f) => f.endsWith('.json'))
+      .sort()
+      .reverse();
+  } catch (error) {
+    console.log(chalk.red(`  ${error instanceof Error ? error.message : String(error)}`));
+    return;
+  }
   if (files.length === 0) {
     printInfo('No fine-tune jobs found.');
     return;
@@ -656,7 +757,10 @@ function runFinetuneList(): void {
 
   for (const f of files) {
     try {
-      const job = JSON.parse(fs.readFileSync(path.join(jobsDir, f), 'utf-8'));
+      const job = readJsonFile(path.join(jobsDir, f), {
+        label: 'Fine-tune job spec',
+        expectObject: true,
+      }) as Record<string, unknown>;
       console.log(chalk.white(`  ${f}`));
       console.log(
         chalk.gray(

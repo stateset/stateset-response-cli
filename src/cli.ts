@@ -30,12 +30,20 @@ import { assertNodeVersion, parseToggleValue } from './cli/utils.js';
 import { registerAuthCommands, runAuthLogin, type AuthLoginOptions } from './cli/auth.js';
 import { registerIntegrationsCommands, runIntegrationsSetup } from './cli/commands-integrations.js';
 import { registerDoctorCommand, runDoctorChecks } from './cli/commands-doctor.js';
+import { registerDashboardCommand } from './cli/commands-dashboard.js';
+import { registerResetCommand } from './cli/commands-reset.js';
 import { registerShortcutTopLevelCommands } from './cli/commands-shortcuts.js';
+import { registerUpdateCommand } from './cli/commands-update.js';
 import { resolveOneShotInput, runOneShotPrompt, startChatSession } from './cli/chat-action.js';
 import { exportAgentRunbook } from './cli/runbook.js';
 import { listAgentTemplates, scaffoldAgentTemplate } from './cli/agent-templates.js';
 import { listCapabilityAreas, printCapabilityMap } from './cli/capabilities.js';
-import { renderCompletionScript } from './cli/shell-completion.js';
+import {
+  installCompletion,
+  renderCompletionScript,
+  resolveCompletionShell,
+  writeCompletionScript,
+} from './cli/shell-completion.js';
 import {
   pullBrandStudioConfig,
   pushBrandStudioConfig,
@@ -61,11 +69,13 @@ import {
   resolveBrandDlqItem,
   runWorkflowStudioTest,
   showBrandDlq,
+  showBrandBillingState,
   showBrandConfigHistory,
   showBrandConnectorSyncPlan,
   showBrandConnectorSecretEnv,
   showBrandConnectors,
   showBrandDetails,
+  showBrandOutcomeSummary,
   showDispatchHealthDashboard,
   showEngineStatus,
   showEffectiveBrandConfig,
@@ -140,7 +150,11 @@ program.addHelpText(
     '  response init --from-env --integration shopify',
     '  response serve --port 3000 --forward-to-engine',
     '  response doctor',
+    '  response doctor --repair',
+    '  response reset sessions',
+    '  response update status',
     '  eval "$(response completion bash)"',
+    '  response completion powershell --install',
     '',
   ].join('\n'),
 );
@@ -148,6 +162,9 @@ program.addHelpText(
 registerAuthCommands(program);
 registerIntegrationsCommands(program);
 registerDoctorCommand(program);
+registerDashboardCommand(program);
+registerResetCommand(program);
+registerUpdateCommand(program, pkg.version || '0.0.0');
 registerShortcutTopLevelCommands(program);
 
 const collectRepeatableOption = (value: string, previous: string[]): string[] => {
@@ -190,7 +207,7 @@ program
   )
   .option('--device', 'Use browser/device code authentication')
   .option('--manual', 'Use manual admin-secret authentication')
-  .option('--instance-url <url>', 'StateSet ResponseCX instance URL')
+  .option('--instance-url <url>', 'StateSet Response app URL')
   .option('--org-id <id>', 'Organization ID (manual mode)')
   .option('--org-name <name>', 'Organization name (manual mode)')
   .option('--graphql-endpoint <url>', 'GraphQL endpoint (manual mode)')
@@ -404,11 +421,34 @@ program
 // Shell completion generation
 program
   .command('completion')
-  .description('Generate shell completion scripts (bash, zsh, fish)')
-  .argument('[shell]', 'Shell type: bash, zsh, or fish', 'bash')
-  .action((shell: string) => {
+  .description('Generate or install shell completion scripts (bash, zsh, fish, powershell)')
+  .argument('[shell]', 'Shell type: bash, zsh, fish, or powershell')
+  .option('--install', 'Install the completion script into your shell profile')
+  .option('--write-state', 'Write the completion script into the active CLI state directory')
+  .action(async (shell: string | undefined, opts: { install?: boolean; writeState?: boolean }) => {
     try {
-      console.log(renderCompletionScript(shell, program, ['--profile', '--dev']));
+      const resolvedShell = resolveCompletionShell(shell);
+      if (opts.install) {
+        const { cachePath, profilePath } = await installCompletion(resolvedShell, program, [
+          '--profile',
+          '--dev',
+        ]);
+        console.log(chalk.green(`Installed ${resolvedShell} completion.`));
+        console.log(chalk.gray(`  Cache: ${cachePath}`));
+        console.log(chalk.gray(`  Profile: ${profilePath}`));
+        return;
+      }
+
+      if (opts.writeState) {
+        const cachePath = await writeCompletionScript(resolvedShell, program, [
+          '--profile',
+          '--dev',
+        ]);
+        console.log(cachePath);
+        return;
+      }
+
+      console.log(renderCompletionScript(resolvedShell, program, ['--profile', '--dev']));
     } catch (error) {
       console.error(
         formatError(error instanceof Error ? error.message : 'Unable to render shell completion.'),
@@ -721,6 +761,50 @@ engineCmd
       process.exitCode = 1;
     }
   });
+
+engineCmd
+  .command('billing')
+  .description('Show billing state, meter status, and forecast for a brand')
+  .argument('<brand>', 'Brand slug or brand id')
+  .action(async (brand: string) => {
+    const ok = await showBrandBillingState(brand);
+    if (!ok) {
+      process.exitCode = 1;
+    }
+  });
+
+engineCmd
+  .command('outcomes')
+  .description('Show outcome summary for a brand')
+  .argument('<brand>', 'Brand slug or brand id')
+  .option('--status <status>', 'Filter by outcome status')
+  .option('--outcome-type <outcomeType>', 'Filter by outcome type')
+  .option('--source <source>', 'Filter by outcome source')
+  .option('--from <from>', 'ISO start date/time')
+  .option('--to <to>', 'ISO end date/time')
+  .action(
+    async (
+      brand: string,
+      options: {
+        status?: string;
+        outcomeType?: string;
+        source?: string;
+        from?: string;
+        to?: string;
+      },
+    ) => {
+      const ok = await showBrandOutcomeSummary(brand, {
+        status: options.status,
+        outcomeType: options.outcomeType,
+        source: options.source,
+        from: options.from,
+        to: options.to,
+      });
+      if (!ok) {
+        process.exitCode = 1;
+      }
+    },
+  );
 
 engineCmd
   .command('executions')

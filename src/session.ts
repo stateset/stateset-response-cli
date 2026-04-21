@@ -42,9 +42,9 @@ export interface StoredMessage {
   ts?: string;
 }
 
-/** Returns the path to ~/.stateset, the root directory for all CLI state. */
+/** Returns the active CLI state directory, defaulting to ~/.stateset. */
 export function getStateSetDir(): string {
-  return path.join(os.homedir(), '.stateset');
+  return process.env.STATESET_STATE_DIR?.trim() || path.join(os.homedir(), '.stateset');
 }
 
 export function getSessionsDir(): string {
@@ -135,7 +135,7 @@ function warnSessionIssue(action: string, targetPath: string, error: unknown): v
 
 /**
  * Manages per-session conversation history (context.jsonl) and human-readable
- * logs (log.jsonl) under ~/.stateset/sessions/<sessionId>/.
+ * logs (log.jsonl) under the active CLI state directory's sessions folder.
  */
 export class SessionStore {
   private sessionId: string;

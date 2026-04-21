@@ -25,7 +25,11 @@ import {
   type BrandStudioBundle,
   writeBrandStudioBundle,
 } from '../lib/brand-studio.js';
-import { buildDefaultManifest } from '../lib/manifest-builder.js';
+import {
+  buildDefaultManifest,
+  type AutomationConfig,
+  type ClassificationPhase,
+} from '../lib/manifest-builder.js';
 import {
   buildLocalConnectorSyncPlan,
   getConnectorPreferencesFromMetadata,
@@ -57,6 +61,15 @@ import {
   buildLocalStackApplyCommand,
   parseLocalStackServices,
 } from '../lib/workflow-studio-local-stack.js';
+import {
+  analyzeWorkflowStudioFeedback,
+  renderWorkflowStudioFeedbackSummary,
+  type WorkflowStudioFeedbackAnalysis,
+} from '../lib/workflow-studio-analysis.js';
+import {
+  syncWorkflowStudioFeedbackFromGorgias,
+  syncWorkflowStudioFeedbackFromZendesk,
+} from '../lib/workflow-studio-feedback-store.js';
 import { resolveSafeOutputPath, writePrivateTextFile } from './utils.js';
 import { parseCommandArgs } from './shortcuts/utils.js';
 import {
@@ -100,6 +113,31 @@ const NOT_HANDLED: CommandResult = { handled: false };
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TEST_STATUS_POLL_DELAYS_MS = [0, 250, 750];
 type ConnectorSyncSource = 'local' | 'platform';
+type FeedbackSyncProvider = 'gorgias' | 'zendesk';
+type OutcomeSummaryFilters = {
+  from?: string;
+  to?: string;
+  status?: string;
+  outcomeType?: string;
+  source?: string;
+};
+type OutcomeListFilters = OutcomeSummaryFilters & {
+  limit?: number;
+  offset?: number;
+};
+type BillingPeriodFilters = {
+  status?: string;
+  limit?: number;
+  offset?: number;
+};
+type BillingRatedOutcomeFilters = {
+  ratingKind?: string;
+  periodId?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+  offset?: number;
+};
 
 function parseLoopMode(value: string | undefined): LoopSyncMode | undefined {
   if (value === 'subscriptions' || value === 'returns' || value === 'both') {
@@ -122,6 +160,13 @@ function parseConnectorSyncSource(value: string | undefined): ConnectorSyncSourc
   return undefined;
 }
 
+function parseFeedbackSyncProvider(value: string | undefined): FeedbackSyncProvider | undefined {
+  if (value === 'gorgias' || value === 'zendesk') {
+    return value;
+  }
+  return undefined;
+}
+
 function slugToDisplayName(slug: string): string {
   return slug
     .split(/[-_]+/)
@@ -139,8 +184,247 @@ function formatRatio(value: unknown): string {
   return typeof value === 'number' && Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : '-';
 }
 
+function formatBooleanFlag(value: unknown): string {
+  if (value === true) return 'yes';
+  if (value === false) return 'no';
+  return '-';
+}
+
+function formatMinorCurrency(value: unknown, currency: unknown = 'USD'): string {
+  const minor = typeof value === 'number' ? value : Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(minor)) return '-';
+  const currencyCode =
+    typeof currency === 'string' && currency.trim() ? currency.trim().toUpperCase() : 'USD';
+  try {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: currencyCode,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(minor / 100);
+  } catch {
+    return `${currencyCode} ${(minor / 100).toFixed(2)}`;
+  }
+}
+
+function formatOutcomeValueSummary(
+  values: unknown,
+  field: 'total_value_minor' | 'confirmed_value_minor' | 'billable_value_minor',
+): string {
+  if (!Array.isArray(values) || values.length === 0) return '-';
+  const parts = values
+    .filter(isObject)
+    .map((value) =>
+      formatMinorCurrency(
+        (value as Record<string, unknown>)[field],
+        (value as Record<string, unknown>).currency,
+      ),
+    )
+    .filter((value) => value !== '-');
+  return parts.length > 0 ? parts.join(', ') : '-';
+}
+
+function parseOptionalInteger(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 function normalizeDispatchGuardThreshold(value: string | undefined): 'warning' | 'critical' {
   return value === 'warning' ? 'warning' : 'critical';
+}
+
+function stringifyRule(rule: unknown): string {
+  return JSON.stringify(rule);
+}
+
+function uniqueNonEmptyStrings(values: Array<string | undefined | null>): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const normalized = String(value ?? '').trim();
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
+}
+
+function mergePromptHintsIntoTemplate(
+  template: string,
+  promptHints: string[],
+): { template: string; addedHints: string[] } {
+  const baseTemplate = template.trim();
+  const addedHints = promptHints.filter((hint) => !baseTemplate.includes(hint));
+  if (addedHints.length === 0) {
+    return {
+      template,
+      addedHints: [],
+    };
+  }
+
+  const suffix = ['Operational guidance:', ...addedHints.map((hint) => `- ${hint}`)].join('\n');
+  return {
+    template: baseTemplate ? `${baseTemplate}\n\n${suffix}` : suffix,
+    addedHints,
+  };
+}
+
+function buildIntentClassificationPhase(
+  automationConfig: AutomationConfig,
+  classificationFocus: string[],
+  reviewGateFocus: string[],
+): ClassificationPhase | undefined {
+  if (classificationFocus.length === 0 && reviewGateFocus.length === 0) {
+    return undefined;
+  }
+
+  const existingPhases = Array.isArray(automationConfig.classification?.phases)
+    ? automationConfig.classification.phases
+    : [];
+  const existingPhase =
+    existingPhases.find((phase) => String(phase?.name ?? '').trim() === 'intent') ??
+    existingPhases[0];
+  const existingLabels = Array.isArray(existingPhase?.labels)
+    ? existingPhase.labels.map((label) => String(label ?? '').trim())
+    : [];
+  const existingGateLabels = Array.isArray(existingPhase?.gate_labels)
+    ? existingPhase.gate_labels.map((label) => String(label ?? '').trim())
+    : [];
+
+  return {
+    name: String(existingPhase?.name ?? 'intent').trim() || 'intent',
+    prompt:
+      String(existingPhase?.prompt ?? '').trim() ||
+      'Classify the customer intent into the closest matching category.',
+    labels: uniqueNonEmptyStrings([...classificationFocus, ...existingLabels]),
+    gate_labels: uniqueNonEmptyStrings([...reviewGateFocus, ...existingGateLabels]),
+  };
+}
+
+function applyFeedbackProposalToBundle(
+  bundle: BrandStudioBundle,
+  analysis: WorkflowStudioFeedbackAnalysis,
+): {
+  bundle: BrandStudioBundle;
+  applied: {
+    skipRulesAdded: number;
+    promptHintsAdded: number;
+    classificationLabelsAdded: number;
+    reviewGateLabelsAdded: number;
+  };
+} {
+  const existingSkipRuleKeys = new Set(bundle.skipRules.map((rule) => stringifyRule(rule)));
+  const skipRulesToAdd = analysis.proposal.skip_rules_append.filter(
+    (rule) => !existingSkipRuleKeys.has(stringifyRule(rule)),
+  );
+  const nextSkipRules = [...bundle.skipRules, ...skipRulesToAdd];
+
+  const classificationFocus = uniqueNonEmptyStrings(
+    analysis.proposal.classification_focus.map((entry) => entry.value),
+  ).slice(0, 12);
+  const reviewGateFocus = uniqueNonEmptyStrings(
+    analysis.proposal.review_gate_focus.map((entry) => entry.value),
+  ).slice(0, 8);
+  const existingPhases = Array.isArray(bundle.automationConfig.classification?.phases)
+    ? bundle.automationConfig.classification.phases
+    : [];
+  const existingIntentPhase =
+    existingPhases.find((phase) => String(phase?.name ?? '').trim() === 'intent') ??
+    existingPhases[0];
+  const nextIntentPhase = buildIntentClassificationPhase(
+    bundle.automationConfig,
+    classificationFocus,
+    reviewGateFocus,
+  );
+  const retainedPhases = nextIntentPhase
+    ? existingPhases.filter(
+        (phase) => String(phase?.name ?? '').trim() !== String(nextIntentPhase.name).trim(),
+      )
+    : existingPhases;
+  const existingClassificationLabels = new Set(
+    (existingIntentPhase?.labels ?? []).map((label) => String(label ?? '').trim()).filter(Boolean),
+  );
+  const existingReviewGateLabels = new Set(
+    (existingIntentPhase?.gate_labels ?? [])
+      .map((label) => String(label ?? '').trim())
+      .filter(Boolean),
+  );
+  const { template: nextSystemPromptTemplate, addedHints } = mergePromptHintsIntoTemplate(
+    bundle.automationConfig.system_prompt_template,
+    analysis.proposal.prompt_hints,
+  );
+  const nextAutomationConfig: AutomationConfig = {
+    ...bundle.automationConfig,
+    skip_rules: nextSkipRules,
+    system_prompt_template: nextSystemPromptTemplate,
+    classification: {
+      ...bundle.automationConfig.classification,
+      enabled: nextIntentPhase ? true : bundle.automationConfig.classification.enabled,
+      phases: nextIntentPhase ? [nextIntentPhase, ...retainedPhases] : existingPhases,
+    },
+    review_gate: {
+      ...bundle.automationConfig.review_gate,
+      enabled:
+        reviewGateFocus.length > 0 ? true : Boolean(bundle.automationConfig.review_gate.enabled),
+    },
+  };
+
+  const nextBundle = buildBrandStudioBundle({
+    brandSlug: bundle.brandSlug,
+    cwd: path.dirname(path.dirname(bundle.dir)),
+    displayName: bundle.manifest.display_name,
+    manifest: bundle.manifest,
+    automationConfig: nextAutomationConfig,
+    connectors: bundle.connectors,
+    skipRules: nextSkipRules,
+    escalationPatterns: bundle.escalationPatterns,
+    sourceFiles: bundle.sourceFiles,
+    rawManifest: bundle.rawManifest,
+    rawAutomationConfig: bundle.rawAutomationConfig,
+    rawConnectors: bundle.rawConnectors,
+    rawSkipRules: bundle.rawSkipRules,
+    rawEscalationPatterns: bundle.rawEscalationPatterns,
+  });
+
+  return {
+    bundle: nextBundle,
+    applied: {
+      skipRulesAdded: skipRulesToAdd.length,
+      promptHintsAdded: addedHints.length,
+      classificationLabelsAdded: classificationFocus.filter(
+        (value) => !existingClassificationLabels.has(value),
+      ).length,
+      reviewGateLabelsAdded: reviewGateFocus.filter((value) => !existingReviewGateLabels.has(value))
+        .length,
+    },
+  };
+}
+
+function getDefaultFeedbackAnalysisDir(brandSlug: string, cwd: string): string {
+  if (brandStudioExists(brandSlug, cwd)) {
+    return path.join(cwd, '.stateset', brandSlug, 'analysis');
+  }
+  return path.join(cwd, '.stateset-analysis', brandSlug);
+}
+
+async function resolveAnalysisBrandRef(brandRef: string): Promise<string> {
+  if (!UUID_PATTERN.test(brandRef)) {
+    return brandRef;
+  }
+
+  const config = getWorkflowEngineConfig();
+  if (!config) {
+    throw new Error(
+      'Brand UUID analysis requires workflow engine configuration so the brand slug can be resolved.',
+    );
+  }
+
+  const client = new EngineClient(config);
+  const brand = await resolveRemoteBrand(client, brandRef);
+  return getBrandSlug(brand) || brandRef;
 }
 
 function parseWorkflowStudioTemplate(value: unknown): WorkflowStudioTemplateId | undefined {
@@ -227,6 +511,87 @@ function normalizeCreateBrandPayload(
   return { payload: nextPayload, templateId };
 }
 
+function cleanPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(payload).filter(([, value]) => value !== undefined));
+}
+
+function requireStringField(payload: Record<string, unknown>, field: string): void {
+  if (typeof payload[field] !== 'string' || !String(payload[field]).trim()) {
+    throw new Error(`Payload requires string field "${field}".`);
+  }
+}
+
+function requireNumberField(payload: Record<string, unknown>, field: string): void {
+  if (!Number.isInteger(payload[field])) {
+    throw new Error(`Payload requires integer field "${field}".`);
+  }
+}
+
+function requireObjectField(payload: Record<string, unknown>, field: string): void {
+  if (!isObject(payload[field]) || Array.isArray(payload[field])) {
+    throw new Error(`Payload requires object field "${field}".`);
+  }
+}
+
+function rejectLegacyFields(
+  payload: Record<string, unknown>,
+  fields: string[],
+  context: string,
+): void {
+  const present = fields.filter((field) => payload[field] !== undefined);
+  if (present.length > 0) {
+    throw new Error(
+      `${context} payload uses legacy field(s): ${present.join(', ')}. Use the Rust workflow engine contract fields instead.`,
+    );
+  }
+}
+
+function normalizeCreateWorkflowTemplatePayload(
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  rejectLegacyFields(payload, ['name', 'description', 'config'], 'Workflow template create');
+  requireStringField(payload, 'template_key');
+  requireNumberField(payload, 'version');
+  requireStringField(payload, 'workflow_type');
+  requireStringField(payload, 'runtime_target');
+  requireObjectField(payload, 'schema');
+  requireObjectField(payload, 'determinism_contract');
+  return cleanPayload(payload);
+}
+
+function normalizeUpdateWorkflowTemplatePayload(
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  rejectLegacyFields(payload, ['name', 'description', 'config'], 'Workflow template update');
+  if (payload.schema !== undefined) {
+    requireObjectField(payload, 'schema');
+  }
+  if (payload.determinism_contract !== undefined) {
+    requireObjectField(payload, 'determinism_contract');
+  }
+  return cleanPayload(payload);
+}
+
+function normalizeCreatePolicySetPayload(
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  rejectLegacyFields(payload, ['name', 'description', 'policies'], 'Policy set create');
+  requireStringField(payload, 'policy_set_key');
+  requireNumberField(payload, 'version');
+  requireObjectField(payload, 'definition');
+  return cleanPayload(payload);
+}
+
+function normalizeUpdatePolicySetPayload(
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  rejectLegacyFields(payload, ['name', 'description', 'policies'], 'Policy set update');
+  if (payload.definition !== undefined) {
+    requireObjectField(payload, 'definition');
+  }
+  return cleanPayload(payload);
+}
+
 function normalizeUpdateBrandPayload(
   payload: Record<string, unknown>,
   currentMetadata: unknown,
@@ -244,6 +609,36 @@ function normalizeUpdateBrandPayload(
     delete nextPayload.connector_preferences;
   }
   return nextPayload;
+}
+
+function normalizeCreateConnectorPayload(
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  rejectLegacyFields(payload, ['config'], 'Connector create');
+  requireStringField(payload, 'connector_key');
+  requireStringField(payload, 'connector_type');
+  requireStringField(payload, 'direction');
+  if (payload.direction !== 'inbound' && payload.direction !== 'outbound') {
+    throw new Error('Connector create payload field "direction" must be "inbound" or "outbound".');
+  }
+  requireObjectField(payload, 'target');
+  if (payload.auth !== undefined) {
+    requireObjectField(payload, 'auth');
+    const auth = payload.auth as Record<string, unknown>;
+    if (typeof auth.secret_ref === 'string' && !auth.secret_ref.startsWith('env://')) {
+      throw new Error('Connector create payload field "auth.secret_ref" must use env://VAR.');
+    }
+  }
+  if (payload.retry_policy !== undefined) {
+    requireObjectField(payload, 'retry_policy');
+  }
+  if (payload.metadata !== undefined) {
+    requireObjectField(payload, 'metadata');
+  }
+  return cleanPayload({
+    ...payload,
+    enabled: payload.enabled ?? true,
+  });
 }
 
 export async function showEngineStatus(): Promise<void> {
@@ -455,6 +850,536 @@ export async function showBrandDetails(brandRef: string): Promise<boolean> {
       console.log(chalk.bold('  Metadata'));
       console.log(chalk.gray(`  ${formatJsonBlock(brand.metadata)}`));
     }
+    return true;
+  } catch (err) {
+    const msg = err instanceof EngineClientError ? err.message : String(err);
+    console.log(chalk.red(`  Error: ${msg}`));
+    return false;
+  }
+}
+
+async function resolveBillingBrand(client: EngineClient, brandRef: string) {
+  const brand = await resolveRemoteBrand(client, brandRef);
+  const brandId = getBrandId(brand);
+  if (!brandId) {
+    throw new Error('Remote brand is missing id.');
+  }
+  return {
+    brand,
+    brandId,
+    brandSlug: getBrandSlug(brand) || brandRef,
+  };
+}
+
+export async function showBrandBillingState(brandRef: string): Promise<boolean> {
+  const config = getWorkflowEngineConfig();
+  if (!config) {
+    printNotConfigured();
+    return false;
+  }
+
+  const client = new EngineClient(config);
+  try {
+    const { brandId, brandSlug } = await resolveBillingBrand(client, brandRef);
+
+    const result = (await client.getBrandBillingState(brandId)) as Record<string, unknown>;
+    const profile = isObject(result.profile) ? (result.profile as Record<string, unknown>) : null;
+    const summary = isObject(result.summary) ? (result.summary as Record<string, unknown>) : {};
+    const forecast = isObject(result.forecast)
+      ? (result.forecast as Record<string, unknown>)
+      : null;
+    const forecastLineItems = Array.isArray(forecast?.line_items)
+      ? forecast.line_items.filter(isObject)
+      : [];
+
+    const rows = [
+      { field: 'brand', value: brandSlug },
+      { field: 'brand_id', value: brandId },
+      { field: 'billing_enabled', value: formatBooleanFlag(profile?.enabled) },
+      { field: 'pricing_model', value: String(profile?.pricing_model ?? '-') },
+      { field: 'provider', value: String(profile?.provider ?? '-') },
+      {
+        field: 'default_currency',
+        value: String(profile?.default_currency ?? forecast?.currency ?? '-'),
+      },
+      { field: 'meter_event_namespace', value: String(profile?.meter_event_namespace ?? '-') },
+      { field: 'stripe_customer_id', value: String(profile?.stripe_customer_id ?? '-') },
+      {
+        field: 'stripe_subscription_id',
+        value: String(profile?.stripe_subscription_id ?? '-'),
+      },
+      { field: 'billing_email', value: String(profile?.billing_email ?? '-') },
+      { field: 'pending_events', value: String(summary.pending_events ?? 0) },
+      { field: 'failed_events', value: String(summary.failed_events ?? 0) },
+      { field: 'sent_events', value: String(summary.sent_events ?? 0) },
+      {
+        field: 'pending_billable_outcomes',
+        value: String(summary.pending_billable_outcomes ?? 0),
+      },
+      { field: 'last_sent_at', value: formatDateTime(summary.last_sent_at) },
+      {
+        field: 'forecast_total',
+        value: forecast
+          ? formatMinorCurrency(forecast.estimated_total_minor, forecast.currency)
+          : '-',
+      },
+      {
+        field: 'forecast_window',
+        value:
+          forecast?.period_start && forecast?.period_end
+            ? `${formatDateTime(forecast.period_start)} -> ${formatDateTime(forecast.period_end)}`
+            : '-',
+      },
+    ];
+
+    console.log(chalk.bold(`  Billing State: ${brandSlug}`));
+    console.log(formatTable(rows, ['field', 'value']));
+
+    if (forecastLineItems.length > 0) {
+      const lineItemRows = forecastLineItems.map((item) => ({
+        key: String(item.key ?? '-'),
+        label: String(item.label ?? '-'),
+        quantity: String(item.quantity ?? 0),
+        billable_quantity: String(item.billable_quantity ?? 0),
+        unit_amount: formatMinorCurrency(item.unit_amount_minor, item.currency),
+        subtotal: formatMinorCurrency(item.subtotal_minor, item.currency),
+      }));
+      console.log(chalk.bold('  Forecast Line Items'));
+      console.log(
+        formatTable(lineItemRows, [
+          'key',
+          'label',
+          'quantity',
+          'billable_quantity',
+          'unit_amount',
+          'subtotal',
+        ]),
+      );
+    }
+
+    return true;
+  } catch (err) {
+    const msg = err instanceof EngineClientError ? err.message : String(err);
+    console.log(chalk.red(`  Error: ${msg}`));
+    return false;
+  }
+}
+
+export async function upsertBrandBillingProfileFromFile(
+  brandRef: string,
+  filePath: string,
+  cwd = process.cwd(),
+): Promise<boolean> {
+  const config = getWorkflowEngineConfig();
+  if (!config) {
+    printNotConfigured();
+    return false;
+  }
+
+  const client = new EngineClient(config);
+  try {
+    const { brandId, brandSlug } = await resolveBillingBrand(client, brandRef);
+    const payload = readJsonObjectFromFile(filePath, cwd);
+    const result = await client.upsertBrandBillingProfile(brandId, payload);
+    console.log(chalk.green(`  Billing profile updated for ${brandSlug}.`));
+    console.log(chalk.gray(`  ${formatJsonBlock(result)}`));
+    return true;
+  } catch (err) {
+    const msg = err instanceof EngineClientError ? err.message : String(err);
+    console.log(chalk.red(`  Error: ${msg}`));
+    return false;
+  }
+}
+
+export async function syncBrandBillingEventsView(
+  brandRef: string,
+  limit?: number,
+): Promise<boolean> {
+  const config = getWorkflowEngineConfig();
+  if (!config) {
+    printNotConfigured();
+    return false;
+  }
+
+  const client = new EngineClient(config);
+  try {
+    const { brandId, brandSlug } = await resolveBillingBrand(client, brandRef);
+    const result = await client.syncBrandBillingEvents(brandId, { limit });
+    console.log(chalk.bold(`  Billing Sync: ${brandSlug}`));
+    console.log(chalk.gray(`  ${formatJsonBlock(result)}`));
+    return true;
+  } catch (err) {
+    const msg = err instanceof EngineClientError ? err.message : String(err);
+    console.log(chalk.red(`  Error: ${msg}`));
+    return false;
+  }
+}
+
+export async function showBrandBillingContract(brandRef: string): Promise<boolean> {
+  const config = getWorkflowEngineConfig();
+  if (!config) {
+    printNotConfigured();
+    return false;
+  }
+
+  const client = new EngineClient(config);
+  try {
+    const { brandId, brandSlug } = await resolveBillingBrand(client, brandRef);
+    const contract = await client.getBrandBillingContract(brandId);
+    console.log(chalk.bold(`  Billing Contract: ${brandSlug}`));
+    if (!contract) {
+      console.log(chalk.gray('  No billing contract configured.'));
+      return true;
+    }
+    console.log(chalk.gray(`  ${formatJsonBlock(contract)}`));
+    return true;
+  } catch (err) {
+    const msg = err instanceof EngineClientError ? err.message : String(err);
+    console.log(chalk.red(`  Error: ${msg}`));
+    return false;
+  }
+}
+
+export async function upsertBrandBillingContractFromFile(
+  brandRef: string,
+  filePath: string,
+  cwd = process.cwd(),
+): Promise<boolean> {
+  const config = getWorkflowEngineConfig();
+  if (!config) {
+    printNotConfigured();
+    return false;
+  }
+
+  const client = new EngineClient(config);
+  try {
+    const { brandId, brandSlug } = await resolveBillingBrand(client, brandRef);
+    const payload = readJsonObjectFromFile(filePath, cwd);
+    const result = await client.upsertBrandBillingContract(brandId, payload);
+    console.log(chalk.green(`  Billing contract updated for ${brandSlug}.`));
+    console.log(chalk.gray(`  ${formatJsonBlock(result)}`));
+    return true;
+  } catch (err) {
+    const msg = err instanceof EngineClientError ? err.message : String(err);
+    console.log(chalk.red(`  Error: ${msg}`));
+    return false;
+  }
+}
+
+export async function listBrandBillingPeriodsView(
+  brandRef: string,
+  filters: BillingPeriodFilters = {},
+): Promise<boolean> {
+  const config = getWorkflowEngineConfig();
+  if (!config) {
+    printNotConfigured();
+    return false;
+  }
+
+  const client = new EngineClient(config);
+  try {
+    const { brandId, brandSlug } = await resolveBillingBrand(client, brandRef);
+    const result = await client.listBrandBillingPeriods(brandId, filters);
+    const periods = asItems(result).filter(isObject) as Record<string, unknown>[];
+
+    console.log(chalk.bold(`  Billing Periods: ${brandSlug}`));
+    if (periods.length === 0) {
+      console.log(chalk.gray('  No billing periods found.'));
+      return true;
+    }
+
+    console.log(
+      formatTable(
+        periods.map((period) => ({
+          id: String(period.id ?? '-'),
+          status: String(period.status ?? '-'),
+          start: formatDateTime(period.period_start ?? period.starts_at),
+          end: formatDateTime(period.period_end ?? period.ends_at),
+          currency: String(period.currency ?? '-'),
+          total: formatMinorCurrency(
+            period.total_minor ?? period.billable_amount_minor,
+            period.currency,
+          ),
+          closed_at: formatDateTime(period.closed_at),
+        })),
+        ['id', 'status', 'start', 'end', 'currency', 'total', 'closed_at'],
+      ),
+    );
+    return true;
+  } catch (err) {
+    const msg = err instanceof EngineClientError ? err.message : String(err);
+    console.log(chalk.red(`  Error: ${msg}`));
+    return false;
+  }
+}
+
+export async function closeBrandBillingPeriodView(
+  brandRef: string,
+  periodId: string,
+): Promise<boolean> {
+  const config = getWorkflowEngineConfig();
+  if (!config) {
+    printNotConfigured();
+    return false;
+  }
+
+  const client = new EngineClient(config);
+  try {
+    const { brandId, brandSlug } = await resolveBillingBrand(client, brandRef);
+    const result = await client.closeBrandBillingPeriod(brandId, periodId);
+    console.log(chalk.green(`  Closed billing period ${periodId} for ${brandSlug}.`));
+    console.log(chalk.gray(`  ${formatJsonBlock(result)}`));
+    return true;
+  } catch (err) {
+    const msg = err instanceof EngineClientError ? err.message : String(err);
+    console.log(chalk.red(`  Error: ${msg}`));
+    return false;
+  }
+}
+
+export async function listBrandRatedOutcomesView(
+  brandRef: string,
+  filters: BillingRatedOutcomeFilters = {},
+): Promise<boolean> {
+  const config = getWorkflowEngineConfig();
+  if (!config) {
+    printNotConfigured();
+    return false;
+  }
+
+  const client = new EngineClient(config);
+  try {
+    const { brandId, brandSlug } = await resolveBillingBrand(client, brandRef);
+    const result = await client.listBrandRatedOutcomes(brandId, filters);
+    const outcomes = asItems(result).filter(isObject) as Record<string, unknown>[];
+
+    console.log(chalk.bold(`  Rated Outcomes: ${brandSlug}`));
+    if (outcomes.length === 0) {
+      console.log(chalk.gray('  No rated outcomes found.'));
+      return true;
+    }
+
+    console.log(
+      formatTable(
+        outcomes.map((outcome) => ({
+          id: String(outcome.id ?? outcome.outcome_id ?? '-'),
+          outcome_type: String(outcome.outcome_type ?? '-'),
+          rating_kind: String(outcome.rating_kind ?? '-'),
+          quantity: String(outcome.quantity ?? '-'),
+          unit_amount: formatMinorCurrency(outcome.unit_amount_minor, outcome.currency),
+          subtotal: formatMinorCurrency(
+            outcome.subtotal_minor ?? outcome.amount_minor,
+            outcome.currency,
+          ),
+          period_id: String(outcome.period_id ?? '-'),
+          occurred_at: formatDateTime(outcome.occurred_at),
+        })),
+        [
+          'id',
+          'outcome_type',
+          'rating_kind',
+          'quantity',
+          'unit_amount',
+          'subtotal',
+          'period_id',
+          'occurred_at',
+        ],
+      ),
+    );
+    return true;
+  } catch (err) {
+    const msg = err instanceof EngineClientError ? err.message : String(err);
+    console.log(chalk.red(`  Error: ${msg}`));
+    return false;
+  }
+}
+
+export async function showBrandBillingReconciliation(brandRef: string): Promise<boolean> {
+  const config = getWorkflowEngineConfig();
+  if (!config) {
+    printNotConfigured();
+    return false;
+  }
+
+  const client = new EngineClient(config);
+  try {
+    const { brandId, brandSlug } = await resolveBillingBrand(client, brandRef);
+    const result = await client.getBrandBillingReconciliation(brandId);
+    console.log(chalk.bold(`  Billing Reconciliation: ${brandSlug}`));
+    console.log(chalk.gray(`  ${formatJsonBlock(result)}`));
+    return true;
+  } catch (err) {
+    const msg = err instanceof EngineClientError ? err.message : String(err);
+    console.log(chalk.red(`  Error: ${msg}`));
+    return false;
+  }
+}
+
+export async function showBrandOutcomeSummary(
+  brandRef: string,
+  filters: OutcomeSummaryFilters = {},
+): Promise<boolean> {
+  const config = getWorkflowEngineConfig();
+  if (!config) {
+    printNotConfigured();
+    return false;
+  }
+
+  const client = new EngineClient(config);
+  try {
+    const brand = await resolveRemoteBrand(client, brandRef);
+    const brandId = getBrandId(brand);
+    const brandSlug = getBrandSlug(brand) || brandRef;
+    if (!brandId) {
+      throw new Error('Remote brand is missing id.');
+    }
+
+    const result = (await client.getBrandOutcomeSummary(brandId, filters)) as Record<
+      string,
+      unknown
+    >;
+    const window = isObject(result.window) ? (result.window as Record<string, unknown>) : {};
+    const byTypeRows = Array.isArray(result.by_type)
+      ? result.by_type.filter(isObject).map((item) => ({
+          outcome_type: String(item.outcome_type ?? '-'),
+          total_count: String(item.total_count ?? 0),
+          confirmed_count: String(item.confirmed_count ?? 0),
+          billable_count: String(item.billable_count ?? 0),
+          total_quantity: String(item.total_quantity ?? 0),
+          billable_value: formatOutcomeValueSummary(item.values, 'billable_value_minor'),
+        }))
+      : [];
+
+    const rows = [
+      { field: 'brand', value: brandSlug },
+      { field: 'brand_id', value: String(result.brand_id ?? brandId) },
+      { field: 'from', value: formatDateTime(window.from) },
+      { field: 'to', value: formatDateTime(window.to) },
+      { field: 'total_count', value: String(result.total_count ?? 0) },
+      { field: 'confirmed_count', value: String(result.confirmed_count ?? 0) },
+      { field: 'billable_count', value: String(result.billable_count ?? 0) },
+      { field: 'total_quantity', value: String(result.total_quantity ?? 0) },
+      {
+        field: 'total_value',
+        value: formatOutcomeValueSummary(result.values, 'total_value_minor'),
+      },
+      {
+        field: 'billable_value',
+        value: formatOutcomeValueSummary(result.values, 'billable_value_minor'),
+      },
+    ];
+
+    console.log(chalk.bold(`  Outcome Summary: ${brandSlug}`));
+    console.log(formatTable(rows, ['field', 'value']));
+
+    if (byTypeRows.length > 0) {
+      console.log(chalk.bold('  Outcomes By Type'));
+      console.log(
+        formatTable(byTypeRows, [
+          'outcome_type',
+          'total_count',
+          'confirmed_count',
+          'billable_count',
+          'total_quantity',
+          'billable_value',
+        ]),
+      );
+    }
+
+    return true;
+  } catch (err) {
+    const msg = err instanceof EngineClientError ? err.message : String(err);
+    console.log(chalk.red(`  Error: ${msg}`));
+    return false;
+  }
+}
+
+export async function listBrandOutcomesView(
+  brandRef: string,
+  filters: OutcomeListFilters = {},
+): Promise<boolean> {
+  const config = getWorkflowEngineConfig();
+  if (!config) {
+    printNotConfigured();
+    return false;
+  }
+
+  const client = new EngineClient(config);
+  try {
+    const brand = await resolveRemoteBrand(client, brandRef);
+    const brandId = getBrandId(brand);
+    const brandSlug = getBrandSlug(brand) || brandRef;
+    if (!brandId) {
+      throw new Error('Remote brand is missing id.');
+    }
+
+    const result = await client.listBrandOutcomes(brandId, filters);
+    const outcomes = asItems(result).filter(isObject) as Record<string, unknown>[];
+
+    console.log(chalk.bold(`  Outcomes: ${brandSlug}`));
+    if (outcomes.length === 0) {
+      console.log(chalk.gray('  No outcomes found.'));
+      return true;
+    }
+
+    console.log(
+      formatTable(
+        outcomes.map((outcome) => ({
+          id: String(outcome.id ?? '-'),
+          outcome_type: String(outcome.outcome_type ?? '-'),
+          status: String(outcome.status ?? '-'),
+          source: String(outcome.source ?? '-'),
+          channel: String(outcome.channel ?? '-'),
+          quantity: String(outcome.quantity ?? '-'),
+          value: formatMinorCurrency(outcome.value_minor, outcome.currency),
+          billable: formatBooleanFlag(outcome.billable),
+          occurred_at: formatDateTime(outcome.occurred_at),
+        })),
+        [
+          'id',
+          'outcome_type',
+          'status',
+          'source',
+          'channel',
+          'quantity',
+          'value',
+          'billable',
+          'occurred_at',
+        ],
+      ),
+    );
+    return true;
+  } catch (err) {
+    const msg = err instanceof EngineClientError ? err.message : String(err);
+    console.log(chalk.red(`  Error: ${msg}`));
+    return false;
+  }
+}
+
+export async function recordBrandOutcomeFromFile(
+  brandRef: string,
+  filePath: string,
+  cwd = process.cwd(),
+): Promise<boolean> {
+  const config = getWorkflowEngineConfig();
+  if (!config) {
+    printNotConfigured();
+    return false;
+  }
+
+  const client = new EngineClient(config);
+  try {
+    const brand = await resolveRemoteBrand(client, brandRef);
+    const brandId = getBrandId(brand);
+    const brandSlug = getBrandSlug(brand) || brandRef;
+    if (!brandId) {
+      throw new Error('Remote brand is missing id.');
+    }
+
+    const payload = readJsonObjectFromFile(filePath, cwd);
+    const result = await client.recordBrandOutcome(brandId, payload);
+    console.log(chalk.green(`  Outcome recorded for ${brandSlug}.`));
+    console.log(chalk.gray(`  ${formatJsonBlock(result)}`));
     return true;
   } catch (err) {
     const msg = err instanceof EngineClientError ? err.message : String(err);
@@ -1201,7 +2126,7 @@ export async function createBrandConnectorFromFile(
       throw new Error('Remote brand is missing id.');
     }
 
-    const payload = readJsonObjectFromFile(filePath, cwd);
+    const payload = normalizeCreateConnectorPayload(readJsonObjectFromFile(filePath, cwd));
     const result = await client.createConnector(brandId, payload);
     console.log(chalk.green(`  Connector created for ${brandSlug}.`));
     console.log(chalk.gray(`  ${JSON.stringify(result, null, 2)}`));
@@ -1620,37 +2545,25 @@ export async function syncBrandConnectors(
 
     await client.updateBrand(brandId, { metadata: nextRemoteMetadata });
 
-    const engineConnectors = asItems(await client.listConnectors(brandId));
-    const existingIdentities = new Set(
-      engineConnectors.map((connector) => connectorIdentity(connector)),
-    );
-    let created = 0;
     let failed = 0;
 
-    for (const connector of plan.connectors) {
-      if (existingIdentities.has(connectorIdentity(connector))) {
-        continue;
-      }
-      try {
-        await client.createConnector(brandId, connector as unknown as Record<string, unknown>);
-        existingIdentities.add(connectorIdentity(connector));
-        created += 1;
-      } catch (err) {
-        failed += 1;
-        const msg = err instanceof Error ? err.message : String(err);
-        console.log(
-          chalk.yellow(
-            `  Warning: could not create ${connector.connector_type} connector (${msg}).`,
-          ),
-        );
-      }
+    try {
+      await client.replaceConnectors(
+        brandId,
+        plan.connectors as unknown as Array<Record<string, unknown>>,
+      );
+    } catch (err) {
+      failed = plan.connectors.length || 1;
+      throw err;
     }
 
     console.log(chalk.green(`  Synced connector plan for ${brandSlug}.`));
     console.log(chalk.gray(`  Source: ${source}.`));
     console.log(chalk.gray(`  Local bundle updated at ${nextBundle.dir}.`));
     console.log(chalk.gray(`  Remote connector preferences set to loop_mode=${loopMode}.`));
-    console.log(chalk.gray(`  Created ${created} missing connector(s); ${failed} failed.`));
+    console.log(
+      chalk.gray(`  Reconciled ${plan.connectors.length} connector(s); ${failed} failed.`),
+    );
     if (plan.requiredEnvVars.length > 0) {
       const missingSecretRefs = plan.requiredEnvVars.filter((entry) => !entry.presentInShell);
       if (missingSecretRefs.length > 0) {
@@ -1785,6 +2698,229 @@ export async function ingestBrandEventFromFile(
     return true;
   } catch (err) {
     const msg = err instanceof EngineClientError ? err.message : String(err);
+    console.log(chalk.red(`  Error: ${msg}`));
+    return false;
+  }
+}
+
+export async function analyzeBrandWorkflowFeedback(
+  brandRef: string,
+  options: {
+    cwd?: string;
+    sourcePath?: string;
+    ticketsPath?: string;
+    responsesPath?: string;
+    outPath?: string;
+    apply?: boolean;
+    push?: boolean;
+    json?: boolean;
+  } = {},
+): Promise<boolean> {
+  const cwd = options.cwd ?? process.cwd();
+
+  try {
+    const resolvedBrandRef = await resolveAnalysisBrandRef(brandRef);
+    const analysis = analyzeWorkflowStudioFeedback({
+      brandRef: resolvedBrandRef,
+      cwd,
+      sourcePath: options.sourcePath,
+      ticketsPath: options.ticketsPath,
+      responsesPath: options.responsesPath,
+    });
+
+    let nextAnalysis: WorkflowStudioFeedbackAnalysis = analysis;
+    if (brandStudioExists(analysis.brand_slug, cwd)) {
+      const bundle = loadBrandStudioBundle(analysis.brand_slug, cwd);
+      const existingRuleKeys = new Set(bundle.skipRules.map((rule) => stringifyRule(rule)));
+      const nextProposal = {
+        ...analysis.proposal,
+        skip_rules_append: analysis.proposal.skip_rules_append.filter(
+          (rule) => !existingRuleKeys.has(stringifyRule(rule)),
+        ),
+      };
+      nextAnalysis = {
+        ...analysis,
+        proposal: nextProposal,
+      };
+    }
+
+    if (options.apply || options.push) {
+      if (!brandStudioExists(nextAnalysis.brand_slug, cwd)) {
+        const pulled = await pullBrandStudioConfig(brandRef, cwd);
+        if (!pulled || !brandStudioExists(nextAnalysis.brand_slug, cwd)) {
+          throw new Error(
+            `Local brand config not found for ${nextAnalysis.brand_slug}. Pull it first with /engine config pull ${nextAnalysis.brand_slug}.`,
+          );
+        }
+      }
+
+      const bundle = loadBrandStudioBundle(nextAnalysis.brand_slug, cwd);
+      const applied = applyFeedbackProposalToBundle(bundle, nextAnalysis);
+      writeBrandStudioBundle(applied.bundle);
+
+      console.log(chalk.green(`  Applied proposal locally to ${applied.bundle.dir}`));
+      console.log(
+        chalk.gray(
+          `  Added ${applied.applied.skipRulesAdded} skip rule(s), ${applied.applied.promptHintsAdded} prompt hint(s), ${applied.applied.classificationLabelsAdded} classification label(s), ${applied.applied.reviewGateLabelsAdded} review gate label(s).`,
+        ),
+      );
+
+      if (options.push) {
+        const pushed = await pushBrandStudioConfig(nextAnalysis.brand_slug, cwd);
+        if (!pushed) {
+          return false;
+        }
+      } else {
+        console.log(chalk.gray(`  Next: /engine config push ${nextAnalysis.brand_slug}`));
+      }
+    }
+
+    const outputDir = options.outPath?.trim()
+      ? options.outPath.trim()
+      : getDefaultFeedbackAnalysisDir(nextAnalysis.brand_slug, cwd);
+    const allowedRoots = [cwd, path.join(cwd, '.stateset'), path.join(cwd, '.stateset-analysis')];
+    const analysisPath = resolveSafeOutputPath(path.join(outputDir, 'feedback-analysis.json'), {
+      allowedRoots,
+      label: 'Feedback analysis output path',
+    });
+    const proposalPath = resolveSafeOutputPath(path.join(outputDir, 'config-proposal.json'), {
+      allowedRoots,
+      label: 'Feedback proposal output path',
+    });
+    const summaryPath = resolveSafeOutputPath(path.join(outputDir, 'feedback-summary.md'), {
+      allowedRoots,
+      label: 'Feedback summary output path',
+    });
+
+    writePrivateTextFile(analysisPath, JSON.stringify(nextAnalysis, null, 2) + '\n', {
+      label: 'Feedback analysis output',
+    });
+    writePrivateTextFile(proposalPath, JSON.stringify(nextAnalysis.proposal, null, 2) + '\n', {
+      label: 'Feedback proposal output',
+    });
+    writePrivateTextFile(summaryPath, renderWorkflowStudioFeedbackSummary(nextAnalysis), {
+      label: 'Feedback summary output',
+    });
+
+    console.log(chalk.bold(`  Feedback Analysis: ${nextAnalysis.brand_slug}`));
+    console.log(
+      chalk.gray(
+        `  Tickets matched: ${nextAnalysis.totals.matched_ticket_rows}/${nextAnalysis.totals.ticket_rows}  Responses matched: ${nextAnalysis.totals.matched_response_rows}/${nextAnalysis.totals.response_rows}`,
+      ),
+    );
+    console.log(
+      chalk.gray(
+        `  Noise tickets: ${nextAnalysis.totals.noise_ticket_rows}  Agent takeovers: ${nextAnalysis.totals.agent_takeover_rows}  Brand-boundary responses: ${nextAnalysis.totals.brand_boundary_responses}`,
+      ),
+    );
+
+    if (nextAnalysis.summaries.intents.length > 0) {
+      console.log(chalk.bold('  Top Intents'));
+      console.log(
+        formatTable(
+          nextAnalysis.summaries.intents.slice(0, 8).map((entry) => ({
+            intent: entry.value,
+            count: String(entry.count),
+            sample_ticket_ids: entry.sample_ticket_ids.join(', ') || '-',
+          })),
+          ['intent', 'count', 'sample_ticket_ids'],
+        ),
+      );
+    }
+
+    if (nextAnalysis.proposal.skip_rules_append.length > 0) {
+      console.log(chalk.bold('  Suggested Skip Rules'));
+      console.log(
+        chalk.gray(`  ${JSON.stringify(nextAnalysis.proposal.skip_rules_append, null, 2)}`),
+      );
+    }
+
+    for (const hint of nextAnalysis.proposal.prompt_hints) {
+      console.log(chalk.gray(`  Prompt hint: ${hint}`));
+    }
+
+    console.log(chalk.green(`  Wrote analysis to ${analysisPath}`));
+    console.log(chalk.green(`  Wrote proposal to ${proposalPath}`));
+    console.log(chalk.green(`  Wrote summary to ${summaryPath}`));
+
+    if (options.json) {
+      console.log(JSON.stringify(nextAnalysis, null, 2));
+    }
+
+    return true;
+  } catch (err) {
+    const msg =
+      err instanceof EngineClientError || err instanceof Error ? err.message : String(err);
+    console.log(chalk.red(`  Error: ${msg}`));
+    return false;
+  }
+}
+
+export async function syncBrandWorkflowFeedback(
+  brandRef: string,
+  options: {
+    cwd?: string;
+    provider?: FeedbackSyncProvider;
+    pageLimit?: number;
+    maxPages?: number;
+    sinceDays?: number;
+    analyze?: boolean;
+    apply?: boolean;
+    push?: boolean;
+    json?: boolean;
+  } = {},
+): Promise<boolean> {
+  const cwd = options.cwd ?? process.cwd();
+
+  try {
+    const resolvedBrandRef = await resolveAnalysisBrandRef(brandRef);
+    const provider = options.provider ?? 'gorgias';
+    const result =
+      provider === 'zendesk'
+        ? await syncWorkflowStudioFeedbackFromZendesk({
+            brandRef: resolvedBrandRef,
+            cwd,
+            pageLimit: options.pageLimit,
+            maxPages: options.maxPages,
+            sinceDays: options.sinceDays,
+          })
+        : await syncWorkflowStudioFeedbackFromGorgias({
+            brandRef: resolvedBrandRef,
+            cwd,
+            pageLimit: options.pageLimit,
+            maxPages: options.maxPages,
+          });
+
+    console.log(chalk.bold(`  Feedback Sync: ${result.brandSlug} (${result.provider})`));
+    console.log(
+      chalk.gray(
+        `  Pages fetched: ${result.pagesFetched}  Tickets scanned: ${result.ticketsScanned}  Tickets upserted: ${result.ticketsUpserted}`,
+      ),
+    );
+    console.log(chalk.gray(`  Responses stored: ${result.responsesUpserted}`));
+    if (result.newestTicketUpdatedAt) {
+      console.log(chalk.gray(`  Newest ticket update: ${result.newestTicketUpdatedAt}`));
+    }
+    console.log(chalk.green(`  Wrote feedback store to ${result.storeDir}`));
+
+    if (options.analyze || options.apply || options.push) {
+      return analyzeBrandWorkflowFeedback(result.brandSlug, {
+        cwd,
+        sourcePath: result.storeDir,
+        apply: options.apply,
+        push: options.push,
+        json: options.json,
+      });
+    }
+
+    if (options.json) {
+      console.log(JSON.stringify(result, null, 2));
+    }
+
+    return true;
+  } catch (err) {
+    const msg =
+      err instanceof EngineClientError || err instanceof Error ? err.message : String(err);
     console.log(chalk.red(`  Error: ${msg}`));
     return false;
   }
@@ -1933,7 +3069,7 @@ export async function createWorkflowTemplateFromFile(
 
   const client = new EngineClient(config);
   try {
-    const payload = readJsonObjectFromFile(filePath, cwd);
+    const payload = normalizeCreateWorkflowTemplatePayload(readJsonObjectFromFile(filePath, cwd));
     const result = await client.createWorkflowTemplate(payload);
     console.log(chalk.green('  Workflow template created.'));
     console.log(chalk.gray(`  ${JSON.stringify(result, null, 2)}`));
@@ -1957,7 +3093,7 @@ export async function updateWorkflowTemplateFromFile(
 
   const client = new EngineClient(config);
   try {
-    const patch = readJsonObjectFromFile(filePath, cwd);
+    const patch = normalizeUpdateWorkflowTemplatePayload(readJsonObjectFromFile(filePath, cwd));
     const result = await client.updateWorkflowTemplate(templateKey, version, patch);
     console.log(chalk.green(`  Workflow template ${templateKey} v${version} updated.`));
     console.log(chalk.gray(`  ${JSON.stringify(result, null, 2)}`));
@@ -2017,7 +3153,7 @@ export async function createPolicySetFromFile(
 
   const client = new EngineClient(config);
   try {
-    const payload = readJsonObjectFromFile(filePath, cwd);
+    const payload = normalizeCreatePolicySetPayload(readJsonObjectFromFile(filePath, cwd));
     const result = await client.createPolicySet(payload);
     console.log(chalk.green('  Policy set created.'));
     console.log(chalk.gray(`  ${JSON.stringify(result, null, 2)}`));
@@ -2041,7 +3177,7 @@ export async function updatePolicySetFromFile(
 
   const client = new EngineClient(config);
   try {
-    const patch = readJsonObjectFromFile(filePath, cwd);
+    const patch = normalizeUpdatePolicySetPayload(readJsonObjectFromFile(filePath, cwd));
     const result = await client.updatePolicySet(policySetKey, version, patch);
     console.log(chalk.green(`  Policy set ${policySetKey} v${version} updated.`));
     console.log(chalk.gray(`  ${JSON.stringify(result, null, 2)}`));
@@ -2267,6 +3403,244 @@ export async function handleEngineCommand(input: string, ctx: ChatContext): Prom
         return { handled: true };
       }
       await validateEngineBrand(brandRef);
+      return { handled: true };
+    }
+
+    case 'billing': {
+      const usage =
+        '  Usage: /engine billing <brand-slug|brand-id> | /engine billing profile <brand> <json-file> | /engine billing sync <brand> [--limit <n>] | /engine billing contract <brand> [upsert <json-file>] | /engine billing periods <brand> [--status <status>] [--limit <n>] [--offset <n>] | /engine billing close-period <brand> <period-id> | /engine billing rated-outcomes <brand> [--rating-kind <kind>] [--period-id <id>] [--from <iso>] [--to <iso>] [--limit <n>] [--offset <n>] | /engine billing reconciliation <brand>';
+      const billingAction = parts[1];
+      if (!billingAction) {
+        console.log(chalk.red(usage));
+        return { handled: true };
+      }
+      if (billingAction === 'profile') {
+        const brandRef = parts[2];
+        const filePath = parts[3];
+        if (!brandRef || !filePath) {
+          console.log(
+            chalk.red('  Usage: /engine billing profile <brand-slug|brand-id> <json-file>'),
+          );
+          return { handled: true };
+        }
+        await upsertBrandBillingProfileFromFile(brandRef, filePath, ctx.cwd);
+        return { handled: true };
+      }
+      if (billingAction === 'sync') {
+        const brandRef = parts[2];
+        if (!brandRef) {
+          console.log(
+            chalk.red('  Usage: /engine billing sync <brand-slug|brand-id> [--limit <n>]'),
+          );
+          return { handled: true };
+        }
+        let options: Record<string, string>;
+        try {
+          ({ options } = parseCommandArgs(parts.slice(3)));
+        } catch (err) {
+          console.log(chalk.red(`  Error: ${err instanceof Error ? err.message : String(err)}`));
+          console.log(
+            chalk.red('  Usage: /engine billing sync <brand-slug|brand-id> [--limit <n>]'),
+          );
+          return { handled: true };
+        }
+        await syncBrandBillingEventsView(brandRef, parseOptionalInteger(options.limit));
+        return { handled: true };
+      }
+      if (billingAction === 'contract') {
+        const brandRef = parts[2];
+        if (!brandRef) {
+          console.log(
+            chalk.red(
+              '  Usage: /engine billing contract <brand-slug|brand-id> [upsert <json-file>]',
+            ),
+          );
+          return { handled: true };
+        }
+        if (parts[3] === 'upsert') {
+          const filePath = parts[4];
+          if (!filePath) {
+            console.log(
+              chalk.red(
+                '  Usage: /engine billing contract <brand-slug|brand-id> upsert <json-file>',
+              ),
+            );
+            return { handled: true };
+          }
+          await upsertBrandBillingContractFromFile(brandRef, filePath, ctx.cwd);
+          return { handled: true };
+        }
+        await showBrandBillingContract(brandRef);
+        return { handled: true };
+      }
+      if (billingAction === 'periods') {
+        const brandRef = parts[2];
+        if (!brandRef) {
+          console.log(
+            chalk.red(
+              '  Usage: /engine billing periods <brand-slug|brand-id> [--status <status>] [--limit <n>] [--offset <n>]',
+            ),
+          );
+          return { handled: true };
+        }
+        let options: Record<string, string>;
+        try {
+          ({ options } = parseCommandArgs(parts.slice(3)));
+        } catch (err) {
+          console.log(chalk.red(`  Error: ${err instanceof Error ? err.message : String(err)}`));
+          console.log(
+            chalk.red(
+              '  Usage: /engine billing periods <brand-slug|brand-id> [--status <status>] [--limit <n>] [--offset <n>]',
+            ),
+          );
+          return { handled: true };
+        }
+        await listBrandBillingPeriodsView(brandRef, {
+          status: options.status,
+          limit: parseOptionalInteger(options.limit),
+          offset: parseOptionalInteger(options.offset),
+        });
+        return { handled: true };
+      }
+      if (billingAction === 'close-period') {
+        const brandRef = parts[2];
+        const periodId = parts[3];
+        if (!brandRef || !periodId) {
+          console.log(
+            chalk.red('  Usage: /engine billing close-period <brand-slug|brand-id> <period-id>'),
+          );
+          return { handled: true };
+        }
+        await closeBrandBillingPeriodView(brandRef, periodId);
+        return { handled: true };
+      }
+      if (billingAction === 'rated-outcomes') {
+        const brandRef = parts[2];
+        if (!brandRef) {
+          console.log(
+            chalk.red(
+              '  Usage: /engine billing rated-outcomes <brand-slug|brand-id> [--rating-kind <kind>] [--period-id <id>] [--from <iso>] [--to <iso>] [--limit <n>] [--offset <n>]',
+            ),
+          );
+          return { handled: true };
+        }
+        let options: Record<string, string>;
+        try {
+          ({ options } = parseCommandArgs(parts.slice(3)));
+        } catch (err) {
+          console.log(chalk.red(`  Error: ${err instanceof Error ? err.message : String(err)}`));
+          console.log(
+            chalk.red(
+              '  Usage: /engine billing rated-outcomes <brand-slug|brand-id> [--rating-kind <kind>] [--period-id <id>] [--from <iso>] [--to <iso>] [--limit <n>] [--offset <n>]',
+            ),
+          );
+          return { handled: true };
+        }
+        await listBrandRatedOutcomesView(brandRef, {
+          ratingKind: options['rating-kind'],
+          periodId: options['period-id'],
+          from: options.from,
+          to: options.to,
+          limit: parseOptionalInteger(options.limit),
+          offset: parseOptionalInteger(options.offset),
+        });
+        return { handled: true };
+      }
+      if (billingAction === 'reconciliation') {
+        const brandRef = parts[2];
+        if (!brandRef) {
+          console.log(chalk.red('  Usage: /engine billing reconciliation <brand-slug|brand-id>'));
+          return { handled: true };
+        }
+        await showBrandBillingReconciliation(brandRef);
+        return { handled: true };
+      }
+      await showBrandBillingState(billingAction);
+      return { handled: true };
+    }
+
+    case 'outcomes': {
+      const usage =
+        '  Usage: /engine outcomes <brand-slug|brand-id> [--status <status>] [--outcome-type <type>] [--source <source>] [--from <iso>] [--to <iso>] | /engine outcomes list <brand> [filters] [--limit <n>] [--offset <n>] | /engine outcomes record <brand> <json-file>';
+      const actionOrBrand = parts[1];
+      if (actionOrBrand === 'record') {
+        const brandRef = parts[2];
+        const filePath = parts[3];
+        if (!brandRef || !filePath) {
+          console.log(
+            chalk.red('  Usage: /engine outcomes record <brand-slug|brand-id> <json-file>'),
+          );
+          return { handled: true };
+        }
+        await recordBrandOutcomeFromFile(brandRef, filePath, ctx.cwd);
+        return { handled: true };
+      }
+      if (actionOrBrand === 'list') {
+        const brandRef = parts[2];
+        if (!brandRef) {
+          console.log(
+            chalk.red(
+              '  Usage: /engine outcomes list <brand-slug|brand-id> [--status <status>] [--outcome-type <type>] [--source <source>] [--from <iso>] [--to <iso>] [--limit <n>] [--offset <n>]',
+            ),
+          );
+          return { handled: true };
+        }
+        let parsed;
+        try {
+          parsed = parseCommandArgs(parts.slice(3));
+        } catch (err) {
+          console.log(chalk.red(`  Error: ${err instanceof Error ? err.message : String(err)}`));
+          console.log(
+            chalk.red(
+              '  Usage: /engine outcomes list <brand-slug|brand-id> [--status <status>] [--outcome-type <type>] [--source <source>] [--from <iso>] [--to <iso>] [--limit <n>] [--offset <n>]',
+            ),
+          );
+          return { handled: true };
+        }
+        if (parsed.positionals.length > 0) {
+          console.log(
+            chalk.red(
+              '  Usage: /engine outcomes list <brand-slug|brand-id> [--status <status>] [--outcome-type <type>] [--source <source>] [--from <iso>] [--to <iso>] [--limit <n>] [--offset <n>]',
+            ),
+          );
+          return { handled: true };
+        }
+        await listBrandOutcomesView(brandRef, {
+          status: parsed.options.status,
+          outcomeType: parsed.options['outcome-type'] || parsed.options.outcomeType,
+          source: parsed.options.source,
+          from: parsed.options.from,
+          to: parsed.options.to,
+          limit: parseOptionalInteger(parsed.options.limit),
+          offset: parseOptionalInteger(parsed.options.offset),
+        });
+        return { handled: true };
+      }
+
+      const brandRef = actionOrBrand;
+      if (!brandRef) {
+        console.log(chalk.red(usage));
+        return { handled: true };
+      }
+      let parsed;
+      try {
+        parsed = parseCommandArgs(parts.slice(2));
+      } catch (err) {
+        console.log(chalk.red(`  Error: ${err instanceof Error ? err.message : String(err)}`));
+        console.log(chalk.red(usage));
+        return { handled: true };
+      }
+      if (parsed.positionals.length > 0) {
+        console.log(chalk.red(usage));
+        return { handled: true };
+      }
+      await showBrandOutcomeSummary(brandRef, {
+        status: parsed.options.status,
+        outcomeType: parsed.options['outcome-type'] || parsed.options.outcomeType,
+        source: parsed.options.source,
+        from: parsed.options.from,
+        to: parsed.options.to,
+      });
       return { handled: true };
     }
 
@@ -2502,6 +3876,112 @@ export async function handleEngineCommand(input: string, ctx: ChatContext): Prom
         return { handled: true };
       }
       await ingestBrandEventFromFile(brandRef, filePath, ctx.cwd, idempotencyKey);
+      return { handled: true };
+    }
+
+    case 'analyze': {
+      const brandRef = parts[1];
+      if (!brandRef) {
+        console.log(
+          chalk.red(
+            '  Usage: /engine analyze <brand-slug|brand-id> [--source <dir>] [--tickets <file|dir>] [--responses <file|dir>] [--out <dir>] [--apply] [--push] [--json]',
+          ),
+        );
+        return { handled: true };
+      }
+
+      let parsed;
+      try {
+        parsed = parseCommandArgs(parts.slice(2));
+      } catch (err) {
+        console.log(chalk.red(`  Error: ${err instanceof Error ? err.message : String(err)}`));
+        console.log(
+          chalk.red(
+            '  Usage: /engine analyze <brand-slug|brand-id> [--source <dir>] [--tickets <file|dir>] [--responses <file|dir>] [--out <dir>] [--apply] [--push] [--json]',
+          ),
+        );
+        return { handled: true };
+      }
+
+      if (parsed.positionals.length > 0) {
+        console.log(
+          chalk.red(
+            '  Usage: /engine analyze <brand-slug|brand-id> [--source <dir>] [--tickets <file|dir>] [--responses <file|dir>] [--out <dir>] [--apply] [--push] [--json]',
+          ),
+        );
+        return { handled: true };
+      }
+
+      await analyzeBrandWorkflowFeedback(brandRef, {
+        cwd: ctx.cwd,
+        sourcePath: parsed.options.source,
+        ticketsPath: parsed.options.tickets,
+        responsesPath: parsed.options.responses,
+        outPath: parsed.options.out,
+        apply: parsed.options.apply === 'true' || parsed.options.push === 'true',
+        push: parsed.options.push === 'true',
+        json: parsed.options.json === 'true',
+      });
+      return { handled: true };
+    }
+
+    case 'feedback-sync': {
+      const brandRef = parts[1];
+      if (!brandRef) {
+        console.log(
+          chalk.red(
+            '  Usage: /engine feedback-sync <brand-slug|brand-id> [--provider <gorgias|zendesk>] [--limit <n>] [--max-pages <n>] [--since-days <n>] [--analyze] [--apply] [--push] [--json]',
+          ),
+        );
+        return { handled: true };
+      }
+
+      let parsed;
+      try {
+        parsed = parseCommandArgs(parts.slice(2));
+      } catch (err) {
+        console.log(chalk.red(`  Error: ${err instanceof Error ? err.message : String(err)}`));
+        console.log(
+          chalk.red(
+            '  Usage: /engine feedback-sync <brand-slug|brand-id> [--provider <gorgias|zendesk>] [--limit <n>] [--max-pages <n>] [--since-days <n>] [--analyze] [--apply] [--push] [--json]',
+          ),
+        );
+        return { handled: true };
+      }
+
+      if (parsed.positionals.length > 0) {
+        console.log(
+          chalk.red(
+            '  Usage: /engine feedback-sync <brand-slug|brand-id> [--provider <gorgias|zendesk>] [--limit <n>] [--max-pages <n>] [--since-days <n>] [--analyze] [--apply] [--push] [--json]',
+          ),
+        );
+        return { handled: true };
+      }
+
+      const provider = parseFeedbackSyncProvider(parsed.options.provider);
+      if (parsed.options.provider && !provider) {
+        console.log(chalk.red('  Error: --provider must be gorgias or zendesk'));
+        return { handled: true };
+      }
+
+      await syncBrandWorkflowFeedback(brandRef, {
+        cwd: ctx.cwd,
+        provider,
+        pageLimit: parsed.options.limit ? Number.parseInt(parsed.options.limit, 10) : undefined,
+        maxPages: parsed.options['max-pages']
+          ? Number.parseInt(parsed.options['max-pages'], 10)
+          : undefined,
+        sinceDays: parsed.options['since-days']
+          ? Number.parseInt(parsed.options['since-days'], 10)
+          : undefined,
+        analyze:
+          parsed.options.analyze === 'true' ||
+          parsed.options.apply === 'true' ||
+          parsed.options.push === 'true',
+        apply: parsed.options.apply === 'true',
+        push: parsed.options.push === 'true',
+        json: parsed.options.json === 'true',
+      });
       return { handled: true };
     }
 

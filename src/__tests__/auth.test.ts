@@ -211,6 +211,81 @@ describe('auth command', () => {
     logSpy.mockRestore();
   });
 
+  it('defaults device login to response.stateset.app', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    mockRequestJson
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          device_code: 'dev-code',
+          user_code: 'USER123',
+          verification_url: 'https://response.stateset.app/auth/device',
+          expires_in: 60,
+          interval: 0,
+        },
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          status: 'authorized',
+          token: 'cli-token-123',
+          org: { id: 'org-device', name: 'Device Org' },
+          graphqlEndpoint: 'https://response.stateset.app/v1/graphql',
+        },
+      });
+
+    const program = new Command();
+    registerAuthCommands(program);
+
+    await program.parseAsync([
+      'node',
+      'response',
+      'auth',
+      'login',
+      '--device',
+      '--non-interactive',
+      '--no-open-browser',
+    ]);
+
+    expect(mockRequestJson).toHaveBeenNthCalledWith(
+      1,
+      'https://response.stateset.app/api/cli/device/start',
+      expect.any(Object),
+    );
+    logSpy.mockRestore();
+  });
+
+  it('defaults manual login to the response.stateset.app GraphQL endpoint', async () => {
+    const program = new Command();
+    registerAuthCommands(program);
+
+    await program.parseAsync([
+      'node',
+      'response',
+      'auth',
+      'login',
+      '--manual',
+      '--org-id',
+      'org-123',
+      '--org-name',
+      'Acme Org',
+      '--admin-secret',
+      'admin-secret',
+      '--non-interactive',
+    ]);
+
+    expect(mockedSaveConfig).toHaveBeenCalledWith({
+      currentOrg: 'org-123',
+      organizations: {
+        'org-123': {
+          name: 'Acme Org',
+          graphqlEndpoint: 'https://response.stateset.app/v1/graphql',
+          adminSecret: 'admin-secret',
+        },
+      },
+    });
+  });
+
   it('rejects unsafe device verification URLs', async () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     mockRequestJson.mockResolvedValueOnce({

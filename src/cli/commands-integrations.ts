@@ -559,13 +559,14 @@ export async function runIntegrationsSetup(
   } else if (options.validateOnly || options.nonInteractive) {
     scope = existingScope ?? 'global';
   } else {
+    const globalStateDir = process.env.STATESET_STATE_DIR?.trim() || '~/.stateset';
     const scopeAnswer = await inquirer.prompt([
       {
         type: 'list',
         name: 'scope',
         message: 'Where should integration settings be saved?',
         choices: [
-          { name: 'Global (~/.stateset/integrations.json)', value: 'global' },
+          { name: `Global (${globalStateDir}/integrations.json)`, value: 'global' },
           { name: 'Project (.stateset/integrations.json)', value: 'local' },
         ],
         default: existingScope ?? 'global',

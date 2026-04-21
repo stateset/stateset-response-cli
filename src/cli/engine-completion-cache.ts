@@ -1,5 +1,6 @@
-import fs from 'node:fs';
 import path from 'node:path';
+import { readJsonFile } from '../utils/file-read.js';
+import { writePrivateTextFileSecure } from '../utils/secure-file.js';
 
 export interface EngineCompletionCache {
   brandRef: string;
@@ -37,7 +38,10 @@ export function readEngineCompletionCache(
 ): EngineCompletionCache | null {
   try {
     const filePath = getEngineCompletionCachePath(brandRef, cwd);
-    const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as Partial<EngineCompletionCache>;
+    const raw = readJsonFile(filePath, {
+      label: 'engine completion cache',
+      expectObject: true,
+    }) as Partial<EngineCompletionCache>;
     return {
       brandRef: String(raw.brandRef ?? brandRef).trim() || brandRef,
       updatedAt: String(raw.updatedAt ?? ''),
@@ -65,8 +69,10 @@ function writeEngineCompletionCache(
       const filePath = getEngineCompletionCachePath(ref, cwd);
       const current = readEngineCompletionCache(ref, cwd);
       const next = updater(current, canonicalRef);
-      fs.mkdirSync(path.dirname(filePath), { recursive: true });
-      fs.writeFileSync(filePath, JSON.stringify(next, null, 2) + '\n', 'utf-8');
+      writePrivateTextFileSecure(filePath, JSON.stringify(next, null, 2) + '\n', {
+        label: 'engine completion cache',
+        atomic: true,
+      });
     } catch {
       // Best-effort cache writes should never break the command flow.
     }

@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { calculateCost, formatUsd } from './pricing.js';
+import { readJsonFile } from '../utils/file-read.js';
 
 interface SessionMetricsRecord {
   sessionId: string;
@@ -64,8 +65,10 @@ function loadAllMetrics(): SessionMetricsRecord[] {
 
   for (const filename of entries) {
     try {
-      const content = fs.readFileSync(path.join(dir, filename), 'utf-8');
-      const parsed = JSON.parse(content) as SessionMetricsRecord;
+      const parsed = readJsonFile(path.join(dir, filename), {
+        label: 'session metrics file',
+        expectObject: true,
+      }) as SessionMetricsRecord;
       if (parsed.sessionId && parsed.savedAt && parsed.tokenUsage) {
         records.push(parsed);
       }

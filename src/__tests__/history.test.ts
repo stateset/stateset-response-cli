@@ -6,6 +6,9 @@ vi.mock('node:os', () => ({
   default: { homedir: () => '/mock-home' },
   homedir: () => '/mock-home',
 }));
+vi.mock('../session.js', () => ({
+  getStateSetDir: vi.fn(() => '/mock-home/.stateset'),
+}));
 
 import {
   loadInputHistory,

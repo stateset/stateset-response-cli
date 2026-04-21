@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.9.4 - 2026-04-21
+
+### Workflow Engine Contract Safety
+
+- Added a Rust Temporal engine route parity check that scans the local `next-temporal-rs` Axum router and verifies reusable routes are represented by the CLI engine client.
+- Wired the contract check into quick, full, and release verification scripts so engine route drift is caught before release.
+- Documented covered engine surfaces, intentional SSE and YSE-specific exclusions, and the optional config-history fallback.
+
+### Workflow Engine Feature Parity
+
+- Expanded workflow engine coverage across billing, outcomes, sandbox agent loop, legacy response workflow start, dispatch health/guard, bootstrap, connectors, templates, policy sets, DLQ, and workflow lifecycle operations.
+- Hardened workflow-studio brand, connector, template, and policy payloads against stale client-side shapes.
+
+### CLI Operations
+
+- Added dashboard, reset, update, doctor-repair, and completion-install flows with focused regression coverage.
+- Added workflow-studio feedback sync and analysis helpers for Gorgias and Zendesk exports.
+- Hardened published binary wrappers with clearer source-checkout and package-install recovery messages when build artifacts are missing.
+- Switched the test script to batched Vitest execution to keep the full suite stable in constrained Node runtimes.
+
+## 1.9.3 - 2026-04-21
+
+### Release Maintenance
+
+- Reserved release for the workflow-engine contract-safety stabilization line.
+- Superseded by `1.9.4` before publication.
+
 ## 1.9.2 - 2026-03-27
 
 ### CLI Reliability
@@ -16,7 +43,7 @@
 
 ### Fixes
 
-- Fixed Node.js `--loader` deprecation by migrating to `--import tsx/esm` for README sync scripts.
+- Fixed README sync script compatibility by standardizing on `node --loader tsx`.
 - Enabled `@typescript-eslint/no-explicit-any` for production source files.
 
 ### Testing

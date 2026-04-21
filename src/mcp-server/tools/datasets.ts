@@ -18,7 +18,7 @@ const DATASET_FIELDS = `
 `;
 
 const DATASET_ENTRY_FIELDS = `
-  id dataset_id messages created_at updated_at
+  id dataset_id content metadata created_at updated_at
 `;
 
 const datasetStatusSchema = z.enum(['active', 'archived', 'draft']);
@@ -55,19 +55,17 @@ async function ensureDatasetExists(
 
 async function getDatasetEntry(
   client: GraphQLClient,
-  entryId: number,
-): Promise<{ id: number; dataset_id: string } | null> {
-  const query = `query ($id: Int!) {
+  entryId: number | string,
+): Promise<{ id: number | string; dataset_id: string } | null> {
+  const query = `query ($id: String!) {
     dataset_entries(where: { id: { _eq: $id } }, limit: 1) {
       id
       dataset_id
     }
   }`;
-  const data = await executeQuery<{ dataset_entries: Array<{ id: number; dataset_id: string }> }>(
-    client,
-    query,
-    { id: entryId },
-  );
+  const data = await executeQuery<{
+    dataset_entries: Array<{ id: number | string; dataset_id: string }>;
+  }>(client, query, { id: String(entryId) });
   return data.dataset_entries[0] ?? null;
 }
 
@@ -90,6 +88,31 @@ async function bumpDatasetEntryCount(
     amount,
     now: nowIso(),
   });
+}
+
+function encodeEntryContent(messages: DatasetEntryInput['messages']): string {
+  return JSON.stringify(messages);
+}
+
+function hydrateDatasetEntry(entry: Record<string, unknown>): Record<string, unknown> {
+  const content = entry.content;
+  if (typeof content !== 'string') {
+    return entry;
+  }
+
+  try {
+    const parsed = JSON.parse(content) as unknown;
+    if (Array.isArray(parsed)) {
+      return {
+        ...entry,
+        messages: parsed,
+      };
+    }
+  } catch {
+    // Keep plain-text content as-is.
+  }
+
+  return entry;
 }
 
 export function registerDatasetTools(server: McpServer, client: GraphQLClient, orgId: string) {
@@ -126,15 +149,12 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
       const query = `query ($id: uuid!, $org_id: String!) {
         datasets(where: { id: { _eq: $id }, org_id: { _eq: $org_id } }, limit: 1) {
           ${DATASET_FIELDS}
-        }
-        dataset_entries(where: { dataset_id: { _eq: $id } }, order_by: { created_at: asc }) {
-          ${DATASET_ENTRY_FIELDS}
+          dataset_entries(order_by: { created_at: asc }) {
+            ${DATASET_ENTRY_FIELDS}
+          }
         }
       }`;
-      const data = await executeQuery<{
-        datasets: Array<Record<string, unknown>>;
-        dataset_entries: Array<Record<string, unknown>>;
-      }>(client, query, {
+      const data = await executeQuery<{ datasets: Array<Record<string, unknown>> }>(client, query, {
         id,
         org_id: orgId,
       });
@@ -142,11 +162,18 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
       if (!dataset) {
         return errorResult('Dataset not found');
       }
+
+      if (Array.isArray(dataset.dataset_entries)) {
+        dataset.dataset_entries = dataset.dataset_entries.map((entry) =>
+          hydrateDatasetEntry(entry as Record<string, unknown>),
+        );
+      }
+
       return {
         content: [
           {
             type: 'text' as const,
-            text: JSON.stringify({ dataset, entries: data.dataset_entries }, null, 2),
+            text: JSON.stringify(dataset, null, 2),
           },
         ],
       };
@@ -242,18 +269,6 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
     'Delete a dataset by ID',
     { id: z.string().uuid().describe('UUID of the dataset to delete') },
     async ({ id }) => {
-      const exists = await ensureDatasetExists(client, id, orgId);
-      if (!exists) {
-        return errorResult('Dataset not found');
-      }
-
-      const deleteEntries = `mutation ($id: uuid!) {
-        delete_dataset_entries(where: { dataset_id: { _eq: $id } }) {
-          affected_rows
-        }
-      }`;
-      await executeQuery(client, deleteEntries, { id });
-
       const deleteDataset = `mutation ($id: uuid!, $org_id: String!) {
         delete_datasets(where: {id: {_eq: $id}, org_id: {_eq: $org_id}}) {
           returning { id name }
@@ -264,6 +279,9 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
         deleteDataset,
         { id, org_id: orgId },
       );
+      if (!data.delete_datasets.returning.length) {
+        return errorResult('Dataset not found');
+      }
       return {
         content: [
           {
@@ -280,11 +298,16 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
     'Add an entry to a dataset',
     {
       dataset_id: z.string().uuid().describe('UUID of the dataset'),
-      messages: z.array(datasetMessageSchema).min(1).describe('Chat messages for the entry'),
+      content: z.string().max(MAX_STRING_LENGTH).optional().describe('Plain-text entry content'),
+      messages: z
+        .array(datasetMessageSchema)
+        .min(1)
+        .optional()
+        .describe('Structured chat messages for the entry'),
     },
-    async ({ dataset_id, messages }) => {
-      if (!(await ensureDatasetExists(client, dataset_id, orgId))) {
-        return errorResult('Dataset not found');
+    async ({ dataset_id, content, messages }) => {
+      if (!content && (!messages || messages.length === 0)) {
+        return errorResult('Dataset entry requires content or messages');
       }
 
       const mutation = `mutation ($object: dataset_entries_insert_input!) {
@@ -294,7 +317,8 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
       }`;
       const entry = {
         dataset_id,
-        messages,
+        content: content ?? encodeEntryContent(messages ?? []),
+        metadata: {},
         created_at: nowIso(),
         updated_at: nowIso(),
       };
@@ -308,7 +332,13 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
         content: [
           {
             type: 'text' as const,
-            text: JSON.stringify(data.insert_dataset_entries.returning[0], null, 2),
+            text: JSON.stringify(
+              hydrateDatasetEntry(
+                data.insert_dataset_entries.returning[0] as Record<string, unknown>,
+              ),
+              null,
+              2,
+            ),
           },
         ],
       };
@@ -319,7 +349,9 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
     'update_dataset_entry',
     'Update a dataset entry by ID',
     {
-      id: z.number().int().positive().describe('Integer ID of the dataset entry'),
+      id: z
+        .union([z.string().min(1), z.number().int().positive()])
+        .describe('ID of the dataset entry'),
       messages: z.array(datasetMessageSchema).min(1).describe('Replacement chat messages'),
     },
     async ({ id, messages }) => {
@@ -331,10 +363,10 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
         return errorResult('Dataset not found');
       }
 
-      const mutation = `mutation ($id: Int!, $dataset_id: uuid!, $messages: jsonb!, $now: timestamptz!) {
+      const mutation = `mutation ($id: String!, $dataset_id: uuid!, $content: String!, $now: timestamptz!) {
         update_dataset_entries(
           where: { id: { _eq: $id }, dataset_id: { _eq: $dataset_id } }
-          _set: { messages: $messages, updated_at: $now }
+          _set: { content: $content, updated_at: $now }
         ) {
           returning { ${DATASET_ENTRY_FIELDS} }
         }
@@ -343,9 +375,9 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
         client,
         mutation,
         {
-          id,
+          id: String(id),
           dataset_id: entry.dataset_id,
-          messages,
+          content: encodeEntryContent(messages),
           now: nowIso(),
         },
       );
@@ -356,7 +388,13 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
         content: [
           {
             type: 'text' as const,
-            text: JSON.stringify(data.update_dataset_entries.returning[0], null, 2),
+            text: JSON.stringify(
+              hydrateDatasetEntry(
+                data.update_dataset_entries.returning[0] as Record<string, unknown>,
+              ),
+              null,
+              2,
+            ),
           },
         ],
       };
@@ -367,18 +405,12 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
     'delete_dataset_entry',
     'Remove an entry from a dataset',
     {
-      id: z.number().int().positive().describe('Integer ID of the dataset entry to delete'),
+      id: z
+        .union([z.string().min(1), z.number().int().positive()])
+        .describe('ID of the dataset entry to delete'),
     },
     async ({ id }) => {
-      const entry = await getDatasetEntry(client, id);
-      if (!entry) {
-        return errorResult('Dataset entry not found');
-      }
-      if (!(await ensureDatasetExists(client, entry.dataset_id, orgId))) {
-        return errorResult('Dataset not found');
-      }
-
-      const mutation = `mutation ($id: Int!) {
+      const mutation = `mutation ($id: String!) {
         delete_dataset_entries(where: {id: {_eq: $id}}) {
           returning { id dataset_id }
         }
@@ -386,17 +418,20 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
       const data = await executeQuery<{ delete_dataset_entries: { returning: unknown[] } }>(
         client,
         mutation,
-        { id },
+        { id: String(id) },
       );
       if (!data.delete_dataset_entries.returning.length) {
         return errorResult('Dataset entry not found');
       }
-      await bumpDatasetEntryCount(client, entry.dataset_id, -1);
+      const deleted = data.delete_dataset_entries.returning[0] as { dataset_id?: string };
+      if (deleted.dataset_id) {
+        await bumpDatasetEntryCount(client, deleted.dataset_id, -1);
+      }
       return {
         content: [
           {
             type: 'text' as const,
-            text: JSON.stringify({ deleted: data.delete_dataset_entries.returning[0] }, null, 2),
+            text: JSON.stringify({ deleted }, null, 2),
           },
         ],
       };
@@ -430,7 +465,8 @@ export function registerDatasetTools(server: McpServer, client: GraphQLClient, o
       }>(client, mutation, {
         objects: objects.map((entry) => ({
           dataset_id,
-          messages: entry.messages,
+          content: encodeEntryContent(entry.messages),
+          metadata: {},
           created_at: now,
           updated_at: now,
         })),

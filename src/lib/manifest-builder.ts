@@ -38,7 +38,7 @@ export type ConnectorType =
   | 'stripe'
   | 'nsr';
 
-export type ConnectorDirection = 'inbound' | 'outbound' | 'bidirectional';
+export type ConnectorDirection = 'inbound' | 'outbound';
 
 export interface ConnectorSpec {
   connector_key: string;
@@ -50,7 +50,7 @@ export interface ConnectorSpec {
     api_version?: string;
   };
   auth: {
-    secret_ref: string; // env://VAR or file:///path
+    secret_ref: string; // env://VAR
   };
   retry_policy?: Record<string, unknown>;
   enabled: boolean;
@@ -549,6 +549,10 @@ export function buildConnector(
     key?: string;
   },
 ): ConnectorSpec {
+  if (!opts.secretRef.startsWith('env://')) {
+    throw new Error('Connector secret_ref must use env://VAR for workflow engine compatibility.');
+  }
+
   return {
     connector_key: opts.key ?? `${type}-primary`,
     connector_type: type,

@@ -1,16 +1,12 @@
 #!/usr/bin/env node
 
 import { createRequire } from 'node:module';
+import { handleBootstrapError } from './bootstrap-runtime.js';
 const require = createRequire(import.meta.url);
 const pkg = require('../package.json');
 
 function handleFatalError(err) {
-  if (err && typeof err === 'object' && 'code' in err && err.code === 'ERR_MODULE_NOT_FOUND') {
-    console.error('Error: Build artifacts not found. Run "npm run build" first.');
-  } else {
-    console.error('Error:', err instanceof Error ? err.message : String(err));
-  }
-  process.exit(1);
+  handleBootstrapError(err, 'response-slack');
 }
 
 function parseCommaSeparatedEnv(value) {

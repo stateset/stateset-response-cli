@@ -471,6 +471,59 @@ describe('runDatasetsCommand', () => {
     }
   });
 
+  it('rejects symlinked dataset entry files', async () => {
+    const runner = createMockRunner({ id: 1, dataset_id: 'dataset-1' });
+    const logger = createMockLogger();
+    const dir = createProjectTempDir('tmp-datasets-entry-link-');
+    const realPath = path.join(dir, 'messages.json');
+    const linkedPath = path.join(dir, 'messages-link.json');
+    fs.writeFileSync(
+      realPath,
+      JSON.stringify({
+        messages: [
+          { role: 'user', content: 'Where is my order?' },
+          { role: 'assistant', content: 'It is in transit.' },
+        ],
+      }),
+      'utf-8',
+    );
+    fs.symlinkSync(realPath, linkedPath);
+
+    try {
+      await runDatasetsCommand(['add-entry', 'dataset-1', '--file', linkedPath], runner, logger);
+
+      expect(runner.callTool).not.toHaveBeenCalled();
+      expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('safe regular file'));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects symlinked dataset import files', async () => {
+    const runner = createMockRunner({ imported: 2 });
+    const logger = createMockLogger();
+    const dir = createProjectTempDir('tmp-datasets-import-link-');
+    const realPath = path.join(dir, 'dataset.jsonl');
+    const linkedPath = path.join(dir, 'dataset-link.jsonl');
+    fs.writeFileSync(
+      realPath,
+      [
+        '{"messages":[{"role":"user","content":"Where is my order?"},{"role":"assistant","content":"It is in transit."}]}',
+      ].join('\n'),
+      'utf-8',
+    );
+    fs.symlinkSync(realPath, linkedPath);
+
+    try {
+      await runDatasetsCommand(['import', 'dataset-1', linkedPath], runner, logger);
+
+      expect(runner.callTool).not.toHaveBeenCalled();
+      expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('safe regular file'));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('exports datasets to a file', async () => {
     const payload = {
       dataset: { id: 'd1', name: 'Returns' },

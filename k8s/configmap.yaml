@@ -15,7 +15,7 @@ data:
   STATESET_STATE_DIR: "/home/agent/.stateset"
   STATESET_ORG_ID: "replace-me"
   STATESET_ORG_NAME: "StateSet Response"
-  STATESET_GRAPHQL_ENDPOINT: "https://response.cx/v1/graphql"
+  STATESET_GRAPHQL_ENDPOINT: "https://response.stateset.app/v1/graphql"
   STATESET_MODEL: "claude-sonnet-4-6"
   STATESET_ALLOW_APPLY: "false"
   # Set to true only if the bot should execute state-changing operations.

@@ -30,17 +30,19 @@ function sleep(ms: number): Promise<void> {
 }
 
 type WorkflowAction = 'status' | 'review' | 'cancel' | 'restart' | 'terminate';
+type WorkflowEndpointType = 'rav2' | 'connector' | 'snooze' | 'sandbox-agent-loop' | 'legacy';
 
-function classifyWorkflowId(workflowId: string): 'rav2' | 'connector' | 'snooze' | 'legacy' {
+function classifyWorkflowId(workflowId: string): WorkflowEndpointType {
   if (workflowId.startsWith('rav2-') || workflowId.startsWith('cp-response-automation-v2-')) {
     return 'rav2';
   }
   if (workflowId.startsWith('connector-')) return 'connector';
   if (workflowId.startsWith('snooze-')) return 'snooze';
+  if (workflowId.startsWith('sandbox-agent-')) return 'sandbox-agent-loop';
   return 'legacy';
 }
 
-function normalizeWorkflowType(workflowType?: string): 'rav2' | 'connector' | 'snooze' | 'legacy' {
+function normalizeWorkflowType(workflowType?: string): WorkflowEndpointType {
   switch (workflowType) {
     case 'response-automation-v2':
       return 'rav2';
@@ -48,6 +50,8 @@ function normalizeWorkflowType(workflowType?: string): 'rav2' | 'connector' | 's
       return 'connector';
     case 'snooze':
       return 'snooze';
+    case 'sandbox-agent-loop':
+      return 'sandbox-agent-loop';
     default:
       return 'legacy';
   }
@@ -62,61 +66,41 @@ function buildWorkflowActionPath(
 
   switch (type) {
     case 'rav2':
-      if (action === 'status') {
-        return `/v1/workflows/response-automation-v2/${workflowId}/status`;
-      }
-      if (action === 'review') {
-        return `/v1/workflows/response-automation-v2/${workflowId}/review`;
-      }
-      if (action === 'cancel') {
-        return `/v1/workflows/response-automation-v2/${workflowId}/cancel`;
-      }
-      if (action === 'restart') {
-        return `/v1/workflows/response-automation-v2/${workflowId}/restart`;
-      }
+      if (action === 'status') return `/v1/workflows/response-automation-v2/${workflowId}/status`;
+      if (action === 'review') return `/v1/workflows/response-automation-v2/${workflowId}/review`;
+      if (action === 'cancel') return `/v1/workflows/response-automation-v2/${workflowId}/cancel`;
+      if (action === 'restart') return `/v1/workflows/response-automation-v2/${workflowId}/restart`;
       if (action === 'terminate') {
         return `/v1/workflows/response-automation-v2/${workflowId}/terminate`;
       }
       return null;
 
     case 'connector':
-      if (action === 'status') {
-        return `/v1/workflows/connector/${workflowId}/status`;
-      }
-      if (action === 'cancel') {
-        return `/v1/workflows/connector/${workflowId}/cancel`;
-      }
-      if (action === 'terminate') {
-        return `/v1/workflows/connector/${workflowId}/terminate`;
-      }
+      if (action === 'status') return `/v1/workflows/connector/${workflowId}/status`;
+      if (action === 'cancel') return `/v1/workflows/connector/${workflowId}/cancel`;
+      if (action === 'terminate') return `/v1/workflows/connector/${workflowId}/terminate`;
       return null;
 
     case 'snooze':
-      if (action === 'status') {
-        return `/v1/workflows/snooze/${workflowId}/status`;
-      }
-      if (action === 'cancel') {
-        return `/v1/workflows/snooze/${workflowId}/cancel`;
-      }
+      if (action === 'status') return `/v1/workflows/snooze/${workflowId}/status`;
+      if (action === 'cancel') return `/v1/workflows/snooze/${workflowId}/cancel`;
+      if (action === 'terminate') return `/v1/workflows/snooze/${workflowId}/terminate`;
+      return null;
+
+    case 'sandbox-agent-loop':
+      if (action === 'status') return `/v1/workflows/sandbox-agent-loop/${workflowId}/status`;
+      if (action === 'cancel') return `/v1/workflows/sandbox-agent-loop/${workflowId}/cancel`;
       if (action === 'terminate') {
-        return `/v1/workflows/snooze/${workflowId}/terminate`;
+        return `/v1/workflows/sandbox-agent-loop/${workflowId}/terminate`;
       }
       return null;
 
     case 'legacy':
     default:
-      if (action === 'status') {
-        return `/v1/workflows/${workflowId}/status`;
-      }
-      if (action === 'review') {
-        return `/v1/workflows/${workflowId}/signal/review`;
-      }
-      if (action === 'cancel') {
-        return `/v1/workflows/${workflowId}/cancel`;
-      }
-      if (action === 'terminate') {
-        return `/v1/workflows/${workflowId}/terminate`;
-      }
+      if (action === 'status') return `/v1/workflows/${workflowId}/status`;
+      if (action === 'review') return `/v1/workflows/${workflowId}/signal/review`;
+      if (action === 'cancel') return `/v1/workflows/${workflowId}/cancel`;
+      if (action === 'terminate') return `/v1/workflows/${workflowId}/terminate`;
       return null;
   }
 }
@@ -244,12 +228,20 @@ export class EngineClient {
     throw lastErr;
   }
 
-  /* ------------------------------------------------------------------ */
-  /*  Health                                                             */
-  /* ------------------------------------------------------------------ */
-
   async health(): Promise<unknown> {
     return this.fetchWithRetry('/health');
+  }
+
+  async healthz(): Promise<unknown> {
+    return this.fetchWithRetry('/healthz');
+  }
+
+  async readyz(): Promise<unknown> {
+    return this.fetchWithRetry('/readyz');
+  }
+
+  async metrics(): Promise<unknown> {
+    return this.fetchWithRetry('/metrics');
   }
 
   async getDispatchHealthDashboard(filters?: {
@@ -281,10 +273,6 @@ export class EngineClient {
       },
     });
   }
-
-  /* ------------------------------------------------------------------ */
-  /*  Brands                                                            */
-  /* ------------------------------------------------------------------ */
 
   async listBrands(filters?: {
     status?: string;
@@ -319,7 +307,7 @@ export class EngineClient {
   async createBrand(payload: Record<string, unknown>, idempotencyKey?: string): Promise<unknown> {
     const headers: Record<string, string> = {};
     if (idempotencyKey) headers['idempotency-key'] = idempotencyKey;
-    return this.request(`/v1/brands`, {
+    return this.request('/v1/brands', {
       method: 'POST',
       body: payload,
       headers,
@@ -351,6 +339,140 @@ export class EngineClient {
     return this.fetchWithRetry(`/v1/brands/${brandId}/config`);
   }
 
+  async getBrandBillingState(brandId: string): Promise<unknown> {
+    return this.fetchWithRetry(`/v1/brands/${brandId}/billing`);
+  }
+
+  async upsertBrandBillingProfile(
+    brandId: string,
+    payload: Record<string, unknown>,
+  ): Promise<unknown> {
+    return this.request(`/v1/brands/${brandId}/billing`, {
+      method: 'PUT',
+      body: payload,
+    });
+  }
+
+  async syncBrandBillingEvents(
+    brandId: string,
+    request: { limit?: number } = {},
+  ): Promise<unknown> {
+    return this.request(`/v1/brands/${brandId}/billing/sync`, {
+      method: 'POST',
+      body: { limit: request.limit },
+    });
+  }
+
+  async getBrandBillingContract(brandId: string): Promise<unknown> {
+    return this.fetchWithRetry(`/v1/brands/${brandId}/billing/contract`);
+  }
+
+  async upsertBrandBillingContract(
+    brandId: string,
+    payload: Record<string, unknown>,
+  ): Promise<unknown> {
+    return this.request(`/v1/brands/${brandId}/billing/contract`, {
+      method: 'PUT',
+      body: payload,
+    });
+  }
+
+  async listBrandBillingPeriods(
+    brandId: string,
+    filters?: { status?: string; limit?: number; offset?: number },
+  ): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (filters?.status) params.set('status', filters.status);
+    if (filters?.limit !== undefined) params.set('limit', String(filters.limit));
+    if (filters?.offset !== undefined) params.set('offset', String(filters.offset));
+    const qs = params.toString();
+    return this.fetchWithRetry(`/v1/brands/${brandId}/billing/periods${qs ? `?${qs}` : ''}`);
+  }
+
+  async closeBrandBillingPeriod(brandId: string, periodId: string): Promise<unknown> {
+    return this.request(`/v1/brands/${brandId}/billing/periods/${periodId}/close`, {
+      method: 'POST',
+      body: {},
+    });
+  }
+
+  async listBrandRatedOutcomes(
+    brandId: string,
+    filters?: {
+      ratingKind?: string;
+      periodId?: string;
+      from?: string;
+      to?: string;
+      limit?: number;
+      offset?: number;
+    },
+  ): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (filters?.ratingKind) params.set('rating_kind', filters.ratingKind);
+    if (filters?.periodId) params.set('period_id', filters.periodId);
+    if (filters?.from) params.set('from', filters.from);
+    if (filters?.to) params.set('to', filters.to);
+    if (filters?.limit !== undefined) params.set('limit', String(filters.limit));
+    if (filters?.offset !== undefined) params.set('offset', String(filters.offset));
+    const qs = params.toString();
+    return this.fetchWithRetry(`/v1/brands/${brandId}/billing/rated-outcomes${qs ? `?${qs}` : ''}`);
+  }
+
+  async getBrandBillingReconciliation(brandId: string): Promise<unknown> {
+    return this.fetchWithRetry(`/v1/brands/${brandId}/billing/reconciliation`);
+  }
+
+  async getBrandOutcomeSummary(
+    brandId: string,
+    filters?: {
+      from?: string;
+      to?: string;
+      status?: string;
+      outcomeType?: string;
+      source?: string;
+    },
+  ): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (filters?.from) params.set('from', filters.from);
+    if (filters?.to) params.set('to', filters.to);
+    if (filters?.status) params.set('status', filters.status);
+    if (filters?.outcomeType) params.set('outcome_type', filters.outcomeType);
+    if (filters?.source) params.set('source', filters.source);
+    const qs = params.toString();
+    return this.fetchWithRetry(`/v1/brands/${brandId}/outcomes/summary${qs ? `?${qs}` : ''}`);
+  }
+
+  async listBrandOutcomes(
+    brandId: string,
+    filters?: {
+      from?: string;
+      to?: string;
+      status?: string;
+      outcomeType?: string;
+      source?: string;
+      limit?: number;
+      offset?: number;
+    },
+  ): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (filters?.from) params.set('from', filters.from);
+    if (filters?.to) params.set('to', filters.to);
+    if (filters?.status) params.set('status', filters.status);
+    if (filters?.outcomeType) params.set('outcome_type', filters.outcomeType);
+    if (filters?.source) params.set('source', filters.source);
+    if (filters?.limit !== undefined) params.set('limit', String(filters.limit));
+    if (filters?.offset !== undefined) params.set('offset', String(filters.offset));
+    const qs = params.toString();
+    return this.fetchWithRetry(`/v1/brands/${brandId}/outcomes${qs ? `?${qs}` : ''}`);
+  }
+
+  async recordBrandOutcome(brandId: string, payload: Record<string, unknown>): Promise<unknown> {
+    return this.request(`/v1/brands/${brandId}/outcomes`, {
+      method: 'POST',
+      body: payload,
+    });
+  }
+
   async listBrandConfigVersions(
     brandId: string,
     filters?: { limit?: number; offset?: number },
@@ -361,10 +483,6 @@ export class EngineClient {
     const qs = params.toString();
     return this.fetchWithRetry(`/v1/brands/${brandId}/config-versions${qs ? `?${qs}` : ''}`);
   }
-
-  /* ------------------------------------------------------------------ */
-  /*  Connectors                                                        */
-  /* ------------------------------------------------------------------ */
 
   async listConnectors(brandId: string): Promise<unknown> {
     return this.fetchWithRetry(`/v1/brands/${brandId}/connectors`);
@@ -377,15 +495,21 @@ export class EngineClient {
     });
   }
 
+  async replaceConnectors(
+    brandId: string,
+    connectors: Array<Record<string, unknown>>,
+  ): Promise<unknown> {
+    return this.request(`/v1/brands/${brandId}/connectors`, {
+      method: 'PUT',
+      body: { connectors },
+    });
+  }
+
   async checkConnectorHealth(brandId: string, connectorId: string): Promise<unknown> {
     return this.request(`/v1/brands/${brandId}/connectors/${connectorId}/health`, {
       method: 'POST',
     });
   }
-
-  /* ------------------------------------------------------------------ */
-  /*  Onboarding                                                        */
-  /* ------------------------------------------------------------------ */
 
   async listOnboardingRuns(brandId: string): Promise<unknown> {
     return this.fetchWithRetry(`/v1/brands/${brandId}/onboarding`);
@@ -413,10 +537,6 @@ export class EngineClient {
     });
   }
 
-  /* ------------------------------------------------------------------ */
-  /*  Migration & Parity                                                */
-  /* ------------------------------------------------------------------ */
-
   async getBrandMigrationState(brandId: string): Promise<unknown> {
     return this.fetchWithRetry(`/v1/brands/${brandId}/migration`);
   }
@@ -441,10 +561,6 @@ export class EngineClient {
     const qs = params.toString();
     return this.fetchWithRetry(`/v1/brands/${brandId}/parity${qs ? `?${qs}` : ''}`);
   }
-
-  /* ------------------------------------------------------------------ */
-  /*  Workflow Templates                                                */
-  /* ------------------------------------------------------------------ */
 
   async listWorkflowTemplates(filters?: {
     template_key?: string;
@@ -489,10 +605,6 @@ export class EngineClient {
     });
   }
 
-  /* ------------------------------------------------------------------ */
-  /*  Policy Sets                                                       */
-  /* ------------------------------------------------------------------ */
-
   async listPolicySets(filters?: {
     policy_set_key?: string;
     status?: string;
@@ -534,10 +646,6 @@ export class EngineClient {
     });
   }
 
-  /* ------------------------------------------------------------------ */
-  /*  Events                                                            */
-  /* ------------------------------------------------------------------ */
-
   async ingestEvent(
     brandSlug: string,
     payload: Record<string, unknown>,
@@ -550,14 +658,27 @@ export class EngineClient {
     });
   }
 
-  /* ------------------------------------------------------------------ */
-  /*  Workflows                                                         */
-  /* ------------------------------------------------------------------ */
-
   async startWorkflow(request: Record<string, unknown>, workflowId?: string): Promise<unknown> {
     return this.request('/v1/workflows/response-automation-v2/start', {
       method: 'POST',
       body: { request, workflow_id: workflowId },
+    });
+  }
+
+  async startLegacyResponseWorkflow(
+    request: Record<string, unknown>,
+    workflowId?: string,
+  ): Promise<unknown> {
+    return this.request('/v1/workflows/response/start', {
+      method: 'POST',
+      body: { request, workflow_id: workflowId },
+    });
+  }
+
+  async startSandboxAgentLoop(payload: Record<string, unknown>): Promise<unknown> {
+    return this.request('/v1/workflows/sandbox-agent-loop/start', {
+      method: 'POST',
+      body: payload,
     });
   }
 
@@ -602,9 +723,7 @@ export class EngineClient {
         { status: 400, code: 'UNSUPPORTED_WORKFLOW_ACTION' },
       );
     }
-    return this.request(path, {
-      method: 'POST',
-    });
+    return this.request(path, { method: 'POST' });
   }
 
   async restartWorkflow(workflowId: string, workflowType?: string): Promise<unknown> {
@@ -615,9 +734,7 @@ export class EngineClient {
         { status: 400, code: 'UNSUPPORTED_WORKFLOW_ACTION' },
       );
     }
-    return this.request(path, {
-      method: 'POST',
-    });
+    return this.request(path, { method: 'POST' });
   }
 
   async terminateWorkflow(workflowId: string, workflowType?: string): Promise<unknown> {
@@ -628,14 +745,8 @@ export class EngineClient {
         { status: 400, code: 'UNSUPPORTED_WORKFLOW_ACTION' },
       );
     }
-    return this.request(path, {
-      method: 'POST',
-    });
+    return this.request(path, { method: 'POST' });
   }
-
-  /* ------------------------------------------------------------------ */
-  /*  Connector Workflows                                               */
-  /* ------------------------------------------------------------------ */
 
   async startConnectorWorkflow(
     request: Record<string, unknown>,
@@ -657,10 +768,6 @@ export class EngineClient {
     });
   }
 
-  /* ------------------------------------------------------------------ */
-  /*  Snooze Workflows                                                  */
-  /* ------------------------------------------------------------------ */
-
   async getSnoozeStatus(workflowId: string): Promise<unknown> {
     return this.fetchWithRetry(`/v1/workflows/snooze/${workflowId}/status`);
   }
@@ -670,10 +777,6 @@ export class EngineClient {
       method: 'POST',
     });
   }
-
-  /* ------------------------------------------------------------------ */
-  /*  DLQ                                                               */
-  /* ------------------------------------------------------------------ */
 
   async listDlq(
     brandId: string,

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { getSessionsDir, getStateSetDir } from '../../session.js';
+import { readTextFile } from '../../utils/file-read.js';
 import type { ShortcutLogger } from './types.js';
 import {
   buildTopLevelLogger,
@@ -18,12 +19,32 @@ interface ActivityEvent {
   raw: Record<string, unknown>;
 }
 
+const MAX_ACTIVITY_LOG_BYTES = 16 * 1024 * 1024;
+
+function safeReadDirents(dirPath: string): fs.Dirent[] {
+  if (!fs.existsSync(dirPath)) {
+    return [];
+  }
+  try {
+    const stats = fs.lstatSync(dirPath);
+    if (stats.isSymbolicLink() || !stats.isDirectory()) {
+      return [];
+    }
+    return fs.readdirSync(dirPath, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+}
+
 function readJsonLines(filePath: string): Record<string, unknown>[] {
   if (!fs.existsSync(filePath)) {
     return [];
   }
   try {
-    const content = fs.readFileSync(filePath, 'utf8');
+    const content = readTextFile(filePath, {
+      label: 'Activity log',
+      maxBytes: MAX_ACTIVITY_LOG_BYTES,
+    });
     return content
       .split(/\n/)
       .filter(Boolean)
@@ -51,13 +72,7 @@ function collectActivityEvents(sessionFilter?: string): ActivityEvent[] {
   const events: ActivityEvent[] = [];
   const sessionsDir = getSessionsDir();
   if (fs.existsSync(sessionsDir)) {
-    let sessions: fs.Dirent[] = [];
-    try {
-      sessions = fs.readdirSync(sessionsDir, { withFileTypes: true });
-    } catch {
-      sessions = [];
-    }
-
+    const sessions = safeReadDirents(sessionsDir);
     for (const session of sessions) {
       if (!session.isDirectory()) {
         continue;

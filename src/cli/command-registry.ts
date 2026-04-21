@@ -431,6 +431,23 @@ export function registerAllCommands(): void {
     helpOnly: true,
   });
   registerCommand({
+    name: '/engine billing',
+    usage:
+      '/engine billing <brand-slug|brand-id> | profile <brand> <json-file> | sync <brand> [--limit <n>] | contract <brand> [upsert <json-file>] | periods <brand> [--status <status>] | close-period <brand> <period-id> | rated-outcomes <brand> [filters] | reconciliation <brand>',
+    description:
+      'Manage brand billing profile, contract, periods, rated outcomes, and reconciliation',
+    category: 'engine',
+    helpOnly: true,
+    examples: [
+      '/engine billing acme-co',
+      '/engine billing sync acme-co --limit 100',
+      '/engine billing contract acme-co upsert billing-contract.json',
+      '/engine billing periods acme-co --status open',
+      '/engine billing rated-outcomes acme-co --period-id <period-id>',
+      '/engine billing reconciliation acme-co',
+    ],
+  });
+  registerCommand({
     name: '/engine brands',
     usage: '/engine brands [slug]',
     description: 'List or search brands in the workflow engine',
@@ -591,15 +608,7 @@ export function registerAllCommands(): void {
     name: '/engine local',
     usage:
       '/engine local apply <brand-slug|brand-id> [subscriptions|returns|both] [out=path] [compose=path] [services=a,b,c] [--write-only] [--unsafe-path]',
-    description: 'Write brand-scoped env and refresh the local Temporal stack services',
-    category: 'engine',
-    helpOnly: true,
-  });
-  registerCommand({
-    name: '/engine local apply',
-    usage:
-      '/engine local apply <brand-slug|brand-id> [subscriptions|returns|both] [out=path] [compose=path] [services=a,b,c] [--write-only] [--unsafe-path]',
-    description: 'Write brand-scoped env and run docker compose for the local stack',
+    description: 'Write brand-scoped env and optionally run docker compose for the local stack',
     category: 'engine',
     helpOnly: true,
   });
@@ -614,6 +623,37 @@ export function registerAllCommands(): void {
     name: '/engine event',
     usage: '/engine event <brand-slug|brand-id> <json-file> [idempotency-key]',
     description: 'Ingest a workflow engine event payload from a JSON file',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine outcomes',
+    usage:
+      '/engine outcomes <brand-slug|brand-id> [filters] | list <brand> [filters] [--limit <n>] [--offset <n>] | record <brand> <json-file>',
+    description: 'Show outcome summaries, list outcome records, or record an outcome',
+    category: 'engine',
+    helpOnly: true,
+    examples: [
+      '/engine outcomes acme-co --outcome-type automated_resolution',
+      '/engine outcomes list acme-co --status confirmed --limit 25',
+      '/engine outcomes record acme-co outcome.json',
+    ],
+  });
+  registerCommand({
+    name: '/engine analyze',
+    usage:
+      '/engine analyze <brand-slug|brand-id> [--source <dir>] [--tickets <file|dir>] [--responses <file|dir>] [--out <dir>] [--apply] [--push] [--json]',
+    description:
+      'Analyze local ticket and response exports, generate a workflow config proposal, and optionally apply or push it',
+    category: 'engine',
+    helpOnly: true,
+  });
+  registerCommand({
+    name: '/engine feedback-sync',
+    usage:
+      '/engine feedback-sync <brand-slug|brand-id> [--provider <gorgias|zendesk>] [--limit <n>] [--max-pages <n>] [--since-days <n>] [--analyze] [--apply] [--push] [--json]',
+    description:
+      'Sync recent live Gorgias or Zendesk feedback into a normalized local store and optionally analyze or apply the resulting proposal',
     category: 'engine',
     helpOnly: true,
   });

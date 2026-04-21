@@ -17,6 +17,14 @@ interface CachedResult {
   checkedAt: number;
 }
 
+export interface UpdateStatus {
+  currentVersion: string;
+  latestVersion: string | null;
+  updateAvailable: boolean;
+  source: 'cache' | 'network' | 'unavailable';
+  instruction: string;
+}
+
 function readCache(): CachedResult | null {
   try {
     if (!fs.existsSync(CACHE_FILE)) return null;
@@ -159,6 +167,49 @@ function isNewer(latest: string, current: string): boolean {
   return comparePrerelease(parsedLatest.prerelease, parsedCurrent.prerelease) > 0;
 }
 
+function buildUpdateStatus(
+  currentVersion: string,
+  latestVersion: string | null,
+  source: UpdateStatus['source'],
+  packageName: string,
+): UpdateStatus {
+  return {
+    currentVersion,
+    latestVersion,
+    updateAvailable: latestVersion ? isNewer(latestVersion, currentVersion) : false,
+    source,
+    instruction: `npm i -g ${packageName}@latest`,
+  };
+}
+
+export function formatUpdateMessage(status: UpdateStatus): string | null {
+  if (!status.updateAvailable || !status.latestVersion) {
+    return null;
+  }
+
+  return chalk.yellow(
+    `  Update available: ${status.currentVersion} → ${status.latestVersion} — ${status.instruction}`,
+  );
+}
+
+export async function getUpdateStatus(
+  currentVersion: string,
+  packageName = 'stateset-response-cli',
+): Promise<UpdateStatus> {
+  const cached = readCache();
+  if (cached) {
+    return buildUpdateStatus(currentVersion, cached.latestVersion, 'cache', packageName);
+  }
+
+  const latest = await fetchLatestVersion();
+  if (!latest) {
+    return buildUpdateStatus(currentVersion, null, 'unavailable', packageName);
+  }
+
+  writeCache(latest);
+  return buildUpdateStatus(currentVersion, latest, 'network', packageName);
+}
+
 /**
  * Check for a newer version of the CLI.
  * Returns a user-facing message if an update is available, or null.
@@ -166,27 +217,8 @@ function isNewer(latest: string, current: string): boolean {
  */
 export async function checkForUpdate(currentVersion: string): Promise<string | null> {
   try {
-    const cached = readCache();
-    if (cached) {
-      if (isNewer(cached.latestVersion, currentVersion)) {
-        return chalk.yellow(
-          `  Update available: ${currentVersion} → ${cached.latestVersion} — npm i -g stateset-response-cli`,
-        );
-      }
-      return null;
-    }
-
-    const latest = await fetchLatestVersion();
-    if (!latest) return null;
-
-    writeCache(latest);
-
-    if (isNewer(latest, currentVersion)) {
-      return chalk.yellow(
-        `  Update available: ${currentVersion} → ${latest} — npm i -g stateset-response-cli`,
-      );
-    }
-    return null;
+    const status = await getUpdateStatus(currentVersion);
+    return formatUpdateMessage(status);
   } catch {
     return null;
   }

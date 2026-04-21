@@ -1,6 +1,7 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { sanitizeSessionId } from '../session.js';
+import { ensurePrivateDirectory, writePrivateTextFileSecure } from '../utils/secure-file.js';
 
 /**
  * Lightweight in-process metrics collector for StateSet Response CLI.
@@ -231,20 +232,23 @@ export function saveSessionMetrics(sessionId: string): void {
   try {
     const stateDir = process.env.STATESET_STATE_DIR || path.join(os.homedir(), '.stateset');
     const metricsDir = path.join(stateDir, 'metrics');
-
-    if (!fs.existsSync(metricsDir)) {
-      fs.mkdirSync(metricsDir, { recursive: true, mode: 0o700 });
-    }
+    ensurePrivateDirectory(metricsDir, {
+      symlinkErrorPrefix: 'Refusing to use symlinked metrics directory',
+      nonDirectoryErrorPrefix: 'Metrics directory path is not a directory',
+    });
 
     const snap = metrics.snapshot();
     const record = {
-      sessionId,
+      sessionId: sanitizeSessionId(sessionId),
       savedAt: new Date().toISOString(),
       ...snap,
     };
 
-    const filePath = path.join(metricsDir, `${sessionId}.json`);
-    fs.writeFileSync(filePath, JSON.stringify(record, null, 2), { mode: 0o600 });
+    const filePath = path.join(metricsDir, `${record.sessionId}.json`);
+    writePrivateTextFileSecure(filePath, JSON.stringify(record, null, 2), {
+      label: 'Session metrics file',
+      atomic: true,
+    });
   } catch {
     // Best-effort — metrics saving should never crash the process
   }

@@ -355,6 +355,8 @@ describe('cli help text', () => {
     expect(output).toContain('/agents');
     expect(output).toContain('/rules');
     expect(output).toContain('/status');
+    expect(output).toMatch(/\/capabilities\s+Capability map by workflow area/);
+    expect(output).not.toContain('/capabilitiesCapability');
     expect(output).toContain('org-id');
     expect(output).toContain('model-id');
     spy.mockRestore();

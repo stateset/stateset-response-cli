@@ -1,4 +1,3 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import type { ShortcutLogger, ShortcutRunner, TopLevelOptions } from './types.js';
 import {
@@ -10,6 +9,7 @@ import {
   writePrivateTextFile,
 } from './utils.js';
 import { getErrorMessage } from '../../lib/errors.js';
+import { readJsonFile, readTextFile } from '../../utils/file-read.js';
 
 interface DatasetMessage {
   role: 'system' | 'user' | 'assistant';
@@ -19,6 +19,8 @@ interface DatasetMessage {
 interface DatasetEntryInput {
   messages: DatasetMessage[];
 }
+
+const MAX_DATASET_IMPORT_FILE_BYTES = 16 * 1024 * 1024;
 
 function readFirstOption(options: Record<string, string>, names: string[]): string | undefined {
   for (const name of names) {
@@ -73,12 +75,10 @@ function normalizeMessages(value: unknown, label: string): DatasetMessage[] {
 }
 
 function loadJsonFile(filePath: string): unknown {
-  const resolved = path.resolve(filePath);
-  if (!fs.existsSync(resolved)) {
-    throw new Error(`File not found: ${resolved}`);
-  }
-  const raw = fs.readFileSync(resolved, 'utf-8');
-  return JSON.parse(raw);
+  return readJsonFile(path.resolve(filePath), {
+    label: 'Dataset input file',
+    maxBytes: MAX_DATASET_IMPORT_FILE_BYTES,
+  });
 }
 
 function parseMessagesInput(options: Record<string, string>): DatasetMessage[] {
@@ -118,13 +118,13 @@ function normalizeDatasetEntry(value: unknown, index: number): DatasetEntryInput
 
 function parseImportEntries(sourceFile: string): DatasetEntryInput[] {
   const resolved = path.resolve(sourceFile);
-  if (!fs.existsSync(resolved)) {
-    throw new Error(`File not found: ${resolved}`);
-  }
-  const raw = fs.readFileSync(resolved, 'utf-8');
 
   let entries: unknown[];
   if (resolved.endsWith('.jsonl')) {
+    const raw = readTextFile(resolved, {
+      label: 'Dataset import file',
+      maxBytes: MAX_DATASET_IMPORT_FILE_BYTES,
+    });
     entries = raw
       .split(/\r?\n/)
       .map((line) => line.trim())
@@ -137,7 +137,10 @@ function parseImportEntries(sourceFile: string): DatasetEntryInput[] {
         }
       });
   } else {
-    const parsed = JSON.parse(raw);
+    const parsed = readJsonFile(resolved, {
+      label: 'Dataset import file',
+      maxBytes: MAX_DATASET_IMPORT_FILE_BYTES,
+    });
     if (Array.isArray(parsed)) {
       entries = parsed;
     } else if (

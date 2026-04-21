@@ -170,6 +170,13 @@ export interface WelcomeOptions {
   profile?: string;
 }
 
+function printCommandReferenceList(commands: ReadonlyArray<readonly [string, string]>): void {
+  const width = commands.reduce((max, [command]) => Math.max(max, command.length), 0) + 2;
+  for (const [command, description] of commands) {
+    console.log(chalk.cyan(`    ${command.padEnd(width)}`) + chalk.gray(description));
+  }
+}
+
 export function printWelcome(
   orgId: string,
   version?: string,
@@ -210,19 +217,18 @@ export function printWelcome(
   console.log(chalk.gray('    Use /help for command reference, or ask in natural language.'));
   console.log('');
   console.log(chalk.gray('  Essential commands:'));
-  console.log(chalk.cyan('    /help       ') + chalk.gray('Full command reference'));
-  console.log(chalk.cyan('    /capabilities') + chalk.gray('Capability map by workflow area'));
-  console.log(chalk.cyan('    /agents     ') + chalk.gray('Manage agents'));
-  console.log(chalk.cyan('    /rules      ') + chalk.gray('Manage rules'));
-  console.log(chalk.cyan('    /kb         ') + chalk.gray('Knowledge base'));
-  console.log(chalk.cyan('    /status     ') + chalk.gray('Platform overview'));
-  console.log(chalk.cyan('    /apply on   ') + chalk.gray('Enable write operations'));
-  console.log(chalk.cyan('    /cost       ') + chalk.gray('Show session cost estimate'));
-  console.log(chalk.cyan('    /whoami     ') + chalk.gray('Full session dashboard'));
-  console.log(
-    chalk.cyan('    /model      ') +
-      chalk.gray(`Switch model (${getModelAliasText('list').replace(/,\s*/g, '/')})`),
-  );
+  printCommandReferenceList([
+    ['/help', 'Full command reference'],
+    ['/capabilities', 'Capability map by workflow area'],
+    ['/agents', 'Manage agents'],
+    ['/rules', 'Manage rules'],
+    ['/kb', 'Knowledge base'],
+    ['/status', 'Platform overview'],
+    ['/apply on', 'Enable write operations'],
+    ['/cost', 'Show session cost estimate'],
+    ['/whoami', 'Full session dashboard'],
+    ['/model', `Switch model (${getModelAliasText('list').replace(/,\s*/g, '/')})`],
+  ]);
   console.log('');
   console.log(
     chalk.gray('  Tab completes commands + arguments. End a line with \\ for multi-line input.'),

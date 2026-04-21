@@ -1,10 +1,11 @@
-import Anthropic from '@anthropic-ai/sdk';
+import type Anthropic from '@anthropic-ai/sdk';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SessionStore } from './session.js';
 import { type ModelId, DEFAULT_MODEL } from './config.js';
+import AnthropicClient from './lib/anthropic-sdk.js';
 import { INTEGRATION_DEFINITIONS } from './integrations/registry.js';
 import { isRetryable, getErrorMessage } from './lib/errors.js';
 import { metrics } from './lib/metrics.js';
@@ -275,7 +276,7 @@ export class StateSetAgent {
   private lastTrimInfo: TrimInfo | null = null;
 
   constructor(anthropicApiKey: string, model?: ModelId) {
-    this.anthropic = new Anthropic({ apiKey: anthropicApiKey });
+    this.anthropic = new AnthropicClient({ apiKey: anthropicApiKey });
     this.mcpClient = new Client({ name: 'stateset-cli', version: '1.0.0' }, { capabilities: {} });
     this.model = model || DEFAULT_MODEL;
   }
