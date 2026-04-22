@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.9.5 - 2026-04-22
+
+### CLI Quality
+
+- Updated Claude model aliases, fallback order, onboarding choices, and cost estimates for the current Claude model lineup.
+- Fixed parent-level `--json` handling for config commands so automation gets structured output consistently.
+- Strengthened binary smoke checks to assert concrete version, help, and config output instead of exit codes only.
+
 ## 1.9.4 - 2026-04-21
 
 ### Workflow Engine Contract Safety
@@ -201,7 +209,7 @@
 
 - Added tab completion for all slash commands (press Tab to autocomplete).
 - Enriched session switching: shows message count, last activity, and tags on `/resume` and session switch.
-- Updated model aliases to latest Claude 4.6 family (`claude-sonnet-4-6`, `claude-haiku-4-5-20251001`, `claude-opus-4-6-20250514`).
+- Updated model aliases to latest Claude family (`claude-sonnet-4-6`, `claude-haiku-4-5-20251001`, `claude-opus-4-7`).
 - Redesigned welcome screen: concise essential commands instead of 70-line wall of text.
 
 ### Fixes

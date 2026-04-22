@@ -1,7 +1,7 @@
 /**
  * Token pricing for Claude models.
  *
- * Prices are per-million tokens (as of 2025-05).
+ * Prices are per-million tokens (as of 2026-04).
  * Cache pricing uses reduced rates for cache reads.
  */
 
@@ -16,11 +16,11 @@ interface ModelPricing {
 }
 
 const MODEL_PRICING: Record<string, ModelPricing> = {
-  'claude-opus-4-6-20250514': {
-    inputPerMillion: 15.0,
-    outputPerMillion: 75.0,
-    cacheWritePerMillion: 18.75,
-    cacheReadPerMillion: 1.5,
+  'claude-opus-4-7': {
+    inputPerMillion: 5.0,
+    outputPerMillion: 25.0,
+    cacheWritePerMillion: 6.25,
+    cacheReadPerMillion: 0.5,
   },
   'claude-sonnet-4-6': {
     inputPerMillion: 3.0,
@@ -29,10 +29,10 @@ const MODEL_PRICING: Record<string, ModelPricing> = {
     cacheReadPerMillion: 0.3,
   },
   'claude-haiku-4-5-20251001': {
-    inputPerMillion: 0.8,
-    outputPerMillion: 4.0,
-    cacheWritePerMillion: 1.0,
-    cacheReadPerMillion: 0.08,
+    inputPerMillion: 1.0,
+    outputPerMillion: 5.0,
+    cacheWritePerMillion: 1.25,
+    cacheReadPerMillion: 0.1,
   },
 };
 

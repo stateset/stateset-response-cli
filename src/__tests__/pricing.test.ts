@@ -34,12 +34,12 @@ describe('calculateCost', () => {
   it('calculates opus pricing correctly', () => {
     const result = calculateCost(
       makeUsage({ inputTokens: 1_000_000, outputTokens: 1_000_000 }),
-      'claude-opus-4-6-20250514',
+      'claude-opus-4-7',
     );
-    // Opus: $15/M input, $75/M output
-    expect(result.inputCost).toBeCloseTo(15.0);
-    expect(result.outputCost).toBeCloseTo(75.0);
-    expect(result.totalCost).toBeCloseTo(90.0);
+    // Opus: $5/M input, $25/M output
+    expect(result.inputCost).toBeCloseTo(5.0);
+    expect(result.outputCost).toBeCloseTo(25.0);
+    expect(result.totalCost).toBeCloseTo(30.0);
   });
 
   it('calculates haiku pricing correctly', () => {
@@ -47,10 +47,10 @@ describe('calculateCost', () => {
       makeUsage({ inputTokens: 1_000_000, outputTokens: 1_000_000 }),
       'claude-haiku-4-5-20251001',
     );
-    // Haiku: $0.80/M input, $4/M output
-    expect(result.inputCost).toBeCloseTo(0.8);
-    expect(result.outputCost).toBeCloseTo(4.0);
-    expect(result.totalCost).toBeCloseTo(4.8);
+    // Haiku: $1/M input, $5/M output
+    expect(result.inputCost).toBeCloseTo(1.0);
+    expect(result.outputCost).toBeCloseTo(5.0);
+    expect(result.totalCost).toBeCloseTo(6.0);
   });
 
   it('includes cache costs', () => {

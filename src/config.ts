@@ -24,11 +24,15 @@ export interface OrgConfig {
 export const MODEL_IDS = [
   'claude-sonnet-4-6',
   'claude-haiku-4-5-20251001',
-  'claude-opus-4-6-20250514',
+  'claude-opus-4-7',
 ] as const;
 
 export type ModelId = (typeof MODEL_IDS)[number];
-type LegacyModelId = 'claude-sonnet-4-6-20250514';
+type LegacyModelId =
+  | 'claude-sonnet-4-6-20250514'
+  | 'claude-haiku-4-5'
+  | 'claude-opus-4-6'
+  | 'claude-opus-4-6-20250514';
 type AllowedModelId = ModelId | LegacyModelId;
 
 export const DEFAULT_MODEL: ModelId = MODEL_IDS[0];
@@ -37,10 +41,13 @@ export const MODEL_ALIAS_NAMES = ['sonnet', 'haiku', 'opus'] as const;
 export const MODEL_ALIASES: Record<(typeof MODEL_ALIAS_NAMES)[number], ModelId> = {
   sonnet: 'claude-sonnet-4-6',
   haiku: 'claude-haiku-4-5-20251001',
-  opus: 'claude-opus-4-6-20250514',
+  opus: 'claude-opus-4-7',
 };
 const LEGACY_MODEL_ALIASES: Record<LegacyModelId, ModelId> = {
   'claude-sonnet-4-6-20250514': 'claude-sonnet-4-6',
+  'claude-haiku-4-5': 'claude-haiku-4-5-20251001',
+  'claude-opus-4-6': 'claude-opus-4-7',
+  'claude-opus-4-6-20250514': 'claude-opus-4-7',
 };
 const ALLOWED_MODEL_IDS = [...MODEL_IDS, ...Object.keys(LEGACY_MODEL_ALIASES)] as const;
 const MODEL_ID_SET = new Set<ModelId>(MODEL_IDS);

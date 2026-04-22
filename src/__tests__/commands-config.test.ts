@@ -17,7 +17,7 @@ vi.mock('../config.js', () => ({
     const map: Record<string, string> = {
       sonnet: 'claude-sonnet-4-6',
       haiku: 'claude-haiku-4-5-20251001',
-      opus: 'claude-opus-4-6-20250514',
+      opus: 'claude-opus-4-7',
     };
     const resolved = map[input.toLowerCase()] ?? null;
     if (!resolved) {

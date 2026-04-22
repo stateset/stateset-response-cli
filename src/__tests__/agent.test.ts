@@ -161,8 +161,8 @@ describe('StateSetAgent', () => {
 
     it('setModel updates the model returned by getModel', () => {
       const agent = new StateSetAgent('test-key');
-      agent.setModel('claude-opus-4-6-20250514');
-      expect(agent.getModel()).toBe('claude-opus-4-6-20250514');
+      agent.setModel('claude-opus-4-7');
+      expect(agent.getModel()).toBe('claude-opus-4-7');
     });
 
     it('setSystemPrompt stores the prompt (observable via chat)', () => {
@@ -519,7 +519,7 @@ describe('StateSetAgent', () => {
     });
 
     it('passes the correct model and system prompt to Anthropic', async () => {
-      const agent = new StateSetAgent('test-key', 'claude-opus-4-6-20250514');
+      const agent = new StateSetAgent('test-key', 'claude-opus-4-7');
       agent.setSystemPrompt('You are a test bot');
 
       const stream = createMockStream('ok');
@@ -528,7 +528,7 @@ describe('StateSetAgent', () => {
       await agent.chat('ping');
 
       const callArgs = mockAnthropicInstance.messages.stream.mock.calls[0][0];
-      expect(callArgs.model).toBe('claude-opus-4-6-20250514');
+      expect(callArgs.model).toBe('claude-opus-4-7');
       expect(callArgs.system).toBe('You are a test bot');
       expect(callArgs.max_tokens).toBe(16384);
     });

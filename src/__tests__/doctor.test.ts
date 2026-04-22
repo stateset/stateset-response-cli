@@ -12,7 +12,7 @@ vi.mock('../config.js', () => ({
   })),
   getConfigPath: vi.fn(() => '/mock/.stateset/config.json'),
   getConfiguredModel: vi.fn(() => 'claude-sonnet-4-6'),
-  MODEL_IDS: ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001', 'claude-opus-4-6-20250514'],
+  MODEL_IDS: ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001', 'claude-opus-4-7'],
 }));
 vi.mock('../integrations/http.js', () => ({
   requestText: vi.fn(async () => ({ status: 200, text: 'ok' })),

@@ -523,7 +523,7 @@ async function stepWorkflow(
       ? [
           { name: 'Claude Sonnet 4.6 (recommended)', value: 'claude-sonnet-4-6' },
           { name: 'Claude Haiku 4.5 (faster)', value: 'claude-haiku-4-5' },
-          { name: 'Claude Opus 4.6 (most capable)', value: 'claude-opus-4-6' },
+          { name: 'Claude Opus 4.7 (most capable)', value: 'claude-opus-4-7' },
         ]
       : [
           { name: 'GPT-4.1 (recommended)', value: 'gpt-4.1' },

@@ -15,7 +15,7 @@ function getDefaultFallbackChain(): ModelId[] {
   // Lazy to avoid import-time dependency on MODEL_ALIASES
   // (which can be mocked in tests)
   return [
-    'claude-opus-4-6-20250514' as ModelId,
+    'claude-opus-4-7' as ModelId,
     'claude-sonnet-4-6' as ModelId,
     'claude-haiku-4-5-20251001' as ModelId,
   ];

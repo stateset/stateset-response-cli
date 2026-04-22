@@ -3,7 +3,7 @@
 AI-powered CLI for managing the [StateSet Response](https://response.stateset.app) platform. Chat with an AI agent that can manage your agents, rules, skills, knowledge base, channels, messages, and more, all from the terminal.
 
 Includes optional Slack, Telegram, and WhatsApp gateways for connecting your agent to messaging platforms or running a multi-channel bot on Kubernetes.
-Current version: `1.9.4`.
+Current version: `1.9.5`.
 
 ## Features
 

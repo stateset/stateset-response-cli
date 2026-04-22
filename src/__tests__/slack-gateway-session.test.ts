@@ -189,9 +189,9 @@ describe('SlackGateway handleCommand', () => {
   });
 
   it('/model without arg shows current model', () => {
-    session.agent.setModel('claude-opus-4-6-20250514');
+    session.agent.setModel('claude-opus-4-7');
     const result = internals(gw).handleCommand('/model', session);
-    expect(result).toContain('claude-opus-4-6-20250514');
+    expect(result).toContain('claude-opus-4-7');
     expect(result).toContain('Current model');
   });
 

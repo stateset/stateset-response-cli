@@ -23,7 +23,7 @@ import {
 import { sanitizeSessionId } from './session.js';
 import { printAuthHelp, formatError } from './utils/display.js';
 import { installGlobalErrorHandlers, getErrorMessage } from './lib/errors.js';
-import { setOutputMode, type OutputMode } from './lib/output.js';
+import { isJsonMode, output, setOutputMode, type OutputMode } from './lib/output.js';
 import { exportOrg, importOrg, type ImportResult } from './export-import.js';
 import { EventsRunner, validateEventsPrereqs } from './events.js';
 import { assertNodeVersion, parseToggleValue } from './cli/utils.js';
@@ -127,7 +127,7 @@ program.exitOverride();
 
 // Apply global output mode before subcommands run
 program.hook('preAction', (thisCommand) => {
-  const opts = thisCommand.opts();
+  const opts = { ...program.opts(), ...thisCommand.opts() };
   if (opts.json) {
     setOutputMode('json');
   } else if (opts.output && ['json', 'pretty', 'minimal'].includes(opts.output)) {
@@ -1229,7 +1229,12 @@ configCmd
   .command('path')
   .description('Print the config file path')
   .action(() => {
-    console.log(getConfigPath());
+    const configPath = getConfigPath();
+    if (isJsonMode()) {
+      output({ path: configPath });
+    } else {
+      console.log(configPath);
+    }
   });
 
 configCmd
@@ -1266,7 +1271,11 @@ configCmd
           ]),
         ),
       };
-      console.log(JSON.stringify(display, null, 2));
+      if (isJsonMode()) {
+        output(display);
+      } else {
+        console.log(JSON.stringify(display, null, 2));
+      }
     } catch (e: unknown) {
       console.error(formatError(getErrorMessage(e)));
       process.exitCode = 1;

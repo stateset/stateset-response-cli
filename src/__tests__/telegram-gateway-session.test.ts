@@ -128,10 +128,10 @@ describe('TelegramGateway handleCommand', () => {
   });
 
   it('/model without arg shows current model', () => {
-    session.agent.setModel('claude-opus-4-6-20250514');
+    session.agent.setModel('claude-opus-4-7');
     const result = internals(gateway).handleCommand('/model', session);
     expect(result).toContain('Current model');
-    expect(result).toContain('claude-opus-4-6-20250514');
+    expect(result).toContain('claude-opus-4-7');
   });
 
   it('/model with valid arg changes model', () => {

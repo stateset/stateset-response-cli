@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 vi.mock('../config.js', () => ({
   resolveModel: (input: string) => {
     const map: Record<string, string> = {
-      opus: 'claude-opus-4-6-20250514',
+      opus: 'claude-opus-4-7',
       sonnet: 'claude-sonnet-4-6',
       haiku: 'claude-haiku-4-5-20251001',
     };
@@ -44,11 +44,7 @@ describe('model-fallback', () => {
   describe('getFallbackChain', () => {
     it('returns the default chain (opus → sonnet → haiku)', () => {
       const chain = getFallbackChain();
-      expect(chain).toEqual([
-        'claude-opus-4-6-20250514',
-        'claude-sonnet-4-6',
-        'claude-haiku-4-5-20251001',
-      ]);
+      expect(chain).toEqual(['claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001']);
     });
 
     it('respects STATESET_MODEL_FALLBACK env var', () => {
@@ -66,11 +62,7 @@ describe('model-fallback', () => {
     it('falls back to default chain if env var contains only invalid models', () => {
       process.env.STATESET_MODEL_FALLBACK = 'bogus,invalid';
       const chain = getFallbackChain();
-      expect(chain).toEqual([
-        'claude-opus-4-6-20250514',
-        'claude-sonnet-4-6',
-        'claude-haiku-4-5-20251001',
-      ]);
+      expect(chain).toEqual(['claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001']);
     });
   });
 
@@ -91,17 +83,13 @@ describe('model-fallback', () => {
       setFallbackChain(['custom' as any]);
       resetFallbackChain();
       const chain = getFallbackChain();
-      expect(chain).toEqual([
-        'claude-opus-4-6-20250514',
-        'claude-sonnet-4-6',
-        'claude-haiku-4-5-20251001',
-      ]);
+      expect(chain).toEqual(['claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001']);
     });
   });
 
   describe('getNextFallback', () => {
     it('returns the next model in the chain', () => {
-      const next = getNextFallback('claude-opus-4-6-20250514' as any);
+      const next = getNextFallback('claude-opus-4-7' as any);
       expect(next).toBe('claude-sonnet-4-6');
     });
 
@@ -117,7 +105,7 @@ describe('model-fallback', () => {
 
     it('returns the first different model if current is not in chain', () => {
       const next = getNextFallback('some-unknown-model' as any);
-      expect(next).toBe('claude-opus-4-6-20250514');
+      expect(next).toBe('claude-opus-4-7');
     });
 
     it('returns null if chain has only the current model', () => {
@@ -203,7 +191,7 @@ describe('model-fallback', () => {
   describe('resolveFallbackModel', () => {
     it('returns fallback model on availability error (429)', () => {
       const err = Object.assign(new Error('rate limited'), { status: 429 });
-      const result = resolveFallbackModel('claude-opus-4-6-20250514' as any, err);
+      const result = resolveFallbackModel('claude-opus-4-7' as any, err);
       expect(result).toBe('claude-sonnet-4-6');
     });
 
@@ -215,7 +203,7 @@ describe('model-fallback', () => {
 
     it('returns null on non-availability error', () => {
       const err = Object.assign(new Error('bad request'), { status: 400 });
-      const result = resolveFallbackModel('claude-opus-4-6-20250514' as any, err);
+      const result = resolveFallbackModel('claude-opus-4-7' as any, err);
       expect(result).toBeNull();
     });
 
@@ -226,7 +214,7 @@ describe('model-fallback', () => {
     });
 
     it('returns null for non-Error values', () => {
-      const result = resolveFallbackModel('claude-opus-4-6-20250514' as any, 'string');
+      const result = resolveFallbackModel('claude-opus-4-7' as any, 'string');
       expect(result).toBeNull();
     });
   });

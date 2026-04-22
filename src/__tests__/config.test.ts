@@ -231,7 +231,7 @@ describe('resolveModel', () => {
   });
 
   it('resolves alias "opus"', () => {
-    expect(resolveModel('opus')).toBe('claude-opus-4-6-20250514');
+    expect(resolveModel('opus')).toBe('claude-opus-4-7');
   });
 
   it('is case-insensitive', () => {
@@ -245,6 +245,15 @@ describe('resolveModel', () => {
 
   it('maps legacy Sonnet model ID to canonical model ID', () => {
     expect(resolveModel('claude-sonnet-4-6-20250514')).toBe('claude-sonnet-4-6');
+  });
+
+  it('maps current Haiku alias to canonical model ID', () => {
+    expect(resolveModel('claude-haiku-4-5')).toBe('claude-haiku-4-5-20251001');
+  });
+
+  it('maps legacy Opus 4.6 IDs to the current Opus model ID', () => {
+    expect(resolveModel('claude-opus-4-6')).toBe('claude-opus-4-7');
+    expect(resolveModel('claude-opus-4-6-20250514')).toBe('claude-opus-4-7');
   });
 
   it('returns null for unknown model', () => {
